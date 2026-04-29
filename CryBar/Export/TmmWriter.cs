@@ -321,6 +321,21 @@ public static class TmmWriter
         foreach (var section in model.Extras?.Tmm.LossySections ?? [])
             warnings.Add($"Source had {section} data; dropped on re-import (v1 limitation)");
 
+        // Fallback-default warnings: surface whenever the source GLB carried no
+        // extras.crybar so the UI can tell the user their model is missing metadata
+        // that visibly affects in-game behavior. We key off `model.Extras == null`
+        // because that's the exact condition under which all extras-derived fields
+        // were defaulted earlier in this method.
+        if (model.Extras == null)
+        {
+            warnings.Add("No main_matrix in source GLB; defaulted to identity. Model may appear at wrong absolute scale in-game (relative bone motion correct).");
+            if (model.Bones is { Length: > 0 })
+            {
+                warnings.Add("No extended_bbox in source GLB; using bbox * 3 heuristic. Animation may visibly clip near edges of unit footprint for asymmetric models.");
+                warnings.Add("No auto_attach data in source GLB; defaulted to empty. Corpse-attach and impact-points behavior unavailable.");
+            }
+        }
+
         // Mesh groups: 24 bytes each (6 x uint32)
         uint vOffset = 0, iOffset = 0;
         for (int g = 0; g < model.Mesh.Primitives.Length; g++)
@@ -455,7 +470,7 @@ public static class TmmWriter
             WriteUtf16String(w, bone.Name);
             w.Write(bone.ParentIndex);
 
-            // Collision offset (XYZ) + radius — sourced from extras when available, else defaults.
+            // Collision offset (XYZ) + radius - sourced from extras when available, else defaults.
             if (hasCollisions)
             {
                 w.Write(collisions[i * 4]);

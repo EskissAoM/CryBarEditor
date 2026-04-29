@@ -147,6 +147,115 @@ public class TmmWriterTests
         return m;
     }
 
+    [Fact]
+    public void Write_NullExtrasOnSkinnedModel_EmitsThreeFallbackWarnings()
+    {
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh
+            {
+                Primitives =
+                [
+                    new GlbMeshPrimitive
+                    {
+                        MaterialName = "m",
+                        Positions = [0, 0, 0,  1, 0, 0,  1, 1, 0],
+                        Normals = [0, 0, 1,   0, 0, 1,   0, 0, 1],
+                        Tangents = [1, 0, 0, 1,  1, 0, 0, 1,  1, 0, 0, 1],
+                        TexCoords = [0, 0,  1, 0,  1, 1],
+                        Indices = [0, 1, 2],
+                        JointIndices = [0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0],
+                        JointWeights = [1, 0, 0, 0,  1, 0, 0, 0,  1, 0, 0, 0],
+                    }
+                ]
+            },
+            Materials = [new GlbMaterial { Name = "m" }],
+            Bones =
+            [
+                new GlbBone
+                {
+                    Name = "root", ParentIndex = -1,
+                    LocalMatrix = TmmTestHelpers.Identity16Local(),
+                    InverseBindMatrix = TmmTestHelpers.Identity16Local()
+                }
+            ],
+        };
+
+        var (_, _, warnings) = TmmWriter.Write(model);
+
+        Assert.Contains(warnings, w => w.Contains("main_matrix", StringComparison.Ordinal));
+        Assert.Contains(warnings, w => w.Contains("extended_bbox", StringComparison.Ordinal));
+        Assert.Contains(warnings, w => w.Contains("auto_attach", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Write_NonSkinnedModelWithoutExtras_DoesNotWarnAboutExtendedBboxOrAutoAttach()
+    {
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh
+            {
+                Primitives =
+                [
+                    new GlbMeshPrimitive
+                    {
+                        MaterialName = "m",
+                        Positions = [0, 0, 0,  1, 0, 0,  1, 1, 0],
+                        Normals = [0, 0, 1,   0, 0, 1,   0, 0, 1],
+                        Tangents = [1, 0, 0, 1,  1, 0, 0, 1,  1, 0, 0, 1],
+                        TexCoords = [0, 0,  1, 0,  1, 1],
+                        Indices = [0, 1, 2],
+                    }
+                ]
+            },
+            Materials = [new GlbMaterial { Name = "m" }],
+        };
+
+        var (_, _, warnings) = TmmWriter.Write(model);
+
+        Assert.Contains(warnings, w => w.Contains("main_matrix", StringComparison.Ordinal));
+        Assert.DoesNotContain(warnings, w => w.Contains("extended_bbox", StringComparison.Ordinal));
+        Assert.DoesNotContain(warnings, w => w.Contains("auto_attach", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Write_ExtrasPresent_NoFallbackWarnings()
+    {
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh
+            {
+                Primitives =
+                [
+                    new GlbMeshPrimitive
+                    {
+                        MaterialName = "m",
+                        Positions = [0, 0, 0,  1, 0, 0,  1, 1, 0],
+                        Normals = [0, 0, 1,   0, 0, 1,   0, 0, 1],
+                        Tangents = [1, 0, 0, 1,  1, 0, 0, 1,  1, 0, 0, 1],
+                        TexCoords = [0, 0,  1, 0,  1, 1],
+                        Indices = [0, 1, 2],
+                    }
+                ]
+            },
+            Materials = [new GlbMaterial { Name = "m" }],
+            Extras = new GlbExtras
+            {
+                Tmm = new GlbExtras.TmmSection
+                {
+                    MainMatrix = [1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1],
+                    ExtendedBbox = [-1, -1, -1, 1, 1, 1],
+                    AutoAttach = new GlbExtras.AutoAttachInfo(),
+                }
+            },
+        };
+
+        var (_, _, warnings) = TmmWriter.Write(model);
+
+        Assert.DoesNotContain(warnings, w => w.Contains("main_matrix", StringComparison.Ordinal));
+        Assert.DoesNotContain(warnings, w => w.Contains("extended_bbox", StringComparison.Ordinal));
+        Assert.DoesNotContain(warnings, w => w.Contains("auto_attach", StringComparison.Ordinal));
+    }
 
     [Fact]
     public void Write_EmptyModel_ProducesParseableTmm()

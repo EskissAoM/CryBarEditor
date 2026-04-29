@@ -29,7 +29,7 @@ public static class TmaWriter
         w.Write(anim.FrameCount);
         w.Write(anim.Duration);
 
-        // Root bbox: 2 x 3 floats (min XYZ, max XYZ) — zeroed when no positional data
+        // Root bbox: 2 x 3 floats (min XYZ, max XYZ) - zeroed when no positional data
         for (int i = 0; i < 6; i++) w.Write(0f);
 
         w.Write((uint)bones.Length); // numBones

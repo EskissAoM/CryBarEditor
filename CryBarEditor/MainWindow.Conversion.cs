@@ -175,6 +175,23 @@ public partial class MainWindow
         }
     }
 
+    async void MenuItem_ConvertGLBtoTMM(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var glbFile = await PickFile(sender, "Convert GLB to TMM/TMA/DDT", [new("glTF binary") {
+            Patterns = ["*.glb"] }]);
+        if (glbFile == null) return;
+
+        try
+        {
+            var window = new GlbConvertWindow(glbFile);
+            await window.ShowDialog(this);
+        }
+        catch (Exception ex)
+        {
+            _ = ShowError("Failed to open GLB converter:\n" + ex.Message);
+        }
+    }
+
     async void MenuItem_ConvertScenarioToXML(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         var file = await PickFile(sender, "Convert Scenario to XML", [new("AoM Scenario") { Patterns = ["*.mythscn"] }]);

@@ -111,7 +111,7 @@ public class GlbRoundTripTests
         };
 
         var (tmm, _, warnings) = TmmWriter.Write(model);
-        Assert.Empty(warnings);
+        Assert.Contains(warnings, w => w.Contains("main_matrix", StringComparison.Ordinal));
 
         var parsed = new TmmFile(tmm);
         Assert.True(parsed.FullyParsed);

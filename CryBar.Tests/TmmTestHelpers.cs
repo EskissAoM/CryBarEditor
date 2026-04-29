@@ -288,6 +288,8 @@ internal static class TmmTestHelpers
         return tracks;
     }
 
+    internal static float[] Identity16Local() => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
     internal static (TmmFile tmm, TmmDataFile dataFile) CreateMinimalModel()
     {
         uint numVerts = 3;
