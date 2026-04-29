@@ -1,0 +1,221 @@
+using System.Numerics;
+using System.Text;
+using CryBar.TMM;
+
+namespace CryBar.Export;
+
+public static class TmaWriter
+{
+    public static (byte[] Tma, IReadOnlyList<string> Warnings) Write(
+        GlbAnimation anim, GlbBone[] bones, GlbExtras.TmaSection? extras)
+    {
+        var warnings = new List<string>();
+        if (extras?.HadControllers == true)
+            warnings.Add($"Animation '{anim.Name}' had controllers in source; not re-emitted.");
+
+        using var ms = new MemoryStream();
+        using var w = new BinaryWriter(ms);
+
+        // BTMA magic
+        w.Write((byte)0x42); w.Write((byte)0x54); w.Write((byte)0x4D); w.Write((byte)0x41);
+        w.Write(12u); // version
+
+        // DP block (empty)
+        w.Write((byte)0x44); w.Write((byte)0x50);
+        w.Write(4);  // blockByteLength
+        w.Write(0u); // numImportNames
+
+        w.Write((uint)bones.Length); // numTracks
+        w.Write(anim.FrameCount);
+        w.Write(anim.Duration);
+
+        // Root bbox: 2 x 3 floats (min XYZ, max XYZ) — zeroed when no positional data
+        for (int i = 0; i < 6; i++) w.Write(0f);
+
+        w.Write((uint)bones.Length); // numBones
+        w.Write(0u);                 // numControllers
+
+        WriteBones(w, bones);
+        WriteTracks(w, anim, bones, warnings);
+
+        // No controllers emitted (numControllers = 0).
+        // Error section
+        w.Write(0u); // errorFlags
+        w.Write(0u); // errorCount
+
+        var bytes = ms.ToArray();
+
+        var validate = new TmaFile(bytes);
+        if (!validate.Parsed)
+            throw new InvalidOperationException("TmaWriter produced output that fails parse (writer bug).");
+
+        return (bytes, warnings);
+    }
+
+    static void WriteBones(BinaryWriter w, GlbBone[] bones)
+    {
+        var worldMatrices = new Matrix4x4[bones.Length];
+        for (int i = 0; i < bones.Length; i++)
+        {
+            var local = ColMajorToMatrix(bones[i].LocalMatrix);
+            worldMatrices[i] = bones[i].ParentIndex < 0
+                ? local
+                : local * worldMatrices[bones[i].ParentIndex];
+        }
+
+        for (int i = 0; i < bones.Length; i++)
+        {
+            var bone = bones[i];
+            WriteUtf16String(w, bone.Name);
+            w.Write(bone.ParentIndex);
+
+            // localTransform = parent-relative (local) matrix
+            WriteMatrix4x4Fmf(w, ColMajorToMatrix(bone.LocalMatrix));
+            // bindPose = world-space matrix
+            WriteMatrix4x4Fmf(w, worldMatrices[i]);
+            // inverseBindPose
+            WriteMatrix4x4Fmf(w, ColMajorToMatrix(bone.InverseBindMatrix));
+        }
+    }
+
+    static void WriteTracks(BinaryWriter w, GlbAnimation anim, GlbBone[] bones, List<string> warnings)
+    {
+        int frameCount = (int)anim.FrameCount;
+
+        for (int i = 0; i < bones.Length; i++)
+        {
+            WriteUtf16String(w, bones[i].Name);
+
+            // trackVersion=1, translationEncoding=Raw(1), rotationEncoding=Quat64(3), scaleEncoding=Constant(0)
+            w.Write((byte)1);
+            w.Write((byte)1); // Raw translation
+            w.Write((byte)3); // Quat64 rotation
+            w.Write((byte)0); // Constant scale
+
+            w.Write(frameCount);
+
+            // Find track for this bone
+            GlbBoneTrack? track = null;
+            if (anim.Tracks != null)
+            {
+                foreach (var t in anim.Tracks)
+                {
+                    if (t.BoneIndex == i) { track = t; break; }
+                }
+            }
+
+            // Translation: Raw = 4-byte size prefix + frameCount * 12 bytes
+            int translationBytes = frameCount * 12;
+            w.Write(translationBytes);
+            for (int f = 0; f < frameCount; f++)
+            {
+                var t = (track != null && f < track.Translations.Length)
+                    ? track.Translations[f]
+                    : Vector3.Zero;
+                // Negate X to convert glTF RH -> game LH
+                w.Write(-t.X);
+                w.Write(t.Y);
+                w.Write(t.Z);
+            }
+
+            // Rotation: Quat64 = 4-byte size prefix + frameCount * 8 bytes
+            int rotationBytes = frameCount * 8;
+            w.Write(rotationBytes);
+            for (int f = 0; f < frameCount; f++)
+            {
+                var q = (track != null && f < track.Rotations.Length)
+                    ? track.Rotations[f]
+                    : Quaternion.Identity;
+                w.Write(EncodeQuat64(q));
+            }
+
+            // Scale: Constant = 16 bytes inline (__m128), uniform scale 1,1,1
+            w.Write(1f); w.Write(1f); w.Write(1f); w.Write(0f); // XYZ scale + padding
+        }
+    }
+
+    // Encodes a quaternion into Quat64 "smallest three" format (8 bytes).
+    // Layout: [4-bit dropped-index][20-bit C2][20-bit C1][20-bit C0], each 20-bit = sign + 19-bit magnitude.
+    static ulong EncodeQuat64(Quaternion q)
+    {
+        // Normalize
+        float mag = MathF.Sqrt(q.X * q.X + q.Y * q.Y + q.Z * q.Z + q.W * q.W);
+        if (mag > 0f) { q = new Quaternion(q.X / mag, q.Y / mag, q.Z / mag, q.W / mag); }
+
+        float[] c = [q.X, q.Y, q.Z, q.W];
+
+        // Find the largest absolute component
+        int largestIdx = 0;
+        float largestAbs = Math.Abs(c[0]);
+        for (int i = 1; i < 4; i++)
+        {
+            float a = Math.Abs(c[i]);
+            if (a > largestAbs) { largestAbs = a; largestIdx = i; }
+        }
+
+        // Ensure largest component is positive (canonical form)
+        if (c[largestIdx] < 0f)
+            for (int i = 0; i < 4; i++) c[i] = -c[i];
+
+        const float Scale = 0.70710678118f; // 1/sqrt(2): max magnitude of a non-largest component
+        const float MaxMag = 524287f;        // 2^19 - 1
+
+        // Collect the three non-largest components.
+        // Decoder reads comp=3 from low bits, comp=2 from next, comp=1 from highest,
+        // so we pack in descending component order (3->2->1->0 skipping largestIdx).
+        ulong packed = 0;
+        int bitOffset = 0;
+        for (int i = 3; i >= 0; i--)
+        {
+            if (i == largestIdx) continue;
+            float val = c[i] / Scale;
+            float clamped = Math.Clamp(val, -1f, 1f);
+            uint magnitude = (uint)MathF.Round(MathF.Abs(clamped) * MaxMag);
+            uint signBit = clamped < 0f ? 1u : 0u; // decoder: negative = (bit >> 19) != 0
+            // 19-bit magnitude, then 1 sign bit
+            packed |= ((ulong)(magnitude & 0x7FFFF)) << bitOffset;
+            bitOffset += 19;
+            packed |= ((ulong)signBit) << bitOffset;
+            bitOffset++;
+        }
+
+        // Dropped-component index occupies bits [63:60] (top 4 bits).
+        // Decoder uses (packed >> 60) & 0xF as index.
+        // Map from component order [X=0,Y=1,Z=2,W=3] to the index the decoder expects.
+        // TmaDecoder reads: idx = (packed >> 60) & 0xF, then fills slots 3,2,1,0 skipping idx.
+        // We need largestIdx to map such that the decoder reconstructs the dropped component correctly.
+        // The decoder slot order (high to low): slot3=comp3, slot2=comp2, slot1=comp1, slot0=comp0,
+        // where comp 0,1,2,3 map to X,Y,Z,W. So idx directly equals largestIdx.
+        packed |= ((ulong)(largestIdx & 0xF)) << 60;
+
+        return packed;
+    }
+
+    static Matrix4x4 ColMajorToMatrix(float[] m) => new(
+        m[0],  m[1],  m[2],  m[3],
+        m[4],  m[5],  m[6],  m[7],
+        m[8],  m[9],  m[10], m[11],
+        m[12], m[13], m[14], m[15]);
+
+    // Applies F*M*F (F = diag(-1,1,1,1)) then writes 16 floats in column-major order.
+    static void WriteMatrix4x4Fmf(BinaryWriter w, Matrix4x4 m)
+    {
+        var r = new Matrix4x4(
+             m.M11, -m.M12, -m.M13, -m.M14,
+            -m.M21,  m.M22,  m.M23,  m.M24,
+            -m.M31,  m.M32,  m.M33,  m.M34,
+            -m.M41,  m.M42,  m.M43,  m.M44);
+
+        w.Write(r.M11); w.Write(r.M21); w.Write(r.M31); w.Write(r.M41);
+        w.Write(r.M12); w.Write(r.M22); w.Write(r.M32); w.Write(r.M42);
+        w.Write(r.M13); w.Write(r.M23); w.Write(r.M33); w.Write(r.M43);
+        w.Write(r.M14); w.Write(r.M24); w.Write(r.M34); w.Write(r.M44);
+    }
+
+    static void WriteUtf16String(BinaryWriter w, string s)
+    {
+        w.Write(s.Length);
+        if (s.Length > 0)
+            w.Write(Encoding.Unicode.GetBytes(s));
+    }
+}
