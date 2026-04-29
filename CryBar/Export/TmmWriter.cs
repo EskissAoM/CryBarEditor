@@ -476,25 +476,24 @@ public static class TmmWriter
         m[8],  m[9],  m[10], m[11],  // col2
         m[12], m[13], m[14], m[15]); // col3
 
-    // Applies F*M*F (F = diag(-1,1,1,1)) then writes 16 floats in column-major order.
-    // F*M*F negates all elements in row 0 and col 0, except [0,0] which is double-negated.
+    // Applies F*M*F (F = diag(-1,1,1,1)) then writes 16 floats in TMM's flat convention.
+    // F*M*F negates entries where exactly one of (row, col) is 0; entry [0,0] is double-negated.
+    // Storage convention: TMM (and the python reference) stores col-major flat of the col-vector
+    // matrix, which is identical to row-major flat of the equivalent System.Numerics row-vector
+    // matrix (col i of M_col = row i of M_col^T = row i of M_sn). Hence we serialize System.Numerics
+    // fields in row-major order: M11..M14, M21..M24, M31..M34, M41..M44.
     static void WriteMatrix4x4Fmf(BinaryWriter w, Matrix4x4 m)
     {
-        // Apply F*M*F: negate row 0 AND col 0, which means negate elements where
-        // exactly one of (row, col) is 0. Element [0,0] has both => double negation = no change.
-        // In System.Numerics row-vector layout, row 0 = M11,M12,M13,M14 and col 0 = M11,M21,M31,M41.
         var r = new Matrix4x4(
              m.M11, -m.M12, -m.M13, -m.M14,
             -m.M21,  m.M22,  m.M23,  m.M24,
             -m.M31,  m.M32,  m.M33,  m.M34,
             -m.M41,  m.M42,  m.M43,  m.M44);
 
-        // Write column-major (transpose of System.Numerics row-major storage):
-        // col0 = r.M11,r.M21,r.M31,r.M41 etc.
-        w.Write(r.M11); w.Write(r.M21); w.Write(r.M31); w.Write(r.M41);
-        w.Write(r.M12); w.Write(r.M22); w.Write(r.M32); w.Write(r.M42);
-        w.Write(r.M13); w.Write(r.M23); w.Write(r.M33); w.Write(r.M43);
-        w.Write(r.M14); w.Write(r.M24); w.Write(r.M34); w.Write(r.M44);
+        w.Write(r.M11); w.Write(r.M12); w.Write(r.M13); w.Write(r.M14);
+        w.Write(r.M21); w.Write(r.M22); w.Write(r.M23); w.Write(r.M24);
+        w.Write(r.M31); w.Write(r.M32); w.Write(r.M33); w.Write(r.M34);
+        w.Write(r.M41); w.Write(r.M42); w.Write(r.M43); w.Write(r.M44);
     }
 
     static float[] IdentityMatrix4x3Floats() =>

@@ -124,6 +124,75 @@ public class GlbRoundTripTests
         Assert.Equal(1f, parsed.MainMatrix[10]);
     }
 
+    [Fact]
+    public void TmmWriter_NonTrivialBoneMatrix_RoundTripsThroughDiskFormat()
+    {
+        // 60deg Z-rotation + translation. Picks a matrix where transpose != original
+        // so the col-major flat write convention is verified.
+        var t = new System.Numerics.Vector3(1.5f, -0.7f, 0.3f);
+        var r = System.Numerics.Quaternion.CreateFromAxisAngle(
+            System.Numerics.Vector3.UnitZ, MathF.PI / 3f);
+        var matT = System.Numerics.Matrix4x4.CreateTranslation(t);
+        var matR = System.Numerics.Matrix4x4.CreateFromQuaternion(r);
+        var mat = matR * matT; // System.Numerics row-vector form
+
+        // Store in CryBar internal flat (= col-major of col-vector form = row-major of row-vector form).
+        var input = new float[]
+        {
+            mat.M11, mat.M12, mat.M13, mat.M14,
+            mat.M21, mat.M22, mat.M23, mat.M24,
+            mat.M31, mat.M32, mat.M33, mat.M34,
+            mat.M41, mat.M42, mat.M43, mat.M44,
+        };
+
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh { Primitives = [new GlbMeshPrimitive
+            {
+                MaterialName = "m",
+                Positions = [0, 0, 0,  1, 0, 0,  1, 1, 0],
+                Normals = [0, 0, 1,   0, 0, 1,   0, 0, 1],
+                Tangents = [1, 0, 0, 1,  1, 0, 0, 1,  1, 0, 0, 1],
+                TexCoords = [0, 0,  1, 0,  1, 1],
+                Indices = [0, 1, 2],
+                JointIndices = [0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0],
+                JointWeights = [1, 0, 0, 0,  1, 0, 0, 0,  1, 0, 0, 0],
+            }] },
+            Bones = [new GlbBone {
+                Name = "test_bone",
+                ParentIndex = -1,
+                LocalMatrix = (float[])input.Clone(),
+                InverseBindMatrix = Identity16Local()
+            }],
+            Materials = [new GlbMaterial { Name = "m" }],
+        };
+
+        var (tmm, _, _) = TmmWriter.Write(model);
+        var parsed = new TmmFile(tmm);
+        Assert.True(parsed.FullyParsed);
+
+        // Expected disk content: F*M*F applied at TRS level, written col-major.
+        // F = diag(-1,1,1,1). For a row-vector matrix M_sn, F*M_sn*F flips entries
+        // where exactly one of (row,col) is 0: M12, M13, M14, M21, M31, M41.
+        var f = new System.Numerics.Matrix4x4(
+            mat.M11, -mat.M12, -mat.M13, -mat.M14,
+           -mat.M21,  mat.M22,  mat.M23,  mat.M24,
+           -mat.M31,  mat.M32,  mat.M33,  mat.M34,
+           -mat.M41,  mat.M42,  mat.M43,  mat.M44);
+        var expected = new float[]
+        {
+            f.M11, f.M12, f.M13, f.M14,
+            f.M21, f.M22, f.M23, f.M24,
+            f.M31, f.M32, f.M33, f.M34,
+            f.M41, f.M42, f.M43, f.M44,
+        };
+
+        var actual = parsed.Bones![0].ParentSpaceMatrix;
+        Assert.Equal(16, actual.Length);
+        for (int i = 0; i < 16; i++)
+            Assert.Equal(expected[i], actual[i], 4);
+    }
+
     [SkippableFact]
     public async Task Layer2_VanillaTmmRoundTrip_FullPipelineWithEverything()
     {
