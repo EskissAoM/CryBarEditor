@@ -86,6 +86,8 @@ public class TmmFile
         Parsed = Parse(data.Span);
     }
 
+    public bool ParseHeader() => Parsed;
+
     bool Parse(ReadOnlySpan<byte> data)
     {
         if (data.Length < 16) return false;
