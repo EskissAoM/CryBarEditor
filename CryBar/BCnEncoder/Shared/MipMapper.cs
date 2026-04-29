@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 
 using CommunityToolkit.HighPerformance;
 
@@ -52,7 +53,7 @@ namespace CryBar.BCnEncoder.Shared
                 var mipWidth = Math.Max(1, width >> mipLevel);
                 var mipHeight = Math.Max(1, height >> mipLevel);
 
-                var newMip = ResizeToHalf(result[mipLevel - 1].Span);
+                var newMip = ResizeToHalf(result[mipLevel - 1]);
                 result[mipLevel] = newMip;
 
                 // Stop generating if last generated mipmap was of size 1x1
@@ -165,30 +166,44 @@ namespace CryBar.BCnEncoder.Shared
             mipHeight = Math.Max(1, height >> mipIdx);
         }
 
-        private static ColorRgba32[,] ResizeToHalf(ReadOnlySpan2D<ColorRgba32> pixelsRgba)
+        private static ColorRgba32[,] ResizeToHalf(ReadOnlyMemory2D<ColorRgba32> pixelsMemory)
         {
-
-            var oldWidth = pixelsRgba.Width;
-            var oldHeight = pixelsRgba.Height;
+            var oldWidth = pixelsMemory.Width;
+            var oldHeight = pixelsMemory.Height;
             var newWidth = Math.Max(1, oldWidth >> 1);
             var newHeight = Math.Max(1, oldHeight >> 1);
 
             var result = new ColorRgba32[newHeight, newWidth];
+            var maxX = oldWidth - 1;
+            var maxY = oldHeight - 1;
 
-            int ClampW(int x) => Math.Max(0, Math.Min(oldWidth - 1, x));
-            int ClampH(int y) => Math.Max(0, Math.Min(oldHeight - 1, y));
-
-            for (var y2 = 0; y2 < newHeight; y2++)
+            void ProcessRow(int y2)
             {
+                var pixelsRgba = pixelsMemory.Span;
+                var srcY0 = Math.Min(maxY, y2 * 2);
+                var srcY1 = Math.Min(maxY, y2 * 2 + 1);
                 for (var x2 = 0; x2 < newWidth; x2++)
                 {
-                    var ul = pixelsRgba[ClampH(y2 * 2), ClampW(x2 * 2)].ToFloat();
-                    var ur = pixelsRgba[ClampH(y2 * 2), ClampW(x2 * 2 + 1)].ToFloat();
-                    var ll = pixelsRgba[ClampH(y2 * 2 + 1), ClampW(x2 * 2)].ToFloat();
-                    var lr = pixelsRgba[ClampH(y2 * 2 + 1), ClampW(x2 * 2 + 1)].ToFloat();
+                    var srcX0 = Math.Min(maxX, x2 * 2);
+                    var srcX1 = Math.Min(maxX, x2 * 2 + 1);
+
+                    var ul = pixelsRgba[srcY0, srcX0].ToFloat();
+                    var ur = pixelsRgba[srcY0, srcX1].ToFloat();
+                    var ll = pixelsRgba[srcY1, srcX0].ToFloat();
+                    var lr = pixelsRgba[srcY1, srcX1].ToFloat();
 
                     result[y2, x2] = ((ul + ur + ll + lr) / 4).ToRgba32();
                 }
+            }
+
+            // Parallel.For startup outweighs the work for tiny mips
+            if (newHeight * newWidth < 4096)
+            {
+                for (var y2 = 0; y2 < newHeight; y2++) ProcessRow(y2);
+            }
+            else
+            {
+                Parallel.For(0, newHeight, ProcessRow);
             }
 
             return result;

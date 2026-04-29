@@ -11,8 +11,6 @@ namespace CryBar.BCnEncoder.Encoder
 {
     internal abstract class BaseBcBlockEncoder<T, TBlock> : IBcBlockEncoder<TBlock> where T : unmanaged where TBlock : unmanaged
     {
-        private static readonly object lockObj = new object();
-
         public byte[] Encode(TBlock[] blocks, int blockWidth, int blockHeight, CompressionQuality quality, OperationContext context)
         {
             var outputData = new byte[blockWidth * blockHeight * Unsafe.SizeOf<T>()];
@@ -32,10 +30,7 @@ namespace CryBar.BCnEncoder.Encoder
 
                      if (context.Progress != null)
                      {
-                         lock (lockObj)
-                         {
-                             context.Progress.Report(++currentBlocks);
-                         }
+                         context.Progress.Report(Interlocked.Increment(ref currentBlocks));
                      }
                  });
             }
