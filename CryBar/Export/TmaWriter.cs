@@ -136,7 +136,7 @@ public static class TmaWriter
 
     // Encodes a quaternion into Quat64 "smallest three" format (8 bytes).
     // Layout: [4-bit dropped-index][20-bit C2][20-bit C1][20-bit C0], each 20-bit = sign + 19-bit magnitude.
-    static ulong EncodeQuat64(Quaternion q)
+    internal static ulong EncodeQuat64(Quaternion q)
     {
         // Normalize
         float mag = MathF.Sqrt(q.X * q.X + q.Y * q.Y + q.Z * q.Z + q.W * q.W);

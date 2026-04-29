@@ -197,7 +197,7 @@ public static class TmaDecoder
         return new Quaternion(q0, q1, q2, q3);
     }
 
-    static Quaternion DecodeSmallestThree64(ulong packed)
+    internal static Quaternion DecodeSmallestThree64(ulong packed)
     {
         // Layout: [4-bit index][20-bit C2][20-bit C1][20-bit C0]
         // Each 20-bit: bit 19 = sign, bits 18-0 = magnitude (max 524287)
