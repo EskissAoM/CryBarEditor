@@ -377,22 +377,6 @@ public class GlbExporterTests
 
     #region Helper Methods
 
-    static (TmmFile tmm, TmmDataFile dataFile) CreateMinimalModel()
-    {
-        uint numVerts = 3;
-        uint numTris = 3; // 1 triangle = 3 indices
-
-        var tmm = CreateSyntheticTmmFile(numVerts, numTris, false,
-            numMeshGroups: 1, materials: ["default_mat"], submodels: ["default"]);
-        Assert.True(tmm.Parsed);
-
-        var dataBytes = CreateSyntheticData(numVertices: numVerts, numTriangleVerts: numTris, hasSkinning: false);
-        var dataFile = new TmmDataFile(dataBytes, tmm);
-        Assert.True(dataFile.Parsed);
-
-        return (tmm, dataFile);
-    }
-
     static (TmmFile tmm, TmmDataFile dataFile) CreateSkinnedModel()
     {
         uint numVerts = 3;
