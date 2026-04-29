@@ -125,6 +125,82 @@ public class GlbRoundTripTests
     }
 
     [Fact]
+    public void TmmWriter_AttachmentMatrices_RoundTripBothSlotsCorrectly()
+    {
+        // Two distinct 4x3 row-major matrices so slot-swap and transpose bugs are detectable.
+        // X = AdjustmentTransformMatrix (slot 1), Y = LocalTransformMatrix (slot 2).
+        var X = new float[] {
+            2, 0, 0, 1.5f,
+            0, 3, 0, -0.5f,
+            0, 0, 4, 0.7f
+        };
+        var Y = new float[] {
+            5, 0, 0, 0.1f,
+            0, 6, 0, 0.2f,
+            0, 0, 7, 0.3f
+        };
+
+        // Simulate the GlbExporter forward path on X to produce att.LocalMatrix:
+        //   row-major-3x4 -> col-major-4x4 (with [0,0,0,1] homogeneous col)
+        //   then F*M*F via AxisNegateMask {1,2,3,4,8,12} (negate flat indices).
+        var attLocalMatrix = new float[] {
+            X[0], X[4], X[8],  0,
+            X[1], X[5], X[9],  0,
+            X[2], X[6], X[10], 0,
+            X[3], X[7], X[11], 1,
+        };
+        foreach (var i in new[] { 1, 2, 3, 4, 8, 12 })
+            attLocalMatrix[i] = -attLocalMatrix[i];
+
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh { Primitives = [new GlbMeshPrimitive
+            {
+                MaterialName = "m",
+                Positions = [0, 0, 0,  1, 0, 0,  1, 1, 0],
+                Normals = [0, 0, 1,   0, 0, 1,   0, 0, 1],
+                Tangents = [1, 0, 0, 1,  1, 0, 0, 1,  1, 0, 0, 1],
+                TexCoords = [0, 0,  1, 0,  1, 1],
+                Indices = [0, 1, 2],
+                JointIndices = [0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0],
+                JointWeights = [1, 0, 0, 0,  1, 0, 0, 0,  1, 0, 0, 0],
+            }] },
+            Bones = [new GlbBone {
+                Name = "root", ParentIndex = -1,
+                LocalMatrix = Identity16Local(),
+                InverseBindMatrix = Identity16Local()
+            }],
+            Attachments = [new GlbAttachment {
+                Name = "att1", Index = 0, ParentBoneIndex = 0,
+                LocalMatrix = attLocalMatrix
+            }],
+            Materials = [new GlbMaterial { Name = "m" }],
+            Extras = new GlbExtras
+            {
+                Tmm = new GlbExtras.TmmSection
+                {
+                    Attachments = [new GlbExtras.AttachmentEntry
+                    {
+                        Name = "att1",
+                        LocalMatrix = (float[])Y.Clone(),
+                    }],
+                }
+            }
+        };
+
+        var (tmm, _, _) = TmmWriter.Write(model);
+        var parsed = new TmmFile(tmm);
+        Assert.True(parsed.FullyParsed);
+        Assert.Single(parsed.Attachments!);
+
+        var att = parsed.Attachments![0];
+        for (int i = 0; i < 12; i++)
+            Assert.Equal(X[i], att.AdjustmentTransformMatrix[i], 4);
+        for (int i = 0; i < 12; i++)
+            Assert.Equal(Y[i], att.LocalTransformMatrix[i], 4);
+    }
+
+    [Fact]
     public void TmmWriter_NonTrivialBoneMatrix_RoundTripsThroughDiskFormat()
     {
         // 60deg Z-rotation + translation. Picks a matrix where transpose != original
@@ -219,7 +295,7 @@ public class GlbRoundTripTests
 
         foreach (var entry in metaBar.Entries!)
         {
-            if (processed >= 3) break;
+            if (processed >= 10) break;
             if (!entry.Name.EndsWith(".tmm", StringComparison.OrdinalIgnoreCase)) continue;
             if (entry.Name.EndsWith(".tmm.data", StringComparison.OrdinalIgnoreCase)) continue;
 
@@ -304,7 +380,46 @@ public class GlbRoundTripTests
                 {
                     float maxBoneDrift = MaxBoneMatrixDrift(origTmm.Bones, reparsed.Bones);
                     if (maxBoneDrift > 0.01f)
-                        failed.Add($"{entry.Name}: max bone matrix drift {maxBoneDrift:F5} > 0.01");
+                        failed.Add($"{entry.Name}: max bone parent-space matrix drift {maxBoneDrift:F5} > 0.01");
+
+                    float maxWorldDrift = MaxBoneFlatDrift(origTmm.Bones, reparsed.Bones, b => b.WorldSpaceMatrix);
+                    if (maxWorldDrift > 0.01f)
+                        failed.Add($"{entry.Name}: max bone world-space matrix drift {maxWorldDrift:F5} > 0.01");
+
+                    float maxIbmDrift = MaxBoneFlatDrift(origTmm.Bones, reparsed.Bones, b => b.InverseBindMatrix);
+                    if (maxIbmDrift > 0.01f)
+                        failed.Add($"{entry.Name}: max bone inverse-bind matrix drift {maxIbmDrift:F5} > 0.01");
+
+                    float maxColDrift = MaxBoneCollisionDrift(origTmm.Bones, reparsed.Bones);
+                    if (maxColDrift > 0.01f)
+                        failed.Add($"{entry.Name}: max bone collision (offset/radius) drift {maxColDrift:F5} > 0.01");
+                }
+
+                if (origTmm.MeshGroups != null && reparsed.MeshGroups != null &&
+                    origTmm.MeshGroups.Length == reparsed.MeshGroups.Length)
+                {
+                    for (int g = 0; g < origTmm.MeshGroups.Length; g++)
+                    {
+                        if (origTmm.MeshGroups[g].SubmodelMask != reparsed.MeshGroups[g].SubmodelMask)
+                            failed.Add($"{entry.Name}: meshGroup[{g}] submodel_mask {reparsed.MeshGroups[g].SubmodelMask} != {origTmm.MeshGroups[g].SubmodelMask}");
+                        if (origTmm.MeshGroups[g].MaterialIndex != reparsed.MeshGroups[g].MaterialIndex)
+                            failed.Add($"{entry.Name}: meshGroup[{g}] material_index mismatch");
+                    }
+                }
+
+                if (origTmm.Attachments != null && reparsed.Attachments != null &&
+                    origTmm.Attachments.Length == reparsed.Attachments.Length &&
+                    origTmm.Attachments.Length > 0)
+                {
+                    float maxAdjDrift = MaxAttachmentFlatDrift(origTmm.Attachments, reparsed.Attachments,
+                        a => a.AdjustmentTransformMatrix);
+                    if (maxAdjDrift > 0.01f)
+                        failed.Add($"{entry.Name}: max attachment adjustment-matrix drift {maxAdjDrift:F5} > 0.01");
+
+                    float maxLocalDrift = MaxAttachmentFlatDrift(origTmm.Attachments, reparsed.Attachments,
+                        a => a.LocalTransformMatrix);
+                    if (maxLocalDrift > 0.01f)
+                        failed.Add($"{entry.Name}: max attachment local-matrix drift {maxLocalDrift:F5} > 0.01");
                 }
 
                 succeeded++;
@@ -345,7 +460,7 @@ public class GlbRoundTripTests
 
         foreach (var entry in metaBar.Entries!)
         {
-            if (processed >= 3) break;
+            if (processed >= 10) break;
             if (!entry.Name.EndsWith(".tmm", StringComparison.OrdinalIgnoreCase)) continue;
             if (entry.Name.EndsWith(".tmm.data", StringComparison.OrdinalIgnoreCase)) continue;
 
@@ -573,13 +688,51 @@ public class GlbRoundTripTests
     }
 
     static float MaxBoneMatrixDrift(TmmBone[] orig, TmmBone[] reparsed)
+        => MaxBoneFlatDrift(orig, reparsed, b => b.ParentSpaceMatrix);
+
+    static float MaxBoneFlatDrift(TmmBone[] orig, TmmBone[] reparsed, Func<TmmBone, float[]> selector)
     {
         float max = 0f;
         int count = Math.Min(orig.Length, reparsed.Length);
         for (int b = 0; b < count; b++)
         {
-            var a = orig[b].ParentSpaceMatrix;
-            var r = reparsed[b].ParentSpaceMatrix;
+            var a = selector(orig[b]);
+            var r = selector(reparsed[b]);
+            int len = Math.Min(a.Length, r.Length);
+            for (int i = 0; i < len; i++)
+            {
+                float d = Math.Abs(a[i] - r[i]);
+                if (d > max) max = d;
+            }
+        }
+        return max;
+    }
+
+    static float MaxBoneCollisionDrift(TmmBone[] orig, TmmBone[] reparsed)
+    {
+        float max = 0f;
+        int count = Math.Min(orig.Length, reparsed.Length);
+        for (int b = 0; b < count; b++)
+        {
+            float dx = Math.Abs(orig[b].CollisionOffsetX - reparsed[b].CollisionOffsetX);
+            float dy = Math.Abs(orig[b].CollisionOffsetY - reparsed[b].CollisionOffsetY);
+            float dz = Math.Abs(orig[b].CollisionOffsetZ - reparsed[b].CollisionOffsetZ);
+            float dr = Math.Abs(orig[b].Radius - reparsed[b].Radius);
+            float d = Math.Max(Math.Max(dx, dy), Math.Max(dz, dr));
+            if (d > max) max = d;
+        }
+        return max;
+    }
+
+    static float MaxAttachmentFlatDrift(TmmAttachment[] orig, TmmAttachment[] reparsed,
+        Func<TmmAttachment, float[]> selector)
+    {
+        float max = 0f;
+        int count = Math.Min(orig.Length, reparsed.Length);
+        for (int b = 0; b < count; b++)
+        {
+            var a = selector(orig[b]);
+            var r = selector(reparsed[b]);
             int len = Math.Min(a.Length, r.Length);
             for (int i = 0; i < len; i++)
             {

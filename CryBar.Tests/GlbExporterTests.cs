@@ -661,7 +661,7 @@ public class GlbExporterTests
     }
 
     [Fact]
-    public void ConvertTmmToGlbBytes_BackwardsCompatibleWithoutSourceFiles_NoExtras()
+    public void ConvertTmmToGlbBytes_WithoutSourceFiles_StillEmbedsTmmExtras()
     {
         uint nv = 3, nt = 3;
         uint vbl = nv * (uint)TmmVertex.SizeInBytes;
@@ -676,7 +676,10 @@ public class GlbExporterTests
 
         Assert.NotNull(glb);
         var json = ExtractJson(glb);
-        if (json.TryGetProperty("extras", out var ex))
-            Assert.False(ex.TryGetProperty("crybar", out _));
+        // Extras now always present (carries TMM-only data like bone collisions, autoburn, attachments).
+        // Tma/ddt sections will be empty when no source files are supplied.
+        Assert.True(json.TryGetProperty("extras", out var ex));
+        Assert.True(ex.TryGetProperty("crybar", out var crybar));
+        Assert.True(crybar.TryGetProperty("tmm", out _));
     }
 }

@@ -446,15 +446,28 @@ public static class TmmWriter
                 worldMatrices[i] = local * worldMatrices[bones[i].ParentIndex];
         }
 
+        var collisions = model.Extras?.Tmm.BoneCollisions ?? [];
+        bool hasCollisions = collisions.Length == bones.Length * 4;
+
         for (int i = 0; i < bones.Length; i++)
         {
             var bone = bones[i];
             WriteUtf16String(w, bone.Name);
             w.Write(bone.ParentIndex);
 
-            // Collision offset (3 floats), radius (1 float) -- defaults
-            w.Write(0f); w.Write(0f); w.Write(0f);
-            w.Write(0.5f);
+            // Collision offset (XYZ) + radius — sourced from extras when available, else defaults.
+            if (hasCollisions)
+            {
+                w.Write(collisions[i * 4]);
+                w.Write(collisions[i * 4 + 1]);
+                w.Write(collisions[i * 4 + 2]);
+                w.Write(collisions[i * 4 + 3]);
+            }
+            else
+            {
+                w.Write(0f); w.Write(0f); w.Write(0f);
+                w.Write(0.5f);
+            }
 
             var parentSpaceMat = ColMajorToMatrix(bone.LocalMatrix);
             var worldMat       = worldMatrices[i];
@@ -519,12 +532,16 @@ public static class TmmWriter
             w.Write(att.ParentBoneIndex);
             WriteUtf16String(w, att.Name);
 
-            // Adjustment transform: extras LocalMatrix (12 floats), or identity
-            var adjMat = extras?.LocalMatrix ?? IdentityMatrix4x3Floats();
-            for (int j = 0; j < 12; j++) w.Write(j < adjMat.Length ? adjMat[j] : 0f);
+            // Slot 1 (AdjustmentTransformMatrix) is reconstructed from the glTF node matrix
+            // (which GlbExporter sourced from the original AdjustmentTransformMatrix). The glTF
+            // flat is col-major-4x4 of M_col with F*M*F (axis-flip indices {1,2,3,4,8,12}) applied;
+            // we undo the flip and extract rows 0/1/2 to produce TMM's row-major-3x4 layout.
+            WriteAdjustmentMatrixFromGlb(w, att.LocalMatrix);
 
-            // Local transform: first 12 floats of the 16-float column-major glTF matrix
-            for (int j = 0; j < 12; j++) w.Write(att.LocalMatrix[j]);
+            // Slot 2 (LocalTransformMatrix) is preserved verbatim through GlbExtras as 12 floats
+            // in TMM's native row-major-3x4 layout; pass through untransformed.
+            var localMat = extras?.LocalMatrix ?? IdentityMatrix4x3Floats();
+            for (int j = 0; j < 12; j++) w.Write(j < localMat.Length ? localMat[j] : 0f);
 
             w.Write(extras?.DummyBoneMode ?? 0u);
             w.Write(extras?.DummyBoneTransformMode ?? 0u);
@@ -537,6 +554,22 @@ public static class TmmWriter
             w.Write((uint)anims.Length);
             foreach (var anim in anims) WriteUtf16String(w, anim);
         }
+    }
+
+    // Inverts the per-flat-index axis flip applied by GlbExporter on attachment node matrices,
+    // then writes the reconstructed TMM row-major-3x4 layout (rows 0/1/2 of M_col).
+    // Source flat is col-major-4x4 of (F*M_col*F): col-major flat[col*4 + row], so row r of M_col
+    // is at flat indices (0*4+r), (1*4+r), (2*4+r), (3*4+r) = r, r+4, r+8, r+12.
+    static void WriteAdjustmentMatrixFromGlb(BinaryWriter w, float[] flat)
+    {
+        Span<float> u = stackalloc float[16];
+        flat.CopyTo(u);
+        u[1] = -u[1]; u[2] = -u[2]; u[3] = -u[3];
+        u[4] = -u[4]; u[8] = -u[8]; u[12] = -u[12];
+
+        for (int row = 0; row < 3; row++)
+            for (int col = 0; col < 4; col++)
+                w.Write(u[col * 4 + row]);
     }
 
     static void WriteTrailingSections(BinaryWriter w, GlbModel model)

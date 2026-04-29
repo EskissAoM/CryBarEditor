@@ -126,6 +126,7 @@ public class GlbExtrasTests
                 [
                     new GlbExtras.ModifiedBoneEntry { BoneIndex = 3, OriginalRadius = 0.1f, RadiusMultiplier = 2.0f }
                 ],
+                BoneCollisions = [0.1f, 0.2f, 0.3f, 0.4f,  0.5f, 0.6f, 0.7f, 0.8f],
                 AutoAttach = new GlbExtras.AutoAttachInfo
                 {
                     AutoAttachCorpseToBone = true,
@@ -182,6 +183,7 @@ public class GlbExtrasTests
 
         Assert.Equal(original.Tmm.ExtendedBbox, roundTripped.Tmm.ExtendedBbox);
         Assert.Equal(original.Tmm.MainMatrix, roundTripped.Tmm.MainMatrix);
+        Assert.Equal(original.Tmm.BoneCollisions, roundTripped.Tmm.BoneCollisions);
         Assert.Equal(original.Tmm.Submodels, roundTripped.Tmm.Submodels);
         Assert.Equal(original.Tmm.AutoBurnMode, roundTripped.Tmm.AutoBurnMode);
         Assert.Equal(original.Tmm.Raytracing, roundTripped.Tmm.Raytracing);

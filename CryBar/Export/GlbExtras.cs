@@ -25,6 +25,9 @@ public sealed class GlbExtras
         public bool Raytracing { get; set; }
         public bool TerrainEmb { get; set; }
         public ModifiedBoneEntry[] ModifiedBones { get; set; } = [];
+        // Per-bone collision data (offset XYZ + radius) parallel to the bone array.
+        // Length is either 0 (no data) or 4 * numBones with 4-stride [X, Y, Z, Radius].
+        public float[] BoneCollisions { get; set; } = [];
         public AutoAttachInfo? AutoAttach { get; set; }
         public float[][] ImpactPoints { get; set; } = [];
         public AttachmentEntry[] Attachments { get; set; } = [];
@@ -139,6 +142,8 @@ public sealed class GlbExtras
             w.WriteEndObject();
         }
         w.WriteEndArray();
+
+        WriteFloatArray(w, "bone_collisions", Tmm.BoneCollisions);
 
         if (Tmm.AutoAttach is { } aa)
         {
@@ -313,6 +318,20 @@ public sealed class GlbExtras
                 }).ToArray();
             }
 
+            if (tmm.Bones is { Length: > 0 })
+            {
+                var collisions = new float[tmm.Bones.Length * 4];
+                for (int i = 0; i < tmm.Bones.Length; i++)
+                {
+                    var b = tmm.Bones[i];
+                    collisions[i * 4]     = b.CollisionOffsetX;
+                    collisions[i * 4 + 1] = b.CollisionOffsetY;
+                    collisions[i * 4 + 2] = b.CollisionOffsetZ;
+                    collisions[i * 4 + 3] = b.Radius;
+                }
+                extras.Tmm.BoneCollisions = collisions;
+            }
+
             if (tmm.AutoAttachInfo is { } aa)
             {
                 extras.Tmm.AutoAttach = new AutoAttachInfo
@@ -389,6 +408,8 @@ public sealed class GlbExtras
         if (el.TryGetProperty("autoburn_mode", out var ab)) tmm.AutoBurnMode = ab.GetByte();
         if (el.TryGetProperty("raytracing", out var rt)) tmm.Raytracing = rt.GetBoolean();
         if (el.TryGetProperty("terrain_emb", out var te)) tmm.TerrainEmb = te.GetBoolean();
+
+        if (el.TryGetProperty("bone_collisions", out var bc)) tmm.BoneCollisions = ReadFloatArray(bc);
 
         if (el.TryGetProperty("modified_bones", out var mb) && mb.ValueKind == JsonValueKind.Array)
         {

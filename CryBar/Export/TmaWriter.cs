@@ -94,7 +94,13 @@ public static class TmaWriter
 
             w.Write(frameCount);
 
-            MatrixDecomp.Decompose(bones[i].LocalMatrix, out var bindT, out var bindR, out _);
+            // bones[i].LocalMatrix is in glTF (axis-mirrored) space, so the decomposed bind pose
+            // is mirror(bindT_orig) and mirror_quat(bindR_orig). The forward composition in
+            // GlbExporter uses bindT_orig / bindR_orig (the original game-space pose), so we must
+            // unmirror back before subtracting/inverting to recover the original delta.
+            MatrixDecomp.Decompose(bones[i].LocalMatrix, out var bindT_glb, out var bindR_glb, out _);
+            var bindT = new Vector3(-bindT_glb.X, bindT_glb.Y, bindT_glb.Z);
+            var bindR = new Quaternion(bindR_glb.X, -bindR_glb.Y, -bindR_glb.Z, bindR_glb.W);
             var invBindR = Quaternion.Inverse(bindR);
 
             GlbBoneTrack? track = null;
@@ -112,7 +118,7 @@ public static class TmaWriter
             for (int f = 0; f < frameCount; f++)
             {
                 var glbT = SampleTrackTranslation(track, f, frameCount, anim.Duration, bindT);
-                // unmirror X (glTF RH -> game LH), then subtract bind-pose translation
+                // Forward: glbT = mirror(bindT + tmaT). Reverse: tmaT = unmirror(glbT) - bindT.
                 var tmaT = new Vector3(-glbT.X, glbT.Y, glbT.Z) - bindT;
                 w.Write(tmaT.X);
                 w.Write(tmaT.Y);
@@ -125,10 +131,8 @@ public static class TmaWriter
             for (int f = 0; f < frameCount; f++)
             {
                 var glbR = SampleTrackRotation(track, f, frameCount, anim.Duration, bindR);
-                // unmirror (glTF RH -> game LH): flip Y,Z
+                // Forward: glbR = mirror(bindR * conj(tmaR)). Reverse: tmaR = conj(invBindR * unmirror(glbR)).
                 var unmirrored = new Quaternion(glbR.X, -glbR.Y, -glbR.Z, glbR.W);
-                // inverse of forward: glb_R = mirror(bindR * conj(tma_R))
-                // => tma_R = conj(invBindR * unmirrored)
                 var tmaR = Quaternion.Conjugate(invBindR * unmirrored);
                 w.Write(EncodeQuat64(tmaR));
             }
