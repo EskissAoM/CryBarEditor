@@ -22,11 +22,11 @@ public class GlbExtrasTests
     public void TmmExtras_DefaultMainMatrix_IsIdentity()
     {
         var tmm = new GlbExtras.TmmSection();
-        Assert.Equal(12, tmm.MainMatrix.Length);
-        // Identity 4x3: row-major [1,0,0,0, 0,1,0,0, 0,0,1,0]
+        Assert.Equal(16, tmm.MainMatrix.Length);
         Assert.Equal(1.0f, tmm.MainMatrix[0]);
         Assert.Equal(1.0f, tmm.MainMatrix[5]);
         Assert.Equal(1.0f, tmm.MainMatrix[10]);
+        Assert.Equal(1.0f, tmm.MainMatrix[15]);
     }
 
     [Fact]
@@ -46,7 +46,7 @@ public class GlbExtrasTests
             Tmm = new GlbExtras.TmmSection
             {
                 ExtendedBbox = [-1, -1, -1, 1, 1, 1],
-                MainMatrix = [0.5f, 0, 0, 0,  0, 0.5f, 0, 0,  0, 0, 0.5f, 0],
+                MainMatrix = [0.5f, 0, 0, 0,  0, 0.5f, 0, 0,  0, 0, 0.5f, 0,  0, 0, 0, 1],
                 Submodels = ["default", "alt"],
                 AutoBurnMode = 2,
                 Raytracing = true,
@@ -117,7 +117,7 @@ public class GlbExtrasTests
             Tmm = new GlbExtras.TmmSection
             {
                 ExtendedBbox = [-2, -3, -4, 5, 6, 7],
-                MainMatrix = [0.0115f, 0, 0, 0,  0, 0.0115f, 0, 0,  0, 0, 0.0115f, 0],
+                MainMatrix = [0.0115f, 0, 0, 0,  0, 0.0115f, 0, 0,  0, 0, 0.0115f, 0,  0, 0, 0, 1],
                 Submodels = ["default", "broken"],
                 AutoBurnMode = 1,
                 Raytracing = true,

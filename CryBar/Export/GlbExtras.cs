@@ -19,7 +19,7 @@ public sealed class GlbExtras
     public sealed class TmmSection
     {
         public float[] ExtendedBbox { get; set; } = new float[6];
-        public float[] MainMatrix { get; set; } = IdentityMatrix4x3();
+        public float[] MainMatrix { get; set; } = IdentityMatrix4x4();
         public string[] Submodels { get; set; } = ["default"];
         public byte AutoBurnMode { get; set; }
         public bool Raytracing { get; set; }
@@ -30,8 +30,8 @@ public sealed class GlbExtras
         public AttachmentEntry[] Attachments { get; set; } = [];
         public List<string> LossySections { get; set; } = new();
 
-        static float[] IdentityMatrix4x3() =>
-            [1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0];
+        static float[] IdentityMatrix4x4() =>
+            [1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1];
     }
 
     public sealed class TmaSection

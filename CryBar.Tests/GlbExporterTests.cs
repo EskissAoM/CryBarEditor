@@ -545,7 +545,7 @@ public class GlbExporterTests
         {
             Tmm = new GlbExtras.TmmSection
             {
-                MainMatrix = [0.5f, 0, 0, 0,  0, 0.5f, 0, 0,  0, 0, 0.5f, 0],
+                MainMatrix = [0.5f, 0, 0, 0,  0, 0.5f, 0, 0,  0, 0, 0.5f, 0,  0, 0, 0, 1],
                 AutoBurnMode = 3,
             }
         };
@@ -634,7 +634,7 @@ public class GlbExporterTests
         {
             Tmm = new GlbExtras.TmmSection
             {
-                MainMatrix = [0.0115f, 0, 0, 0,  0, 0.0115f, 0, 0,  0, 0, 0.0115f, 0]
+                MainMatrix = [0.0115f, 0, 0, 0,  0, 0.0115f, 0, 0,  0, 0, 0.0115f, 0,  0, 0, 0, 1]
             }
         };
 
@@ -646,10 +646,11 @@ public class GlbExporterTests
         var nodeExtras = node0.GetProperty("extras").GetProperty("crybar");
         var mm = nodeExtras.GetProperty("main_matrix");
 
-        Assert.Equal(12, mm.GetArrayLength());
+        Assert.Equal(16, mm.GetArrayLength());
         Assert.Equal(0.0115f, mm[0].GetSingle());
         Assert.Equal(0.0115f, mm[5].GetSingle());
         Assert.Equal(0.0115f, mm[10].GetSingle());
+        Assert.Equal(1.0f, mm[15].GetSingle());
     }
 
     [Fact]
