@@ -224,8 +224,25 @@ public class DDTImage
     public static Memory2D<ColorRgba32> ImageToPixels(Image<Rgba32> inputImage)
     {
         // Rgba32 and ColorRgba32 are layout-identical - reinterpret the image's pixel buffer directly
-        var pixels = inputImage.GetPixelMemoryGroup()[0];
-        return pixels.Cast<Rgba32, ColorRgba32>().AsMemory2D(inputImage.Height, inputImage.Width);
+        var pixelGroup = inputImage.GetPixelMemoryGroup();
+        if (pixelGroup.Count == 1)
+        {
+            var pixels = pixelGroup[0];
+            return pixels.Cast<Rgba32, ColorRgba32>().AsMemory2D(inputImage.Height, inputImage.Width);
+        }
+
+        // multi-chunk fallback
+        var buffer = new ColorRgba32[inputImage.Width * inputImage.Height];
+        var memory2D = buffer.AsMemory().AsMemory2D(inputImage.Height, inputImage.Width);
+        var dstSpan = memory2D.Span;
+        var pixelBuffer = inputImage.Frames.RootFrame.PixelBuffer;
+        for (var y = 0; y < inputImage.Height; y++)
+        {
+            var srcRow = pixelBuffer.DangerousGetRowSpan(y);
+            var dstRow = dstSpan.GetRowSpan(y);
+            MemoryMarshal.Cast<Rgba32, ColorRgba32>(srcRow).CopyTo(dstRow);
+        }
+        return memory2D;
     }
 
     public static async Task<Memory<byte>> EncodeImageToDDT(Image<Rgba32> image, 

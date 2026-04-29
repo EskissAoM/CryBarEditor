@@ -10,9 +10,10 @@
 		Foreground="#d9d9d9"
 		Background="#141414"
 		DataContext="{Binding RelativeSource={RelativeSource Self}}"
-		CanResize="False" 
+		CanResize="False"
 		d:DesignWidth="340" d:DesignHeight="340"
-		Width="340" Height="340"
+		Width="340" MinHeight="340"
+		SizeToContent="Height"
         Title="Create DDT from image">
 	<Border Padding="15,10" BorderThickness="2" BorderBrush="#d9d9d9">
 		<StackPanel>
@@ -106,10 +107,16 @@
 							   Value="1" />
 			</StackPanel>
 
+			<TextBlock Margin="0,12,0,0"
+					   Text="{Binding ErrorMessage}"
+					   Foreground="#ff7070"
+					   IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+					   TextWrapping="Wrap" />
+
 			<DockPanel LastChildFill="False" Margin="0,18,0,0">
-				<Button DockPanel.Dock="Left" 
+				<Button DockPanel.Dock="Left"
 						x:Name="_btnCreate"
-						Content="Create DDT" 
+						Content="Create DDT"
 						IsDefault="True"
 						IsEnabled="{Binding !Busy}"
 						Click="CreateDDTClick"/>

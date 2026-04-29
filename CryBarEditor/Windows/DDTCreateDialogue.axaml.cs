@@ -18,8 +18,10 @@ namespace CryBarEditor.Windows;
 public partial class DDTCreateDialogue : SimpleWindow
 {
     bool _busy;
+    string? _errorMessage;
 
     public bool Busy { get => _busy; set { _busy = value; OnSelfChanged(); } }
+    public string? ErrorMessage { get => _errorMessage; set { _errorMessage = value; OnSelfChanged(); } }
 
     public string InputFile { get; } = "";
     public string OutputFile { get; } = "";
@@ -91,6 +93,7 @@ public partial class DDTCreateDialogue : SimpleWindow
             return;
         }
 
+        ErrorMessage = null;
         Busy = true;
 
         try
@@ -113,9 +116,9 @@ public partial class DDTCreateDialogue : SimpleWindow
 
             Close();
         }
-        catch
+        catch (Exception ex)
         {
-            // TODO: display error somewhere
+            ErrorMessage = "Failed to create DDT: " + ex.Message;
         }
         finally
         {
