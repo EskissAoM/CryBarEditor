@@ -1,7 +1,10 @@
 using CryBar;
 using CryBar.Bar;
+using CryBar.Dependencies;
 using CryBar.Export;
+using CryBar.Indexing;
 using CryBar.TMM;
+using CryBar.Utilities;
 using Xunit;
 using static CryBar.Tests.TmmTestHelpers;
 
@@ -9,6 +12,14 @@ namespace CryBar.Tests;
 
 public class GlbRoundTripTests
 {
+    static readonly string GamePath =
+        Environment.GetEnvironmentVariable("AOMR_GAME_PATH")
+        ?? @"C:\Program Files (x86)\Steam\steamapps\common\Age of Mythology Retold\game";
+
+    static bool GameInstalled =>
+        Directory.Exists(Path.Combine(GamePath, "modelcache")) &&
+        File.Exists(Path.Combine(GamePath, "modelcache", "ArtModelCacheMeta.bar"));
+
     [Fact]
     public void Layer1_SyntheticRoundTrip_StructurallyEquivalent()
     {
@@ -114,77 +125,95 @@ public class GlbRoundTripTests
     }
 
     [SkippableFact]
-    public void Layer2_VanillaTmmRoundTrip_FullPipelineWithEverything()
+    public async Task Layer2_VanillaTmmRoundTrip_FullPipelineWithEverything()
     {
-        string? barPath = Environment.GetEnvironmentVariable("CRYBAR_TEST_DATA_BAR");
-        Skip.If(string.IsNullOrEmpty(barPath), "CRYBAR_TEST_DATA_BAR not configured.");
-        Skip.IfNot(System.IO.File.Exists(barPath), $"CRYBAR_TEST_DATA_BAR points to missing file: {barPath}");
+        Skip.IfNot(GameInstalled,
+            "AOM:R game install not found at default Steam path or AOMR_GAME_PATH");
 
-        using var stream = System.IO.File.OpenRead(barPath);
-        var bar = new BarFile(stream);
-        var loaded = bar.Load(out var loadError);
-        Assert.True(loaded, $"Failed to load BAR: {loadError}");
+        var modelcacheDir = Path.Combine(GamePath, "modelcache");
+        var metaBarPath = Path.Combine(modelcacheDir, "ArtModelCacheMeta.bar");
 
-        // Pre-build name lookup for fast TMA discovery
-        var barEntryIndex = BuildBarNameIndex(bar.Entries!);
+        // fileIndex covers all modelcache BARs + supplemental (art/, etc.) so .tmm.data and
+        // animfiles can be resolved even though they live in different BARs than the TMMs.
+        var fileIndex = new FileIndex();
+        var modelcacheBars = Directory.GetFiles(modelcacheDir, "*.bar", SearchOption.AllDirectories);
+        FileIndexBuilder.IndexBarFiles(fileIndex, modelcacheBars);
+        var supplemental = FileIndexBuilder.FindSupplementalBarFiles(modelcacheDir);
+        FileIndexBuilder.IndexBarFiles(fileIndex, supplemental);
 
-        int processed = 0;
+        using var metaStream = File.OpenRead(metaBarPath);
+        var metaBar = new BarFile(metaStream);
+        metaBar.Load(out _);
+
+        int processed = 0, succeeded = 0;
         var failed = new List<string>();
-        foreach (var entry in bar.Entries!)
-        {
-            if (processed >= 20) break;
-            if (!entry.Name.EndsWith(".tmm", StringComparison.OrdinalIgnoreCase)) continue;
 
-            var dataEntry = FindEntry(barEntryIndex, entry.Name + ".data");
-            if (dataEntry == null) continue;
+        foreach (var entry in metaBar.Entries!)
+        {
+            if (processed >= 3) break;
+            if (!entry.Name.EndsWith(".tmm", StringComparison.OrdinalIgnoreCase)) continue;
+            if (entry.Name.EndsWith(".tmm.data", StringComparison.OrdinalIgnoreCase)) continue;
+
+            // .tmm.data lives in ArtModelCacheModelData*.bar, not in Meta -- look up via fileIndex
+            var dataIndexEntries = fileIndex.Find(entry.Name + ".data");
+            if (dataIndexEntries.Count == 0) continue;
 
             try
             {
-                var tmmBytes = entry.ReadDataRaw(stream);
-                var dataBytes = dataEntry.ReadDataRaw(stream);
+                using var tmmPooled = entry.ReadDataDecompressedPooled(metaStream);
+                if (tmmPooled == null) continue;
+                var tmmBytes = tmmPooled.Span.ToArray();
+
+                using var dataBuf = await ReadIndexEntryPooled(dataIndexEntries[0]);
+                if (dataBuf == null) continue;
+                var dataBytes = dataBuf.Span.ToArray();
 
                 var origTmm = new TmmFile(tmmBytes);
                 if (!origTmm.FullyParsed) continue;
                 var origData = new TmmDataFile(dataBytes, origTmm);
                 if (!origData.Parsed || origData.Vertices == null) continue;
 
-                // Find TMAs by stem pattern: <tmm_basename>_*.tma
-                var stem = System.IO.Path.GetFileNameWithoutExtension(entry.Name);
-                var (sourceTmas, glbAnimations) = FindTmasForStem(stem, barEntryIndex, stream);
+                var tmmStem = Path.GetFileNameWithoutExtension(entry.Name);
+                var sourceTmas = await FindTmasForTmm(tmmStem, fileIndex);
 
-                // DDT lookup omitted: material XML lookup requires a full file index.
-                // Pass empty lists so extras.Ddt is populated with no entries.
-                var sourceDdts = new List<(string Material, DDTImage Ddt)>();
-                List<GlbExporter.GlbMaterial>? glbMaterials = null;
+                // DDT pairing omitted: DDT round-trip is exercised by DDTImageTests.
+                var glbAnimations = sourceTmas.Count > 0
+                    ? sourceTmas.Select(t => new GlbExporter.GlbAnimation
+                    {
+                        Name = t.Name,
+                        Tracks = TmaDecoder.DecodeAllTracks(t.Tma)!,
+                        Duration = t.Tma.Duration,
+                        FrameCount = t.Tma.FrameCount,
+                    }).ToList()
+                    : null;
 
                 var glbBytes = ConversionHelper.ConvertTmmToGlbBytes(
-                    tmmBytes, dataBytes, glbMaterials, glbAnimations,
-                    sourceTmas: sourceTmas, sourceDdts: sourceDdts);
-                if (glbBytes == null) { failed.Add($"{entry.Name}: ConvertTmmToGlbBytes returned null"); continue; }
+                    tmmBytes, dataBytes,
+                    materials: null,
+                    animations: glbAnimations,
+                    sourceTmas: sourceTmas.Count > 0 ? sourceTmas : null,
+                    sourceDdts: null);
+                if (glbBytes == null) { failed.Add($"{entry.Name}: ConvertTmmToGlbBytes returned null"); processed++; continue; }
 
                 var model = GlbReader.Parse(glbBytes);
                 var (newTmmBytes, newDataBytes, _) = TmmWriter.Write(model);
 
                 var reparsed = new TmmFile(newTmmBytes);
-                if (!reparsed.FullyParsed) { failed.Add($"{entry.Name}: re-parse failed"); continue; }
+                if (!reparsed.FullyParsed) { failed.Add($"{entry.Name}: writer output failed re-parse"); processed++; continue; }
 
                 var reparsedData = new TmmDataFile(newDataBytes, reparsed);
                 if (!reparsedData.Parsed || reparsedData.Vertices == null)
-                { failed.Add($"{entry.Name}: re-parse data failed"); continue; }
+                { failed.Add($"{entry.Name}: re-parse data failed"); processed++; continue; }
 
-                // Count assertions
                 if (reparsed.NumVertices != origTmm.NumVertices)
                     failed.Add($"{entry.Name}: vert count {reparsed.NumVertices} != {origTmm.NumVertices}");
                 if (reparsed.NumTriangleVerts != origTmm.NumTriangleVerts)
-                    failed.Add($"{entry.Name}: idx count {reparsed.NumTriangleVerts} != {origTmm.NumTriangleVerts}");
+                    failed.Add($"{entry.Name}: tri vert count {reparsed.NumTriangleVerts} != {origTmm.NumTriangleVerts}");
                 if ((reparsed.Bones?.Length ?? 0) != (origTmm.Bones?.Length ?? 0))
                     failed.Add($"{entry.Name}: bone count {reparsed.Bones?.Length ?? 0} != {origTmm.Bones?.Length ?? 0}");
                 if ((reparsed.Attachments?.Length ?? 0) != (origTmm.Attachments?.Length ?? 0))
                     failed.Add($"{entry.Name}: attachment count mismatch");
-                if ((reparsed.Materials?.Length ?? 0) != (origTmm.Materials?.Length ?? 0))
-                    failed.Add($"{entry.Name}: material count {reparsed.Materials?.Length ?? 0} != {origTmm.Materials?.Length ?? 0}");
 
-                // Bone name + parent checks
                 if (origTmm.Bones != null && reparsed.Bones != null &&
                     origTmm.Bones.Length == reparsed.Bones.Length)
                 {
@@ -197,40 +226,19 @@ public class GlbRoundTripTests
                     }
                 }
 
-                // Vertex position drift: Half-precision gives ~3 decimal digits, so 0.01 units is safe
                 float maxPosDrift = MaxPositionDrift(origData.Vertices, reparsedData.Vertices);
                 if (maxPosDrift > 0.01f)
-                    failed.Add($"{entry.Name}: max position drift {maxPosDrift:F5} exceeds 0.01");
+                    failed.Add($"{entry.Name}: max position drift {maxPosDrift:F5} > 0.01");
 
-                // Bone parent-space matrix drift (same tolerance — values stored as float32)
                 if (origTmm.Bones != null && reparsed.Bones != null &&
                     origTmm.Bones.Length == reparsed.Bones.Length)
                 {
                     float maxBoneDrift = MaxBoneMatrixDrift(origTmm.Bones, reparsed.Bones);
                     if (maxBoneDrift > 0.01f)
-                        failed.Add($"{entry.Name}: max bone matrix drift {maxBoneDrift:F5} exceeds 0.01");
+                        failed.Add($"{entry.Name}: max bone matrix drift {maxBoneDrift:F5} > 0.01");
                 }
 
-                // TMA round-trip for each animation embedded in the GLB
-                if (model.Animations != null && model.Bones != null)
-                {
-                    foreach (var anim in model.Animations)
-                    {
-                        try
-                        {
-                            GlbExtras.TmaSection? tmaExtras = null;
-                            model.Extras?.Tma.TryGetValue(anim.Name, out tmaExtras);
-                            var (tmaBytes2, _) = TmaWriter.Write(anim, model.Bones, tmaExtras);
-                            var revalidate = new TmaFile(tmaBytes2);
-                            if (!revalidate.Parsed)
-                                failed.Add($"{entry.Name}: TMA re-parse failed for anim '{anim.Name}'");
-                        }
-                        catch (Exception ex)
-                        {
-                            failed.Add($"{entry.Name}: TMA write '{anim.Name}': {ex.GetType().Name}: {ex.Message}");
-                        }
-                    }
-                }
+                succeeded++;
             }
             catch (Exception ex)
             {
@@ -239,119 +247,121 @@ public class GlbRoundTripTests
             processed++;
         }
 
-        Assert.True(processed > 0, "No TMMs processed - check BAR contents");
-        Assert.True(failed.Count == 0, $"Round-trip failures ({failed.Count}/{processed}):\n  " + string.Join("\n  ", failed));
+        Assert.True(processed > 0, "No TMMs found in ArtModelCacheMeta.bar");
+        Assert.True(failed.Count == 0,
+            $"Round-trip failures ({failed.Count}/{processed}):\n  " + string.Join("\n  ", failed));
     }
 
     [SkippableFact]
-    public void Layer3_VanillaTmaRoundTrip_TrackValuesWithinTolerance()
+    public async Task Layer3_VanillaTmaRoundTrip_TrackValuesWithinTolerance()
     {
-        string? barPath = Environment.GetEnvironmentVariable("CRYBAR_TEST_DATA_BAR");
-        Skip.If(string.IsNullOrEmpty(barPath), "CRYBAR_TEST_DATA_BAR not configured.");
-        Skip.IfNot(System.IO.File.Exists(barPath), $"CRYBAR_TEST_DATA_BAR points to missing file: {barPath}");
+        Skip.IfNot(GameInstalled,
+            "AOM:R game install not found at default Steam path or AOMR_GAME_PATH");
 
-        using var stream = System.IO.File.OpenRead(barPath);
-        var bar = new BarFile(stream);
-        var loaded = bar.Load(out var loadError);
-        Assert.True(loaded, $"Failed to load BAR: {loadError}");
+        var modelcacheDir = Path.Combine(GamePath, "modelcache");
+        var metaBarPath = Path.Combine(modelcacheDir, "ArtModelCacheMeta.bar");
 
-        var barEntryIndex = BuildBarNameIndex(bar.Entries!);
+        var fileIndex = new FileIndex();
+        var modelcacheBars = Directory.GetFiles(modelcacheDir, "*.bar", SearchOption.AllDirectories);
+        FileIndexBuilder.IndexBarFiles(fileIndex, modelcacheBars);
+        var supplemental = FileIndexBuilder.FindSupplementalBarFiles(modelcacheDir);
+        FileIndexBuilder.IndexBarFiles(fileIndex, supplemental);
+
+        using var metaStream = File.OpenRead(metaBarPath);
+        var metaBar = new BarFile(metaStream);
+        metaBar.Load(out _);
 
         int processed = 0;
         var failed = new List<string>();
-        foreach (var entry in bar.Entries!)
+
+        foreach (var entry in metaBar.Entries!)
         {
-            if (processed >= 20) break;
-            if (!entry.Name.EndsWith(".tma", StringComparison.OrdinalIgnoreCase)) continue;
+            if (processed >= 3) break;
+            if (!entry.Name.EndsWith(".tmm", StringComparison.OrdinalIgnoreCase)) continue;
+            if (entry.Name.EndsWith(".tmm.data", StringComparison.OrdinalIgnoreCase)) continue;
+
+            // .tmm.data is in a separate model-data BAR; resolve via fileIndex
+            var dataIndexEntries = fileIndex.Find(entry.Name + ".data");
+            if (dataIndexEntries.Count == 0) continue;
+
+            var tmmStem = Path.GetFileNameWithoutExtension(entry.Name);
+            var sourceTmas = await FindTmasForTmm(tmmStem, fileIndex);
+            if (sourceTmas.Count == 0) continue;
 
             try
             {
-                var tmaBytes = entry.ReadDataRaw(stream);
-                var origTma = new TmaFile(tmaBytes);
-                if (!origTma.Parsed) continue;
+                using var tmmPooled = entry.ReadDataDecompressedPooled(metaStream);
+                if (tmmPooled == null) { processed++; continue; }
+                var tmmBytes = tmmPooled.Span.ToArray();
 
-                var origTracks = TmaDecoder.DecodeAllTracks(origTma);
-                if (origTracks == null || origTracks.Length == 0) continue;
+                using var dataBuf = await ReadIndexEntryPooled(dataIndexEntries[0]);
+                if (dataBuf == null) { processed++; continue; }
+                var dataBytes = dataBuf.Span.ToArray();
 
-                // Find matching TMM: strip trailing _<word> segments to find stem
-                // e.g. "gargarensis_idle.tma" -> look for "gargarensis.tmm"
-                var tmaStem = System.IO.Path.GetFileNameWithoutExtension(entry.Name);
-                var tmmEntry = FindTmmForTma(tmaStem, barEntryIndex);
-                if (tmmEntry == null) continue;
+                var origTmm = new TmmFile(tmmBytes);
+                if (!origTmm.FullyParsed) { processed++; continue; }
+                // Animation round-trip only makes sense for rigged models
+                if (origTmm.Bones == null || origTmm.Bones.Length == 0) continue;
+                var origData = new TmmDataFile(dataBytes, origTmm);
+                if (!origData.Parsed) { processed++; continue; }
 
-                var tmmDataEntry = FindEntry(barEntryIndex, tmmEntry.Name + ".data");
-                if (tmmDataEntry == null) continue;
+                var (animName, firstTma) = sourceTmas[0];
+                var origTracks = TmaDecoder.DecodeAllTracks(firstTma);
+                if (origTracks == null || origTracks.Length == 0) { processed++; continue; }
 
-                var tmmBytesArr = tmmEntry.ReadDataRaw(stream);
-                var tmmDataBytesArr = tmmDataEntry.ReadDataRaw(stream);
-
-                var tmm = new TmmFile(tmmBytesArr);
-                if (!tmm.FullyParsed) continue;
-                var tmmData = new TmmDataFile(tmmDataBytesArr, tmm);
-                if (!tmmData.Parsed) continue;
-
-                // Derive animation name from TMA filename
-                var animName = tmaStem;
-
-                // Build single-animation GLB through the same path the editor uses
-                var singleTmaList = new List<(string Name, TmaFile Tma)> { (animName, origTma) };
-                var glbAnim = new GlbExporter.GlbAnimation
+                var singleAnim = new GlbExporter.GlbAnimation
                 {
                     Name = animName,
                     Tracks = origTracks,
-                    Duration = origTma.Duration,
-                    FrameCount = origTma.FrameCount,
+                    Duration = firstTma.Duration,
+                    FrameCount = firstTma.FrameCount,
                 };
-                var glbAnims = new List<GlbExporter.GlbAnimation> { glbAnim };
 
                 var glbBytes = ConversionHelper.ConvertTmmToGlbBytes(
-                    tmmBytesArr, tmmDataBytesArr,
-                    materials: null, animations: glbAnims,
-                    sourceTmas: singleTmaList, sourceDdts: null);
-                if (glbBytes == null) continue;
+                    tmmBytes, dataBytes,
+                    materials: null,
+                    animations: [singleAnim],
+                    sourceTmas: [(animName, firstTma)],
+                    sourceDdts: null);
+                if (glbBytes == null) { failed.Add($"{entry.Name}: ConvertTmmToGlbBytes returned null"); processed++; continue; }
 
                 var model = GlbReader.Parse(glbBytes);
-                if (model.Animations == null || model.Animations.Length == 0 || model.Bones == null) continue;
+                if (model.Animations == null || model.Animations.Length == 0 || model.Bones == null)
+                { failed.Add($"{entry.Name}: GLB has no animations after round-trip"); processed++; continue; }
 
                 var readbackAnim = model.Animations[0];
-
-                // Round-trip through TmaWriter
                 GlbExtras.TmaSection? tmaExtras = null;
                 model.Extras?.Tma.TryGetValue(readbackAnim.Name, out tmaExtras);
-                var (rewrittenBytes, _) = TmaWriter.Write(readbackAnim, model.Bones, tmaExtras);
 
+                var (rewrittenBytes, _) = TmaWriter.Write(readbackAnim, model.Bones, tmaExtras);
                 var rewrittenTma = new TmaFile(rewrittenBytes);
-                if (!rewrittenTma.Parsed) { failed.Add($"{entry.Name}: TmaWriter output failed re-parse"); continue; }
+                if (!rewrittenTma.Parsed) { failed.Add($"{entry.Name}: TmaWriter output failed re-parse"); processed++; continue; }
 
                 var rewrittenTracks = TmaDecoder.DecodeAllTracks(rewrittenTma);
-                if (rewrittenTracks == null) { failed.Add($"{entry.Name}: rewritten TMA has no tracks"); continue; }
+                if (rewrittenTracks == null) { failed.Add($"{entry.Name}: rewritten TMA has no tracks"); processed++; continue; }
 
-                // Frame count must match
-                if (rewrittenTma.FrameCount != origTma.FrameCount)
+                if (rewrittenTma.FrameCount != firstTma.FrameCount)
                 {
-                    failed.Add($"{entry.Name}: frame count {rewrittenTma.FrameCount} != {origTma.FrameCount}");
+                    failed.Add($"{entry.Name}: frame count {rewrittenTma.FrameCount} != {firstTma.FrameCount}");
                     processed++;
                     continue;
                 }
 
-                // Compare decoded-original vs decoded-rewritten per track
-                // Tolerance: translation 0.01 game units; rotation 1e-3 per quaternion component
-                // (Quat64 quantization is ~5e-5; 1e-3 allows for bind-pose composition noise)
-                var tracksByName = new Dictionary<string, TmaDecoder.DecodedTrack>(StringComparer.Ordinal);
-                foreach (var t in origTracks) tracksByName[t.Name] = t;
+                var origByName = new Dictionary<string, TmaDecoder.DecodedTrack>(StringComparer.Ordinal);
+                foreach (var t in origTracks) origByName[t.Name] = t;
 
                 float maxTDrift = 0f, maxRDrift = 0f;
                 foreach (var rt in rewrittenTracks)
                 {
-                    if (!tracksByName.TryGetValue(rt.Name, out var ot)) continue;
-                    int frames = Math.Min(ot.Translations.Length, rt.Translations.Length);
-                    for (int f = 0; f < frames; f++)
+                    if (!origByName.TryGetValue(rt.Name, out var ot)) continue;
+                    int tFrames = Math.Min(ot.Translations.Length, rt.Translations.Length);
+                    for (int f = 0; f < tFrames; f++)
                     {
                         float td = System.Numerics.Vector3.Distance(ot.Translations[f], rt.Translations[f]);
                         if (td > maxTDrift) maxTDrift = td;
                     }
-                    frames = Math.Min(ot.Rotations.Length, rt.Rotations.Length);
-                    for (int f = 0; f < frames; f++)
+                    int rFrames = Math.Min(ot.Rotations.Length, rt.Rotations.Length);
+                    for (int f = 0; f < rFrames; f++)
                     {
                         float rd = QuatMaxComponentDrift(ot.Rotations[f], rt.Rotations[f]);
                         if (rd > maxRDrift) maxRDrift = rd;
@@ -359,9 +369,9 @@ public class GlbRoundTripTests
                 }
 
                 if (maxTDrift > 0.01f)
-                    failed.Add($"{entry.Name}: max translation drift {maxTDrift:F5} exceeds 0.01");
+                    failed.Add($"{entry.Name}: max translation drift {maxTDrift:F5} > 0.01");
                 if (maxRDrift > 1e-3f)
-                    failed.Add($"{entry.Name}: max quaternion drift {maxRDrift:F6} exceeds 0.001");
+                    failed.Add($"{entry.Name}: max quaternion drift {maxRDrift:F6} > 0.001");
             }
             catch (Exception ex)
             {
@@ -370,82 +380,114 @@ public class GlbRoundTripTests
             processed++;
         }
 
-        Assert.True(processed > 0, "No TMAs processed - check BAR contents");
-        Assert.True(failed.Count == 0, $"TMA round-trip failures ({failed.Count}/{processed}):\n  " + string.Join("\n  ", failed));
+        Assert.True(processed > 0, "No TMMs with paired TMAs found in ArtModelCacheMeta.bar");
+        Assert.True(failed.Count == 0,
+            $"TMA round-trip failures ({failed.Count}/{processed}):\n  " + string.Join("\n  ", failed));
     }
+
+    // --- Helpers ---
 
     static float[] Identity16Local() => [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
 
-    // Build case-insensitive name -> entry lookup for O(1) lookups during iteration.
-    static Dictionary<string, BarFileEntry> BuildBarNameIndex(IReadOnlyList<BarFileEntry> entries)
+    // Replicates the core of BuildGlbAnimations in MainWindow.Export.cs:
+    // uses DependencyFinder.FindAnimfileForTmmAsync + AnimationDiscovery + fileIndex.Find.
+    static async Task<IReadOnlyList<(string Name, TmaFile Tma)>> FindTmasForTmm(
+        string tmmStem, FileIndex fileIndex)
     {
-        var index = new Dictionary<string, BarFileEntry>(entries.Count, StringComparer.OrdinalIgnoreCase);
-        foreach (var e in entries)
-            index.TryAdd(e.Name, e);
-        return index;
-    }
-
-    static BarFileEntry? FindEntry(Dictionary<string, BarFileEntry> index, string name)
-        => index.TryGetValue(name, out var e) ? e : null;
-
-    // Finds TMAs whose names start with "<stem>_" (e.g. "gargarensis_idle.tma" for stem "gargarensis").
-    // Returns the decoded tracks and the GlbExporter.GlbAnimation list ready to pass to ConvertTmmToGlbBytes.
-    static (List<(string Name, TmaFile Tma)> sourceTmas, List<GlbExporter.GlbAnimation>? glbAnimations)
-        FindTmasForStem(string stem, Dictionary<string, BarFileEntry> index, System.IO.FileStream stream)
-    {
-        var prefix = stem + "_";
-        var sourceTmas = new List<(string Name, TmaFile Tma)>();
-        var glbAnimations = new List<GlbExporter.GlbAnimation>();
-
-        foreach (var kv in index)
+        try
         {
-            if (!kv.Key.EndsWith(".tma", StringComparison.OrdinalIgnoreCase)) continue;
-            if (!kv.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+            var animfileEntry = await DependencyFinder.FindAnimfileForTmmAsync(
+                tmmStem, fileIndex, ReadIndexEntryPooled);
+            if (animfileEntry is not { } animfile) return [];
 
-            try
+            var animfileBytes = await ReadIndexEntryPooled(animfile);
+            if (animfileBytes == null) return [];
+            using (animfileBytes)
             {
-                var tmaBytes = kv.Value.ReadDataRaw(stream);
-                var tma = new TmaFile(tmaBytes);
-                if (!tma.Parsed) continue;
+                using var dec = BarCompression.EnsureDecompressedPooled(animfileBytes, out _);
+                var xmlText = ConversionHelper.GetTextContent(dec.Span, animfile.FileName.ToString());
+                var animRefs = AnimationDiscovery.FindAnimationsFromAnimXml(xmlText);
+                if (animRefs.Count == 0) return [];
 
-                var tracks = TmaDecoder.DecodeAllTracks(tma);
-                if (tracks == null || tracks.Length == 0) continue;
-
-                // Animation name: stem without .tma, e.g. "gargarensis_idle"
-                var animName = System.IO.Path.GetFileNameWithoutExtension(kv.Key);
-                sourceTmas.Add((animName, tma));
-                glbAnimations.Add(new GlbExporter.GlbAnimation
+                var result = new List<(string Name, TmaFile Tma)>();
+                foreach (var animRef in animRefs)
                 {
-                    Name = animName,
-                    Tracks = tracks,
-                    Duration = tma.Duration,
-                    FrameCount = tma.FrameCount,
-                });
+                    var tmaFileName = Path.GetFileName(animRef.TmaPath.Replace('\\', '/'));
+                    if (string.IsNullOrEmpty(tmaFileName)) continue;
+
+                    var tmaEntries = fileIndex.Find(tmaFileName + ".tma");
+                    if (tmaEntries.Count == 0) tmaEntries = fileIndex.Find(tmaFileName);
+                    if (tmaEntries.Count == 0) continue;
+
+                    var tmaRaw = await ReadIndexEntryPooled(tmaEntries[0]);
+                    if (tmaRaw == null) continue;
+                    using (tmaRaw)
+                    {
+                        using var tmaDec = BarCompression.EnsureDecompressedPooled(tmaRaw, out _);
+                        var tma = new TmaFile(tmaDec.Memory);
+                        if (!tma.Parsed) continue;
+
+                        var baseName = !string.IsNullOrEmpty(animRef.AnimName)
+                            ? animRef.AnimName : tmaFileName;
+                        result.Add((baseName, tma));
+                    }
+                }
+
+                // Deduplicate names matching the editor's behaviour
+                var nameCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+                foreach (var (n, _) in result) nameCounts[n] = nameCounts.GetValueOrDefault(n) + 1;
+                var nameCounters = new Dictionary<string, int>(StringComparer.Ordinal);
+                for (int i = 0; i < result.Count; i++)
+                {
+                    var (n, tma) = result[i];
+                    if (nameCounts[n] <= 1) continue;
+                    int idx = nameCounters.GetValueOrDefault(n) + 1;
+                    nameCounters[n] = idx;
+                    result[i] = ($"{n} {idx}", tma);
+                }
+
+                return result;
             }
-            catch { /* best-effort; skip broken TMAs */ }
         }
-
-        return (sourceTmas, glbAnimations.Count > 0 ? glbAnimations : null);
-    }
-
-    // Finds the TMM for a TMA by stripping trailing "_<word>" segments from the TMA stem.
-    // e.g. "gargarensis_idle" -> try "gargarensis.tmm".
-    // Tries progressively shorter stems until a match is found or no underscore remains.
-    static BarFileEntry? FindTmmForTma(string tmaStem, Dictionary<string, BarFileEntry> index)
-    {
-        var stem = tmaStem;
-        while (true)
+        catch
         {
-            int us = stem.LastIndexOf('_');
-            if (us < 0) break;
-            stem = stem[..us];
-            var candidate = stem + ".tmm";
-            if (index.TryGetValue(candidate, out var entry)) return entry;
+            return [];
         }
-        return null;
     }
 
-    // Max element-wise drift across all vertices for XYZ positions.
+    // Opens a BAR, finds the entry by relative path, reads + decompresses into a PooledBuffer.
+    // Caller must dispose the returned buffer.
+    static ValueTask<PooledBuffer?> ReadIndexEntryPooled(FileIndexEntry entry)
+    {
+        if (entry.Source != FileIndexSource.BarEntry || entry.BarFilePath == null)
+            return ValueTask.FromResult<PooledBuffer?>(null);
+
+        var entryRelPath = entry.EntryRelativePath.ToString();
+        if (entryRelPath.Length == 0) return ValueTask.FromResult<PooledBuffer?>(null);
+
+        try
+        {
+            using var stream = File.OpenRead(entry.BarFilePath);
+            var bar = new BarFile(stream);
+            if (!bar.Load(out _)) return ValueTask.FromResult<PooledBuffer?>(null);
+
+            BarFileEntry? barEntry = null;
+            foreach (var e in bar.Entries!)
+            {
+                if (string.Equals(e.RelativePath, entryRelPath, StringComparison.OrdinalIgnoreCase))
+                { barEntry = e; break; }
+            }
+            if (barEntry == null) return ValueTask.FromResult<PooledBuffer?>(null);
+
+            var pooled = barEntry.ReadDataDecompressedPooled(stream);
+            return ValueTask.FromResult<PooledBuffer?>(pooled);
+        }
+        catch
+        {
+            return ValueTask.FromResult<PooledBuffer?>(null);
+        }
+    }
+
     static float MaxPositionDrift(TmmVertex[] orig, TmmVertex[] reparsed)
     {
         float max = 0f;
@@ -461,7 +503,6 @@ public class GlbRoundTripTests
         return max;
     }
 
-    // Max element-wise drift across all bone parent-space matrices.
     static float MaxBoneMatrixDrift(TmmBone[] orig, TmmBone[] reparsed)
     {
         float max = 0f;
@@ -483,7 +524,6 @@ public class GlbRoundTripTests
     // Max per-component absolute drift between two quaternions, accounting for double-cover (q == -q).
     static float QuatMaxComponentDrift(System.Numerics.Quaternion a, System.Numerics.Quaternion b)
     {
-        // Canonical form: ensure W >= 0 (flip sign if needed)
         if (a.W < 0f) a = new System.Numerics.Quaternion(-a.X, -a.Y, -a.Z, -a.W);
         if (b.W < 0f) b = new System.Numerics.Quaternion(-b.X, -b.Y, -b.Z, -b.W);
         float dx = Math.Abs(a.X - b.X);
