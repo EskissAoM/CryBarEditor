@@ -76,6 +76,68 @@ public class TmmWriterTests
         Assert.Equal(0, parsed.Bones[1].ParentId);
     }
 
+    [Fact]
+    public void Write_WithLossySections_EmitsWarnings()
+    {
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh { Primitives = [] },
+            Extras = new GlbExtras
+            {
+                Tmm = new GlbExtras.TmmSection { LossySections = new List<string> { "destruction", "physics" } }
+            },
+        };
+        var (_, _, warnings) = TmmWriter.Write(model);
+        Assert.Contains(warnings, w => w.Contains("destruction", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(warnings, w => w.Contains("physics", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Write_WithExtrasAttachments_PopulatesAttachmentRecords()
+    {
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh { Primitives = [] },
+            Attachments = [ new GlbAttachment { Name = "spear_tip", Index = 0, ParentBoneIndex = 0,
+                                                LocalMatrix = TranslationMatrix(1, 2, 3) } ],
+            Bones = [ new GlbBone { Name = "root", ParentIndex = -1,
+                                    LocalMatrix = Identity16(), InverseBindMatrix = Identity16() } ],
+            Extras = new GlbExtras
+            {
+                Tmm = new GlbExtras.TmmSection
+                {
+                    Attachments =
+                    [
+                        new GlbExtras.AttachmentEntry
+                        {
+                            Name = "spear_tip", TypeFlag = 5, ForcedDummyBoneName = "tip",
+                            FrameLimit = 10, FramePosition = 0.5f,
+                        }
+                    ]
+                }
+            },
+        };
+        var (tmm, _, _) = TmmWriter.Write(model);
+        var parsed = new TmmFile(tmm);
+        Assert.True(parsed.FullyParsed);
+        var atts = parsed.Attachments!;
+        Assert.Single(atts);
+        Assert.Equal(5u, atts[0].TypeFlag);
+        Assert.Equal("tip", atts[0].ForcedDummyBoneName);
+        Assert.Equal(10, atts[0].FrameLimit);
+    }
+
+    [Fact]
+    public void Write_SelfValidates_ProducesParseableOutputForValidInput()
+    {
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh { Primitives = [] },
+        };
+        var ex = Record.Exception(() => TmmWriter.Write(model));
+        Assert.Null(ex);
+    }
+
     static float[] Identity16() => [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
 
     static float[] TranslationMatrix(float x, float y, float z)
