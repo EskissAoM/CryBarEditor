@@ -98,7 +98,8 @@ public static class GlbExporter
     /// <returns>GLB bytes, or null if the input is not valid.</returns>
     public static byte[]? ExportGlb(TmmFile tmm, TmmDataFile dataFile,
         IReadOnlyList<GlbMaterial>? materials = null,
-        IReadOnlyList<GlbAnimation>? animations = null)
+        IReadOnlyList<GlbAnimation>? animations = null,
+        GlbExtras? extras = null)
     {
         if (!tmm.Parsed || dataFile.Vertices == null || dataFile.Indices == null)
             return null;
@@ -244,7 +245,7 @@ public static class GlbExporter
 
         // Build JSON chunk first to know its size
         var jsonBytes = BuildJson(tmm, meshGroups, bones, attachments, hasSkin, hasMaterials, materials,
-            vertexCount, layout, groupBounds, animBuffers);
+            vertexCount, layout, groupBounds, animBuffers, extras);
 
         int jsonPadded = Align4(jsonBytes.Length);
 
@@ -565,7 +566,8 @@ public static class GlbExporter
         bool hasSkin, bool hasMaterials, IReadOnlyList<GlbMaterial>? materials,
         int vertexCount, in BufferLayout bl,
         (float[] min, float[] max)[] groupBounds,
-        List<AnimBuffer> animBuffers)
+        List<AnimBuffer> animBuffers,
+        GlbExtras? extras)
     {
         using var ms = new MemoryStream();
         using var w = new Utf8JsonWriter(ms, new JsonWriterOptions { Indented = false });
@@ -635,6 +637,8 @@ public static class GlbExporter
                 w.WriteNumberValue(idx);
             w.WriteEndArray();
         }
+        if (extras != null)
+            GlbExtras.WriteMeshNodeRedundancy(w, extras.Tmm.MainMatrix);
         w.WriteEndObject();
 
         // Bone nodes
@@ -681,6 +685,8 @@ public static class GlbExporter
 
             // Convert row-major 3x4 attachment transform to column-major 4x4 for glTF
             WriteAxisNegatedMatrixJson(w, RowMajor3x4ToColumnMajor4x4(attachments[i].AdjustmentTransformMatrix));
+
+            GlbExtras.WriteAttachmentMarker(w, i);
 
             w.WriteEndObject();
         }
@@ -1071,6 +1077,14 @@ public static class GlbExporter
         w.WriteNumber("byteLength", bl.TotalBinLength);
         w.WriteEndObject();
         w.WriteEndArray();
+
+        // --- extras (CryBar metadata) ---
+        if (extras != null)
+        {
+            w.WriteStartObject("extras");
+            extras.Write(w);
+            w.WriteEndObject();
+        }
 
         w.WriteEndObject(); // root
         w.Flush();

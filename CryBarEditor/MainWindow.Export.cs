@@ -130,11 +130,19 @@ public partial class MainWindow
                                 byte[]? convertedBytes;
                                 if (options?.TmmToGltf == true)
                                 {
+                                    var sourceDdts = new List<(string Material, DDTImage Ddt)>();
+                                    var sourceTmas = new List<(string Name, TmaFile Tma)>();
+
                                     var glbMaterials = (options.ExportMaterials && _fileIndex != null)
-                                        ? await BuildGlbMaterials(tmmFileName) : null;
+                                        ? await BuildGlbMaterials(tmmFileName, sourceDdts) : null;
                                     var glbAnimations = (options.ExportAnimations && _fileIndex != null)
-                                        ? await BuildGlbAnimations(tmmFileName) : null;
-                                    convertedBytes = ConversionHelper.ConvertTmmToGlbBytes(data.Memory, companionData.Memory, glbMaterials, glbAnimations);
+                                        ? await BuildGlbAnimations(tmmFileName, sourceTmas) : null;
+
+                                    convertedBytes = ConversionHelper.ConvertTmmToGlbBytes(
+                                        data.Memory, companionData.Memory,
+                                        glbMaterials, glbAnimations,
+                                        sourceTmas: sourceTmas,
+                                        sourceDdts: sourceDdts);
                                 }
                                 else
                                 {
@@ -251,7 +259,9 @@ public partial class MainWindow
     /// <summary>
     /// Builds glTF material list with embedded PNG textures for a TMM model.
     /// </summary>
-    async ValueTask<IReadOnlyList<GlbExporter.GlbMaterial>?> BuildGlbMaterials(string tmmFileName)
+    async ValueTask<IReadOnlyList<GlbExporter.GlbMaterial>?> BuildGlbMaterials(
+        string tmmFileName,
+        List<(string Material, DDTImage Ddt)>? sourceDdtsOut = null)
     {
         var resolved = await ResolveTmmMaterialsAsync(tmmFileName);
         if (resolved == null) return null;
@@ -271,6 +281,13 @@ public partial class MainWindow
                     resolved.Value.Textures.TryGetValue(texPath, out var texInfo))
                 {
                     textureTasks[texPath] = ConversionHelper.ConvertDdtToPngBytes(texInfo.DdtData);
+
+                    if (sourceDdtsOut != null)
+                    {
+                        var img = new DDTImage(texInfo.DdtData);
+                        if (img.ParseHeader())
+                            sourceDdtsOut.Add((mat.Name, img));
+                    }
                 }
             }
         }
@@ -421,7 +438,9 @@ public partial class MainWindow
     /// <summary>
     /// Discovers and decodes TMA animations for a TMM model via on-demand animfile search.
     /// </summary>
-    async ValueTask<IReadOnlyList<GlbExporter.GlbAnimation>?> BuildGlbAnimations(string tmmFileName)
+    async ValueTask<IReadOnlyList<GlbExporter.GlbAnimation>?> BuildGlbAnimations(
+        string tmmFileName,
+        List<(string Name, TmaFile Tma)>? sourceTmasOut = null)
     {
         if (_fileIndex == null) return null;
 
@@ -464,6 +483,8 @@ public partial class MainWindow
                 if (decoded == null || decoded.Length == 0) continue;
 
                 var baseName = !string.IsNullOrEmpty(animRef.AnimName) ? animRef.AnimName : tmaFileName;
+                // sourceTmasOut must stay in lockstep with animations (same index, same order)
+                // so the dedup-rename pass below can update both lists by index.
                 animations.Add(new GlbExporter.GlbAnimation
                 {
                     Name = baseName,
@@ -471,6 +492,7 @@ public partial class MainWindow
                     Duration = tma.Duration,
                     FrameCount = tma.FrameCount,
                 });
+                sourceTmasOut?.Add((baseName, tma));
             }
 
             // deduplicate names: "Attack" stays if unique, becomes "Attack 1", "Attack 2" if not
@@ -479,12 +501,16 @@ public partial class MainWindow
                 nameCounts[anim.Name] = nameCounts.GetValueOrDefault(anim.Name) + 1;
 
             var nameCounters = new Dictionary<string, int>(StringComparer.Ordinal);
-            foreach (var anim in animations)
+            for (int i = 0; i < animations.Count; i++)
             {
+                var anim = animations[i];
                 if (nameCounts[anim.Name] <= 1) continue;
                 int idx = nameCounters.GetValueOrDefault(anim.Name) + 1;
                 nameCounters[anim.Name] = idx;
-                anim.Name = $"{anim.Name} {idx}";
+                var newName = $"{anim.Name} {idx}";
+                anim.Name = newName;
+                if (sourceTmasOut != null && i < sourceTmasOut.Count)
+                    sourceTmasOut[i] = (newName, sourceTmasOut[i].Tma);
             }
 
             return animations.Count > 0 ? animations : null;

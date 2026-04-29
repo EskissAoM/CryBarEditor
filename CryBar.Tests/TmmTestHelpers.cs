@@ -154,6 +154,31 @@ internal static class TmmTestHelpers
         return new TmmFile(tmmBytes);
     }
 
+    internal static byte[] CreateSyntheticTma(uint numBones = 0, uint frameCount = 30, float duration = 1.0f)
+    {
+        using var ms = new MemoryStream();
+        using var w = new BinaryWriter(ms);
+
+        // Signature "BTMA" (0x42 0x54 0x4D 0x41)
+        w.Write((byte)0x42); w.Write((byte)0x54); w.Write((byte)0x4D); w.Write((byte)0x41);
+        w.Write(12u);        // version
+        w.Write(0u);         // numTracks
+        w.Write(frameCount);
+        w.Write(duration);
+
+        // Root bone bounding box: minX minY minZ maxX maxY maxZ (6 x f32 = 24 bytes)
+        w.Write(0.0f); w.Write(0.0f); w.Write(0.0f);
+        w.Write(0.0f); w.Write(0.0f); w.Write(0.0f);
+
+        // numBones and numControllers -- zero, so no bone/track/controller loops execute
+        w.Write(0u); // numBones
+        w.Write(0u); // numControllers
+
+        _ = numBones;
+
+        return ms.ToArray();
+    }
+
     internal static byte[] CreateSyntheticData(
         uint numVertices, uint numTriangleVerts, bool hasSkinning,
         bool includeHeights = false)

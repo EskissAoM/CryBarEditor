@@ -175,13 +175,25 @@ public static class ConversionHelper
 
     /// <summary>
     /// Converts TMM+TMM.DATA pair to GLB (glTF binary) format with optional materials and animations.
+    /// When sourceTmas or sourceDdts are provided, extras metadata is embedded in the GLB.
     /// </summary>
     public static byte[]? ConvertTmmToGlbBytes(ReadOnlyMemory<byte> tmmData, ReadOnlyMemory<byte> tmmDataData,
         IReadOnlyList<GlbExporter.GlbMaterial>? materials = null,
-        IReadOnlyList<GlbExporter.GlbAnimation>? animations = null)
+        IReadOnlyList<GlbExporter.GlbAnimation>? animations = null,
+        IReadOnlyList<(string Name, TmaFile Tma)>? sourceTmas = null,
+        IReadOnlyList<(string Material, DDTImage Ddt)>? sourceDdts = null)
     {
         if (!TryParseTmmPair(tmmData, tmmDataData, out var tmm, out var dataFile)) return null;
-        return GlbExporter.ExportGlb(tmm, dataFile, materials, animations);
+
+        GlbExtras? extras = null;
+        if (sourceTmas != null || sourceDdts != null)
+        {
+            extras = GlbExtras.From(tmm,
+                sourceTmas ?? Array.Empty<(string, TmaFile)>(),
+                sourceDdts ?? Array.Empty<(string, DDTImage)>());
+        }
+
+        return GlbExporter.ExportGlb(tmm, dataFile, materials, animations, extras);
     }
 
     /// <summary>
