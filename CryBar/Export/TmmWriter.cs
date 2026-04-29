@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Numerics;
 using System.Text;
 using CryBar.TMM;
 
@@ -21,14 +22,17 @@ public static class TmmWriter
     readonly struct DataLayout(
         uint vertStart, uint vertBytes,
         uint idxStart, uint idxBytes,
+        uint weightStart, uint weightBytes,
         uint heightStart, uint heightBytes)
     {
-        public readonly uint VertStart   = vertStart;
-        public readonly uint VertBytes   = vertBytes;
-        public readonly uint IdxStart    = idxStart;
-        public readonly uint IdxBytes    = idxBytes;
-        public readonly uint HeightStart = heightStart;
-        public readonly uint HeightBytes = heightBytes;
+        public readonly uint VertStart    = vertStart;
+        public readonly uint VertBytes    = vertBytes;
+        public readonly uint IdxStart     = idxStart;
+        public readonly uint IdxBytes     = idxBytes;
+        public readonly uint WeightStart  = weightStart;
+        public readonly uint WeightBytes  = weightBytes;
+        public readonly uint HeightStart  = heightStart;
+        public readonly uint HeightBytes  = heightBytes;
     }
 
     static byte[] BuildDataBuffer(GlbModel model, out DataLayout layout)
@@ -43,19 +47,25 @@ public static class TmmWriter
             totalIdxCount += prim.Indices.Length;
         }
 
+        bool hasSkin = model.Bones is { Length: > 0 } &&
+                       primitives.Any(p => p.JointIndices != null && p.JointWeights != null);
+
         uint vertBytes   = (uint)(totalVerts    * TmmVertex.SizeInBytes);
         uint idxBytes    = (uint)(totalIdxCount * 2);
+        uint weightBytes = hasSkin ? (uint)(totalVerts * TmmSkinWeight.SizeInBytes) : 0u;
         uint heightBytes = (uint)(totalVerts    * 2);
 
         uint vertStart   = 0;
-        uint idxStart    = vertStart + vertBytes;
-        uint heightStart = idxStart + idxBytes;
+        uint idxStart    = vertStart   + vertBytes;
+        uint weightStart = idxStart    + idxBytes;
+        uint heightStart = weightStart + weightBytes;
         uint totalBytes  = heightStart + heightBytes;
 
         var buf = new byte[totalBytes];
 
         int vOff = (int)vertStart;
         int iOff = (int)idxStart;
+        int wOff = (int)weightStart;
         int hOff = (int)heightStart;
 
         foreach (var prim in primitives)
@@ -109,10 +119,64 @@ public static class TmmWriter
                 BinaryPrimitives.WriteUInt16LittleEndian(buf.AsSpan(iOff + 4), (ushort)idx[t + 1]);
                 iOff += 6;
             }
+
+            if (hasSkin)
+                WritePrimitiveSkinWeights(buf, ref wOff, prim);
         }
 
-        layout = new DataLayout(vertStart, vertBytes, idxStart, idxBytes, heightStart, heightBytes);
+        layout = new DataLayout(vertStart, vertBytes, idxStart, idxBytes, weightStart, weightBytes, heightStart, heightBytes);
         return buf;
+    }
+
+    static void WritePrimitiveSkinWeights(byte[] buf, ref int wOff, GlbMeshPrimitive prim)
+    {
+        int vc = prim.Positions.Length / 3;
+        var joints  = prim.JointIndices;
+        var weights = prim.JointWeights;
+
+        Span<(float w, byte b)> pairs  = stackalloc (float, byte)[4];
+        Span<byte>              wBytes = stackalloc byte[4];
+
+        for (int i = 0; i < vc; i++)
+        {
+            // Build (weight, boneIndex) pairs, keep only those with weight > 0, sort desc.
+            int realCount = 0;
+            for (int s = 0; s < 4; s++)
+            {
+                float wt = weights != null ? weights[i * 4 + s] : 0f;
+                byte  bi = joints  != null ? joints [i * 4 + s] : (byte)0;
+                if (wt > 0f) pairs[realCount++] = (wt, bi);
+            }
+
+            // Sort descending by weight (insertion sort on up-to-4 items).
+            for (int a = 1; a < realCount; a++)
+            {
+                var tmp = pairs[a];
+                int b = a - 1;
+                while (b >= 0 && pairs[b].w < tmp.w) { pairs[b + 1] = pairs[b]; b--; }
+                pairs[b + 1] = tmp;
+            }
+
+            // Quantize weights to bytes summing to 255.
+            int total = 0;
+            for (int s = 0; s < realCount; s++)
+            {
+                wBytes[s] = (byte)MathF.Round(pairs[s].w * 255f);
+                total += wBytes[s];
+            }
+            // Adjust last real entry to absorb rounding error.
+            if (realCount > 0)
+                wBytes[realCount - 1] = (byte)(wBytes[realCount - 1] + (255 - total));
+
+            // Start-pad with zeros: real entries go at indices [4 - realCount .. 3].
+            int pad = 4 - realCount;
+            for (int s = 0; s < 4; s++)
+                buf[wOff + s] = s < pad ? (byte)0 : wBytes[s - pad];
+            for (int s = 0; s < 4; s++)
+                buf[wOff + 4 + s] = s < pad ? (byte)0 : pairs[s - pad].b;
+
+            wOff += TmmSkinWeight.SizeInBytes;
+        }
     }
 
     // Packs a glTF-space (Y-up RH) normal/tangent/bitangentSign into three u16 TBN values.
@@ -230,13 +294,13 @@ public static class TmmWriter
 
         // Data block layout: 7 pairs of (start, byteLength)
         // Order: vertices, indices, weights, destruction, color, heights, speedtree
-        w.Write(dl.VertStart);   w.Write(dl.VertBytes);
-        w.Write(dl.IdxStart);    w.Write(dl.IdxBytes);
-        w.Write(0u);             w.Write(0u);  // weights (no bones)
-        w.Write(0u);             w.Write(0u);  // destruction buffer
-        w.Write(0u);             w.Write(0u);  // color buffer
-        w.Write(dl.HeightStart); w.Write(dl.HeightBytes);
-        w.Write(0u);             w.Write(0u);  // speedtree buffer
+        w.Write(dl.VertStart);    w.Write(dl.VertBytes);
+        w.Write(dl.IdxStart);     w.Write(dl.IdxBytes);
+        w.Write(dl.WeightStart);  w.Write(dl.WeightBytes);
+        w.Write(0u);              w.Write(0u);  // destruction buffer
+        w.Write(0u);              w.Write(0u);  // color buffer
+        w.Write(dl.HeightStart);  w.Write(dl.HeightBytes);
+        w.Write(0u);              w.Write(0u);  // speedtree buffer
 
         w.Write((byte)(model.Extras?.Tmm.TerrainEmb == true ? 1 : 0));
         w.Write((byte)(model.Extras?.Tmm.Raytracing == true ? 1 : 0));
@@ -284,8 +348,8 @@ public static class TmmWriter
             WriteUtf16String(w, "default");
         }
 
-        // Bones (zero — Tasks 13-15)
-        // (none to write)
+        if (model.Bones is { Length: > 0 })
+            WriteBones(w, model);
 
         WriteTrailingSections(w, model);
 
@@ -355,6 +419,73 @@ public static class TmmWriter
 
     static float[] IdentityMatrix4x3() =>
         [1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0];
+
+    static void WriteBones(BinaryWriter w, GlbModel model)
+    {
+        var bones = model.Bones!;
+
+        // Build world-space matrices by walking up the parent chain.
+        // LocalMatrix is column-major (glTF). Convert to System.Numerics Matrix4x4 for multiplication.
+        var worldMatrices = new Matrix4x4[bones.Length];
+        for (int i = 0; i < bones.Length; i++)
+        {
+            var local = ColMajorToMatrix(bones[i].LocalMatrix);
+            if (bones[i].ParentIndex < 0)
+                worldMatrices[i] = local;
+            else
+                worldMatrices[i] = local * worldMatrices[bones[i].ParentIndex];
+        }
+
+        for (int i = 0; i < bones.Length; i++)
+        {
+            var bone = bones[i];
+            WriteUtf16String(w, bone.Name);
+            w.Write(bone.ParentIndex);
+
+            // Collision offset (3 floats), radius (1 float) -- defaults
+            w.Write(0f); w.Write(0f); w.Write(0f);
+            w.Write(0.5f);
+
+            var parentSpaceMat = ColMajorToMatrix(bone.LocalMatrix);
+            var worldMat       = worldMatrices[i];
+            var invBindMat     = ColMajorToMatrix(bone.InverseBindMatrix);
+
+            // Three 4x4 matrices, each with F*M*F applied (F = diag(-1,1,1,1): flip X axis)
+            WriteMatrix4x4Fmf(w, parentSpaceMat);
+            WriteMatrix4x4Fmf(w, worldMat);
+            WriteMatrix4x4Fmf(w, invBindMat);
+        }
+    }
+
+    // Converts a column-major float[16] (glTF / TMM convention) to a System.Numerics Matrix4x4.
+    // glTF column-major: m[0..3]=col0, m[4..7]=col1, m[8..11]=col2, m[12..15]=col3.
+    // System.Numerics row-vector: Mij = row i, col j => col0 becomes M_1, M_2, M_3, M_4 of col 0.
+    static Matrix4x4 ColMajorToMatrix(float[] m) => new(
+        m[0],  m[1],  m[2],  m[3],   // col0 -> row of M column 0
+        m[4],  m[5],  m[6],  m[7],   // col1
+        m[8],  m[9],  m[10], m[11],  // col2
+        m[12], m[13], m[14], m[15]); // col3
+
+    // Applies F*M*F (F = diag(-1,1,1,1)) then writes 16 floats in column-major order.
+    // F*M*F negates all elements in row 0 and col 0, except [0,0] which is double-negated.
+    static void WriteMatrix4x4Fmf(BinaryWriter w, Matrix4x4 m)
+    {
+        // Apply F*M*F: negate row 0 AND col 0, which means negate elements where
+        // exactly one of (row, col) is 0. Element [0,0] has both => double negation = no change.
+        // In System.Numerics row-vector layout, row 0 = M11,M12,M13,M14 and col 0 = M11,M21,M31,M41.
+        var r = new Matrix4x4(
+             m.M11, -m.M12, -m.M13, -m.M14,
+            -m.M21,  m.M22,  m.M23,  m.M24,
+            -m.M31,  m.M32,  m.M33,  m.M34,
+            -m.M41,  m.M42,  m.M43,  m.M44);
+
+        // Write column-major (transpose of System.Numerics row-major storage):
+        // col0 = r.M11,r.M21,r.M31,r.M41 etc.
+        w.Write(r.M11); w.Write(r.M21); w.Write(r.M31); w.Write(r.M41);
+        w.Write(r.M12); w.Write(r.M22); w.Write(r.M32); w.Write(r.M42);
+        w.Write(r.M13); w.Write(r.M23); w.Write(r.M33); w.Write(r.M43);
+        w.Write(r.M14); w.Write(r.M24); w.Write(r.M34); w.Write(r.M44);
+    }
 
     static void WriteTrailingSections(BinaryWriter w, GlbModel model)
     {
