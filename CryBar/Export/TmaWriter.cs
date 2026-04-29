@@ -94,7 +94,9 @@ public static class TmaWriter
 
             w.Write(frameCount);
 
-            // Find track for this bone
+            MatrixDecomp.Decompose(bones[i].LocalMatrix, out var bindT, out var bindR, out _);
+            var invBindR = Quaternion.Inverse(bindR);
+
             GlbBoneTrack? track = null;
             if (anim.Tracks != null)
             {
@@ -109,13 +111,12 @@ public static class TmaWriter
             w.Write(translationBytes);
             for (int f = 0; f < frameCount; f++)
             {
-                var t = (track != null && f < track.Translations.Length)
-                    ? track.Translations[f]
-                    : Vector3.Zero;
-                // Negate X to convert glTF RH -> game LH
-                w.Write(-t.X);
-                w.Write(t.Y);
-                w.Write(t.Z);
+                var glbT = SampleTrackTranslation(track, f, frameCount, anim.Duration, bindT);
+                // unmirror X (glTF RH -> game LH), then subtract bind-pose translation
+                var tmaT = new Vector3(-glbT.X, glbT.Y, glbT.Z) - bindT;
+                w.Write(tmaT.X);
+                w.Write(tmaT.Y);
+                w.Write(tmaT.Z);
             }
 
             // Rotation: Quat64 = 4-byte size prefix + frameCount * 8 bytes
@@ -123,15 +124,76 @@ public static class TmaWriter
             w.Write(rotationBytes);
             for (int f = 0; f < frameCount; f++)
             {
-                var q = (track != null && f < track.Rotations.Length)
-                    ? track.Rotations[f]
-                    : Quaternion.Identity;
-                w.Write(EncodeQuat64(q));
+                var glbR = SampleTrackRotation(track, f, frameCount, anim.Duration, bindR);
+                // unmirror (glTF RH -> game LH): flip Y,Z
+                var unmirrored = new Quaternion(glbR.X, -glbR.Y, -glbR.Z, glbR.W);
+                // inverse of forward: glb_R = mirror(bindR * conj(tma_R))
+                // => tma_R = conj(invBindR * unmirrored)
+                var tmaR = Quaternion.Conjugate(invBindR * unmirrored);
+                w.Write(EncodeQuat64(tmaR));
             }
 
             // Scale: Constant = 16 bytes inline (__m128), uniform scale 1,1,1
             w.Write(1f); w.Write(1f); w.Write(1f); w.Write(0f); // XYZ scale + padding
         }
+    }
+
+    // Returns the glTF-space translation for frame f.
+    // If no track or empty track: rest pose = mirror(bindT) = (-bindT.X, bindT.Y, bindT.Z).
+    // If sample count matches frameCount: direct lookup.
+    // Otherwise: LERP resample at uniform time t = f * duration / (frameCount - 1).
+    static Vector3 SampleTrackTranslation(GlbBoneTrack? track, int f, int frameCount, float duration, Vector3 bindT)
+    {
+        if (track == null || track.Translations.Length == 0)
+            return new Vector3(-bindT.X, bindT.Y, bindT.Z);
+
+        var samples = track.Translations;
+        if (samples.Length == frameCount)
+            return samples[f];
+
+        float t = frameCount > 1 ? f * duration / (frameCount - 1) : 0f;
+        return LerpVec3Uniform(samples, t, duration);
+    }
+
+    // Returns the glTF-space rotation for frame f.
+    // If no track or empty track: rest pose = mirror(bindR) = (bindR.X, -bindR.Y, -bindR.Z, bindR.W).
+    // If sample count matches frameCount: direct lookup.
+    // Otherwise: SLERP resample at uniform time t = f * duration / (frameCount - 1).
+    static Quaternion SampleTrackRotation(GlbBoneTrack? track, int f, int frameCount, float duration, Quaternion bindR)
+    {
+        if (track == null || track.Rotations.Length == 0)
+            return new Quaternion(bindR.X, -bindR.Y, -bindR.Z, bindR.W);
+
+        var samples = track.Rotations;
+        if (samples.Length == frameCount)
+            return samples[f];
+
+        float t = frameCount > 1 ? f * duration / (frameCount - 1) : 0f;
+        return SlerpQuatUniform(samples, t, duration);
+    }
+
+    // LERP on a uniformly-sampled Vector3 array where sample i is at time i*duration/(n-1).
+    static Vector3 LerpVec3Uniform(Vector3[] samples, float t, float duration)
+    {
+        int n = samples.Length;
+        if (n == 1 || duration <= 0f) return samples[0];
+        float tNorm = Math.Clamp(t / duration, 0f, 1f) * (n - 1);
+        int lo = (int)tNorm;
+        int hi = Math.Min(lo + 1, n - 1);
+        float a = tNorm - lo;
+        return Vector3.Lerp(samples[lo], samples[hi], a);
+    }
+
+    // SLERP on a uniformly-sampled Quaternion array where sample i is at time i*duration/(n-1).
+    static Quaternion SlerpQuatUniform(Quaternion[] samples, float t, float duration)
+    {
+        int n = samples.Length;
+        if (n == 1 || duration <= 0f) return samples[0];
+        float tNorm = Math.Clamp(t / duration, 0f, 1f) * (n - 1);
+        int lo = (int)tNorm;
+        int hi = Math.Min(lo + 1, n - 1);
+        float a = tNorm - lo;
+        return Quaternion.Slerp(samples[lo], samples[hi], a);
     }
 
     // Encodes a quaternion into Quat64 "smallest three" format (8 bytes).
