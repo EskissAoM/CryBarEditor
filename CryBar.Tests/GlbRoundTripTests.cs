@@ -701,6 +701,221 @@ public class GlbRoundTripTests
             $"TMA round-trip failures ({failed.Count}/{processed}):\n  " + string.Join("\n  ", failed));
     }
 
+    [SkippableFact]
+    public async Task Layer3_VanillaTmaRoundTrip_BoneMatricesPreserveLayout()
+    {
+        // Regression guard for TmaWriter.WriteMatrix4x4Fmf flat-float order.
+        // For each vanilla TMM that has paired TMAs:
+        //   - Build a GLB from the TMM + first TMA via the full editor pipeline
+        //   - Re-parse the GLB and re-emit a TMA via TmaWriter
+        //   - Compare each rewritten bone's LocalTransform / BindPose / InverseBindPose
+        //     against the original vanilla TMA's flat float arrays
+        // If TmaWriter emits the wrong byte order, the rewritten bone block will be a
+        // transposed version of the original and this test fails immediately.
+        Skip.IfNot(GameInstalled,
+            "AOM:R game install not found at default Steam path or AOMR_GAME_PATH");
+
+        var modelcacheDir = Path.Combine(GamePath, "modelcache");
+        var metaBarPath = Path.Combine(modelcacheDir, "ArtModelCacheMeta.bar");
+
+        var fileIndex = new FileIndex();
+        var modelcacheBars = Directory.GetFiles(modelcacheDir, "*.bar", SearchOption.AllDirectories);
+        FileIndexBuilder.IndexBarFiles(fileIndex, modelcacheBars);
+        var supplemental = FileIndexBuilder.FindSupplementalBarFiles(modelcacheDir);
+        FileIndexBuilder.IndexBarFiles(fileIndex, supplemental);
+
+        using var metaStream = File.OpenRead(metaBarPath);
+        var metaBar = new BarFile(metaStream);
+        metaBar.Load(out _);
+
+        int processed = 0;
+        var failed = new List<string>();
+
+        foreach (var entry in metaBar.Entries!)
+        {
+            if (processed >= 5) break;
+            if (!entry.Name.EndsWith(".tmm", StringComparison.OrdinalIgnoreCase)) continue;
+            if (entry.Name.EndsWith(".tmm.data", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var dataIndexEntries = fileIndex.Find(entry.Name + ".data");
+            if (dataIndexEntries.Count == 0) continue;
+
+            var tmmStem = Path.GetFileNameWithoutExtension(entry.Name);
+            var sourceTmas = await FindTmasForTmm(tmmStem, fileIndex);
+            if (sourceTmas.Count == 0) continue;
+
+            using var tmmPooled = entry.ReadDataDecompressedPooled(metaStream);
+            if (tmmPooled == null) continue;
+            var tmmBytes = tmmPooled.Span.ToArray();
+            var origTmm = new TmmFile(tmmBytes);
+            if (!origTmm.FullyParsed || origTmm.Bones == null || origTmm.Bones.Length == 0) continue;
+
+            using var dataBuf = await ReadIndexEntryPooled(dataIndexEntries[0]);
+            if (dataBuf == null) continue;
+            var dataBytes = dataBuf.Span.ToArray();
+
+            var (animName, firstTma) = sourceTmas[0];
+            if (firstTma.Bones == null || firstTma.Bones.Length == 0) continue;
+
+            var origTracks = TmaDecoder.DecodeAllTracks(firstTma);
+            if (origTracks == null || origTracks.Length == 0) continue;
+
+            var singleAnim = new GlbExporter.GlbAnimation
+            {
+                Name = animName,
+                Tracks = origTracks,
+                Duration = firstTma.Duration,
+                FrameCount = firstTma.FrameCount,
+            };
+
+            var glbBytes = ConversionHelper.ConvertTmmToGlbBytes(
+                tmmBytes, dataBytes,
+                materials: null,
+                animations: [singleAnim],
+                sourceTmas: [(animName, firstTma)],
+                sourceDdts: null);
+            if (glbBytes == null) { failed.Add($"{entry.Name}: ConvertTmmToGlbBytes returned null"); processed++; continue; }
+
+            var model = GlbReader.Parse(glbBytes);
+            if (model.Animations == null || model.Animations.Length == 0 || model.Bones == null) continue;
+
+            var readbackAnim = model.Animations[0];
+            GlbExtras.TmaSection? tmaExtras = null;
+            model.Extras?.Tma.TryGetValue(readbackAnim.Name, out tmaExtras);
+
+            var (rewrittenBytes, _) = TmaWriter.Write(readbackAnim, model.Bones, tmaExtras);
+            var rewrittenTma = new TmaFile(rewrittenBytes);
+            if (!rewrittenTma.Parsed || rewrittenTma.Bones == null) { failed.Add($"{entry.Name}: rewritten TMA failed re-parse"); processed++; continue; }
+
+            var origByName = new Dictionary<string, TmaBone>(StringComparer.Ordinal);
+            foreach (var ob in firstTma.Bones) origByName[ob.Name] = ob;
+
+            float maxLocal = 0f, maxBind = 0f, maxInvBind = 0f;
+            string? worstBone = null;
+            foreach (var rb in rewrittenTma.Bones)
+            {
+                if (!origByName.TryGetValue(rb.Name, out var ob)) continue;
+                float dl = MaxFlatDrift(ob.LocalTransform, rb.LocalTransform);
+                float db = MaxFlatDrift(ob.BindPose, rb.BindPose);
+                float di = MaxFlatDrift(ob.InverseBindPose, rb.InverseBindPose);
+                if (dl > maxLocal) { maxLocal = dl; worstBone = rb.Name; }
+                if (db > maxBind) maxBind = db;
+                if (di > maxInvBind) maxInvBind = di;
+            }
+
+            // Tolerance: vanilla matrices come from the original asset; the GLB pipeline
+            // decomposes/recomposes them through System.Numerics, which costs ~1e-5 per
+            // component. A wrong byte order would fail at ~1.0 because the off-diagonal
+            // entries land in different slots.
+            const float Tol = 1e-3f;
+            if (maxLocal > Tol || maxBind > Tol || maxInvBind > Tol)
+                failed.Add($"{entry.Name}: bone matrix drift Local={maxLocal:F5} Bind={maxBind:F5} InvBind={maxInvBind:F5} (worst bone {worstBone})");
+
+            processed++;
+        }
+
+        Assert.True(processed > 0, "No TMMs with paired TMAs found in ArtModelCacheMeta.bar");
+        Assert.True(failed.Count == 0,
+            $"TMA bone matrix layout regressions ({failed.Count}/{processed}):\n  " + string.Join("\n  ", failed));
+    }
+
+    [SkippableFact]
+    public async Task Diagnostic_VanillaTmaBoneMatrixLayout_MatchesTmm()
+    {
+        // Compares the 16-float bone matrix arrays of vanilla TMA bones to vanilla TMM bones
+        // with the same name. Both files describe the same skeleton, so identical layout
+        // means TmaWriter must emit floats in the same order TmmWriter does.
+        Skip.IfNot(GameInstalled,
+            "AOM:R game install not found at default Steam path or AOMR_GAME_PATH");
+
+        var modelcacheDir = Path.Combine(GamePath, "modelcache");
+        var metaBarPath = Path.Combine(modelcacheDir, "ArtModelCacheMeta.bar");
+
+        var fileIndex = new FileIndex();
+        var modelcacheBars = Directory.GetFiles(modelcacheDir, "*.bar", SearchOption.AllDirectories);
+        FileIndexBuilder.IndexBarFiles(fileIndex, modelcacheBars);
+        var supplemental = FileIndexBuilder.FindSupplementalBarFiles(modelcacheDir);
+        FileIndexBuilder.IndexBarFiles(fileIndex, supplemental);
+
+        using var metaStream = File.OpenRead(metaBarPath);
+        var metaBar = new BarFile(metaStream);
+        metaBar.Load(out _);
+
+        int compared = 0;
+        int boneMatches = 0;
+        float maxLocalDrift = 0f, maxBindDrift = 0f, maxInvBindDrift = 0f;
+        string? firstMismatchSummary = null;
+
+        foreach (var entry in metaBar.Entries!)
+        {
+            if (compared >= 5) break;
+            if (!entry.Name.EndsWith(".tmm", StringComparison.OrdinalIgnoreCase)) continue;
+            if (entry.Name.EndsWith(".tmm.data", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var tmmStem = Path.GetFileNameWithoutExtension(entry.Name);
+            var sourceTmas = await FindTmasForTmm(tmmStem, fileIndex);
+            if (sourceTmas.Count == 0) continue;
+
+            using var tmmPooled = entry.ReadDataDecompressedPooled(metaStream);
+            if (tmmPooled == null) continue;
+            var origTmm = new TmmFile(tmmPooled.Span.ToArray());
+            if (!origTmm.FullyParsed || origTmm.Bones == null || origTmm.Bones.Length == 0) continue;
+
+            var firstTma = sourceTmas[0].Tma;
+            if (firstTma.Bones == null) continue;
+
+            var tmmByName = new Dictionary<string, TmmBone>(StringComparer.Ordinal);
+            foreach (var tb in origTmm.Bones) tmmByName[tb.Name] = tb;
+
+            foreach (var ab in firstTma.Bones)
+            {
+                if (!tmmByName.TryGetValue(ab.Name, out var mb)) continue;
+                boneMatches++;
+
+                float Local = MaxFlatDrift(mb.ParentSpaceMatrix, ab.LocalTransform);
+                float Bind = MaxFlatDrift(mb.WorldSpaceMatrix, ab.BindPose);
+                float InvBind = MaxFlatDrift(mb.InverseBindMatrix, ab.InverseBindPose);
+
+                if (Local > maxLocalDrift) maxLocalDrift = Local;
+                if (Bind > maxBindDrift) maxBindDrift = Bind;
+                if (InvBind > maxInvBindDrift) maxInvBindDrift = InvBind;
+
+                if (firstMismatchSummary == null && (Local > 1e-3f || Bind > 1e-3f || InvBind > 1e-3f))
+                {
+                    firstMismatchSummary =
+                        $"{entry.Name}/{ab.Name}\n" +
+                        $"  TMM Local : [{string.Join(", ", mb.ParentSpaceMatrix.Select(f => f.ToString("F4")))}]\n" +
+                        $"  TMA Local : [{string.Join(", ", ab.LocalTransform.Select(f => f.ToString("F4")))}]\n" +
+                        $"  TMM Bind  : [{string.Join(", ", mb.WorldSpaceMatrix.Select(f => f.ToString("F4")))}]\n" +
+                        $"  TMA Bind  : [{string.Join(", ", ab.BindPose.Select(f => f.ToString("F4")))}]\n" +
+                        $"  TMM InvBd : [{string.Join(", ", mb.InverseBindMatrix.Select(f => f.ToString("F4")))}]\n" +
+                        $"  TMA InvBd : [{string.Join(", ", ab.InverseBindPose.Select(f => f.ToString("F4")))}]";
+                }
+            }
+            compared++;
+        }
+
+        Assert.True(boneMatches > 0,
+            $"No bone-name matches between {compared} vanilla TMM/TMA pairs.");
+
+        var msg = $"compared={compared} boneMatches={boneMatches} " +
+                  $"maxLocal={maxLocalDrift:F5} maxBind={maxBindDrift:F5} maxInvBind={maxInvBindDrift:F5}\n" +
+                  (firstMismatchSummary ?? "(no mismatches)");
+        Assert.True(maxLocalDrift < 1e-3f && maxBindDrift < 1e-3f && maxInvBindDrift < 1e-3f, msg);
+    }
+
+    static float MaxFlatDrift(float[] a, float[] b)
+    {
+        float max = 0f;
+        int len = Math.Min(a.Length, b.Length);
+        for (int i = 0; i < len; i++)
+        {
+            float d = Math.Abs(a[i] - b[i]);
+            if (d > max) max = d;
+        }
+        return max;
+    }
+
     // --- Helpers ---
 
     static float[] Identity16Local() => [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];

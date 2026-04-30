@@ -291,7 +291,10 @@ public static class TmaWriter
         return packed;
     }
 
-    // Applies F*M*F (F = diag(-1,1,1,1)) then writes 16 floats in column-major order.
+    // Applies F*M*F (F = diag(-1,1,1,1)) then writes 16 floats in TMA's flat convention.
+    // Storage convention is identical to TMM: col-major flat of the col-vector matrix, which
+    // is row-major flat of the equivalent System.Numerics row-vector matrix. Verified by
+    // byte-comparing vanilla TMM and TMA bones describing the same skeleton.
     static void WriteMatrix4x4Fmf(BinaryWriter w, Matrix4x4 m)
     {
         var r = new Matrix4x4(
@@ -300,10 +303,10 @@ public static class TmaWriter
             -m.M31,  m.M32,  m.M33,  m.M34,
             -m.M41,  m.M42,  m.M43,  m.M44);
 
-        w.Write(r.M11); w.Write(r.M21); w.Write(r.M31); w.Write(r.M41);
-        w.Write(r.M12); w.Write(r.M22); w.Write(r.M32); w.Write(r.M42);
-        w.Write(r.M13); w.Write(r.M23); w.Write(r.M33); w.Write(r.M43);
-        w.Write(r.M14); w.Write(r.M24); w.Write(r.M34); w.Write(r.M44);
+        w.Write(r.M11); w.Write(r.M12); w.Write(r.M13); w.Write(r.M14);
+        w.Write(r.M21); w.Write(r.M22); w.Write(r.M23); w.Write(r.M24);
+        w.Write(r.M31); w.Write(r.M32); w.Write(r.M33); w.Write(r.M34);
+        w.Write(r.M41); w.Write(r.M42); w.Write(r.M43); w.Write(r.M44);
     }
 
     static void WriteUtf16String(BinaryWriter w, string s)
