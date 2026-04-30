@@ -181,6 +181,86 @@ public class GlbReaderTests
         Assert.Equal("", GlbReader.StripSuffixForTests(""));
     }
 
+    [Theory]
+    [InlineData("POSITION")]
+    [InlineData("NORMAL")]
+    [InlineData("TANGENT")]
+    [InlineData("TEXCOORD_0")]
+    public void Parse_PrimitiveMissingRequiredAttribute_ThrowsClearError(string missing)
+    {
+        var attrs = new Dictionary<string, int>
+        {
+            ["POSITION"] = 0, ["NORMAL"] = 1, ["TANGENT"] = 2, ["TEXCOORD_0"] = 3,
+        };
+        attrs.Remove(missing);
+        var attrsJson = "{" + string.Join(",", attrs.Select(kv => $"\"{kv.Key}\":{kv.Value}")) + "}";
+
+        string json = $$"""
+        {
+          "asset": {"version":"2.0"},
+          "scene": 0,
+          "scenes": [{"nodes":[0]}],
+          "nodes": [{"mesh":0}],
+          "meshes": [{"primitives":[{"attributes":{{attrsJson}},"indices":4,"material":0}]}],
+          "materials": [{"name":"m"}],
+          "accessors": [
+            {"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},
+            {"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"},
+            {"bufferView":2,"componentType":5126,"count":3,"type":"VEC4"},
+            {"bufferView":3,"componentType":5126,"count":3,"type":"VEC2"},
+            {"bufferView":4,"componentType":5125,"count":3,"type":"SCALAR"}
+          ],
+          "bufferViews":[
+            {"buffer":0,"byteOffset":0,"byteLength":36},
+            {"buffer":0,"byteOffset":36,"byteLength":36},
+            {"buffer":0,"byteOffset":72,"byteLength":48},
+            {"buffer":0,"byteOffset":120,"byteLength":24},
+            {"buffer":0,"byteOffset":144,"byteLength":12}
+          ],
+          "buffers":[{"byteLength":156}]
+        }
+        """;
+        byte[] glb = AssembleGlb(json, BuildBin_3VertsScaledTest());
+
+        var ex = Assert.Throws<GlbParseException>(() => GlbReader.Parse(glb));
+        Assert.Contains(missing, ex.Message);
+    }
+
+    [Fact]
+    public void Parse_PrimitiveMissingIndices_ThrowsClearError()
+    {
+        string json = """
+        {
+          "asset": {"version":"2.0"},
+          "scene": 0,
+          "scenes": [{"nodes":[0]}],
+          "nodes": [{"mesh":0}],
+          "meshes": [{"primitives":[{
+            "attributes":{"POSITION":0,"NORMAL":1,"TANGENT":2,"TEXCOORD_0":3},
+            "material":0
+          }]}],
+          "materials": [{"name":"m"}],
+          "accessors": [
+            {"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},
+            {"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"},
+            {"bufferView":2,"componentType":5126,"count":3,"type":"VEC4"},
+            {"bufferView":3,"componentType":5126,"count":3,"type":"VEC2"}
+          ],
+          "bufferViews":[
+            {"buffer":0,"byteOffset":0,"byteLength":36},
+            {"buffer":0,"byteOffset":36,"byteLength":36},
+            {"buffer":0,"byteOffset":72,"byteLength":48},
+            {"buffer":0,"byteOffset":120,"byteLength":24}
+          ],
+          "buffers":[{"byteLength":144}]
+        }
+        """;
+        byte[] glb = AssembleGlb(json, BuildBin_3VertsScaledTest());
+
+        var ex = Assert.Throws<GlbParseException>(() => GlbReader.Parse(glb));
+        Assert.Contains("indices", ex.Message);
+    }
+
     [Fact]
     public void Parse_NonIdentitySceneRootTransform_BakedIntoVerticesAndBones()
     {

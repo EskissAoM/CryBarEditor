@@ -197,12 +197,19 @@ public static class GlbReader
 
         foreach (var p in primsEl.EnumerateArray())
         {
-            var attrs = p.GetProperty("attributes");
-            int posAcc = attrs.GetProperty("POSITION").GetInt32();
-            int normAcc = attrs.GetProperty("NORMAL").GetInt32();
-            int tanAcc = attrs.GetProperty("TANGENT").GetInt32();
-            int uvAcc = attrs.GetProperty("TEXCOORD_0").GetInt32();
-            int indicesAcc = p.GetProperty("indices").GetInt32();
+            if (!p.TryGetProperty("attributes", out var attrs))
+                throw new GlbParseException("Mesh primitive has no 'attributes' object.");
+
+            int posAcc  = RequireAttribute(attrs, "POSITION");
+            int normAcc = RequireAttribute(attrs, "NORMAL");
+            // TANGENT is optional in the glTF spec but required by TMM for TBN packing.
+            // Most DCC tools omit it by default (Blender: enable "Tangents" under Mesh in glTF export).
+            int tanAcc  = RequireAttribute(attrs, "TANGENT",
+                "Re-export from your tool with tangents enabled (Blender: glTF export -> Mesh -> Tangents).");
+            int uvAcc   = RequireAttribute(attrs, "TEXCOORD_0");
+            if (!p.TryGetProperty("indices", out var indicesProp))
+                throw new GlbParseException("Mesh primitive has no 'indices'; non-indexed (point/strip) geometry is not supported. Triangulate before export.");
+            int indicesAcc = indicesProp.GetInt32();
 
             byte[]? joints = null;
             float[]? weights = null;
@@ -229,6 +236,17 @@ public static class GlbReader
         }
 
         return new GlbMesh { Primitives = prims.ToArray() };
+    }
+
+    static int RequireAttribute(JsonElement attrs, string name, string? extraHelp = null)
+    {
+        if (!attrs.TryGetProperty(name, out var el))
+        {
+            var msg = $"Mesh primitive is missing required attribute '{name}'.";
+            if (extraHelp != null) msg += " " + extraHelp;
+            throw new GlbParseException(msg);
+        }
+        return el.GetInt32();
     }
 
     static string[] ReadMaterialNames(JsonElement root)
