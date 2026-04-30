@@ -454,7 +454,7 @@ public static class TmmWriter
         var worldMatrices = new Matrix4x4[bones.Length];
         for (int i = 0; i < bones.Length; i++)
         {
-            var local = ColMajorToMatrix(bones[i].LocalMatrix);
+            var local = MatrixDecomp.ColMajorToMatrix(bones[i].LocalMatrix);
             if (bones[i].ParentIndex < 0)
                 worldMatrices[i] = local;
             else
@@ -484,9 +484,9 @@ public static class TmmWriter
                 w.Write(0.5f);
             }
 
-            var parentSpaceMat = ColMajorToMatrix(bone.LocalMatrix);
+            var parentSpaceMat = MatrixDecomp.ColMajorToMatrix(bone.LocalMatrix);
             var worldMat       = worldMatrices[i];
-            var invBindMat     = ColMajorToMatrix(bone.InverseBindMatrix);
+            var invBindMat     = MatrixDecomp.ColMajorToMatrix(bone.InverseBindMatrix);
 
             // Three 4x4 matrices, each with F*M*F applied (F = diag(-1,1,1,1): flip X axis)
             WriteMatrix4x4Fmf(w, parentSpaceMat);
@@ -494,15 +494,6 @@ public static class TmmWriter
             WriteMatrix4x4Fmf(w, invBindMat);
         }
     }
-
-    // Converts a column-major float[16] (glTF / TMM convention) to a System.Numerics Matrix4x4.
-    // glTF column-major: m[0..3]=col0, m[4..7]=col1, m[8..11]=col2, m[12..15]=col3.
-    // System.Numerics row-vector: Mij = row i, col j => col0 becomes M_1, M_2, M_3, M_4 of col 0.
-    static Matrix4x4 ColMajorToMatrix(float[] m) => new(
-        m[0],  m[1],  m[2],  m[3],   // col0 -> row of M column 0
-        m[4],  m[5],  m[6],  m[7],   // col1
-        m[8],  m[9],  m[10], m[11],  // col2
-        m[12], m[13], m[14], m[15]); // col3
 
     // Applies F*M*F (F = diag(-1,1,1,1)) then writes 16 floats in TMM's flat convention.
     // F*M*F negates entries where exactly one of (row, col) is 0; entry [0,0] is double-negated.
@@ -523,9 +514,6 @@ public static class TmmWriter
         w.Write(r.M31); w.Write(r.M32); w.Write(r.M33); w.Write(r.M34);
         w.Write(r.M41); w.Write(r.M42); w.Write(r.M43); w.Write(r.M44);
     }
-
-    static float[] IdentityMatrix4x3Floats() =>
-        [1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0];
 
     static void WriteAttachments(BinaryWriter w, GlbModel model)
     {
@@ -555,7 +543,7 @@ public static class TmmWriter
 
             // Slot 2 (LocalTransformMatrix) is preserved verbatim through GlbExtras as 12 floats
             // in TMM's native row-major-3x4 layout; pass through untransformed.
-            var localMat = extras?.LocalMatrix ?? IdentityMatrix4x3Floats();
+            var localMat = extras?.LocalMatrix ?? IdentityMatrix4x3();
             for (int j = 0; j < 12; j++) w.Write(j < localMat.Length ? localMat[j] : 0f);
 
             w.Write(extras?.DummyBoneMode ?? 0u);

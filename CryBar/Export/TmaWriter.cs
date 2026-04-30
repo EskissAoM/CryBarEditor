@@ -57,7 +57,7 @@ public static class TmaWriter
         var worldMatrices = new Matrix4x4[bones.Length];
         for (int i = 0; i < bones.Length; i++)
         {
-            var local = ColMajorToMatrix(bones[i].LocalMatrix);
+            var local = MatrixDecomp.ColMajorToMatrix(bones[i].LocalMatrix);
             worldMatrices[i] = bones[i].ParentIndex < 0
                 ? local
                 : local * worldMatrices[bones[i].ParentIndex];
@@ -70,11 +70,11 @@ public static class TmaWriter
             w.Write(bone.ParentIndex);
 
             // localTransform = parent-relative (local) matrix
-            WriteMatrix4x4Fmf(w, ColMajorToMatrix(bone.LocalMatrix));
+            WriteMatrix4x4Fmf(w, MatrixDecomp.ColMajorToMatrix(bone.LocalMatrix));
             // bindPose = world-space matrix
             WriteMatrix4x4Fmf(w, worldMatrices[i]);
             // inverseBindPose
-            WriteMatrix4x4Fmf(w, ColMajorToMatrix(bone.InverseBindMatrix));
+            WriteMatrix4x4Fmf(w, MatrixDecomp.ColMajorToMatrix(bone.InverseBindMatrix));
         }
     }
 
@@ -256,12 +256,6 @@ public static class TmaWriter
 
         return packed;
     }
-
-    static Matrix4x4 ColMajorToMatrix(float[] m) => new(
-        m[0],  m[1],  m[2],  m[3],
-        m[4],  m[5],  m[6],  m[7],
-        m[8],  m[9],  m[10], m[11],
-        m[12], m[13], m[14], m[15]);
 
     // Applies F*M*F (F = diag(-1,1,1,1)) then writes 16 floats in column-major order.
     static void WriteMatrix4x4Fmf(BinaryWriter w, Matrix4x4 m)

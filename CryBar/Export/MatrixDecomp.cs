@@ -4,6 +4,15 @@ namespace CryBar.Export;
 
 public static class MatrixDecomp
 {
+    // Converts a glTF column-major flat float[16] into a System.Numerics Matrix4x4.
+    // glTF column-major: m[0..3]=col0, m[4..7]=col1, ... System.Numerics uses row-vector convention,
+    // so column j of the col-vector matrix becomes row j of the System.Numerics matrix.
+    public static Matrix4x4 ColMajorToMatrix(float[] m) => new(
+        m[0],  m[1],  m[2],  m[3],
+        m[4],  m[5],  m[6],  m[7],
+        m[8],  m[9],  m[10], m[11],
+        m[12], m[13], m[14], m[15]);
+
     // Decomposes a column-major 4x4 affine matrix into translation, rotation, scale.
     // Column-major columns become rows in System.Numerics row-vector Matrix4x4.
     public static void Decompose(float[] m, out Vector3 translation, out Quaternion rotation, out Vector3 scale)

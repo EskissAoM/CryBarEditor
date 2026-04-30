@@ -718,7 +718,7 @@ public static class GlbReader
         for (int i = 0; i < bones.Length; i++)
         {
             if (bones[i].ParentIndex >= 0) { result[i] = bones[i]; continue; }
-            var local = ColumnMajorToMatrix(bones[i].LocalMatrix);
+            var local = MatrixDecomp.ColMajorToMatrix(bones[i].LocalMatrix);
             var baked = local * m;
             result[i] = new GlbBone
             {
@@ -731,11 +731,7 @@ public static class GlbReader
         return result;
     }
 
-    static System.Numerics.Matrix4x4 ColumnMajorToMatrix(float[] m) => new(
-        m[0], m[1], m[2], m[3],
-        m[4], m[5], m[6], m[7],
-        m[8], m[9], m[10], m[11],
-        m[12], m[13], m[14], m[15]);
+
 
     static float[] MatrixToColumnMajor(System.Numerics.Matrix4x4 m) =>
         [m.M11, m.M12, m.M13, m.M14, m.M21, m.M22, m.M23, m.M24,
