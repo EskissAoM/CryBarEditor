@@ -124,6 +124,8 @@ Otherwise I recommend you check out the official documentation in game's folder.
 ![CryBarEditor_10](https://assets.cryshana.me/9vougwHtzSd9.avif)
 ### XML <-> XS conversion (Lossy)
 ![CryBarEditor_11](https://assets.cryshana.me/fYJTyJ4ODeAN.avif)
+### GLB -> TMM/TMA/DDT conversion
+![CryBarEditor_12](https://assets.cryshana.me/bZcCeQUDcW4H.avif)
 ### Extra CLI tool
 Not part of editor, but a separate tool download. The CLI `crybar.exe` implements most of the functions that the editor supports. Can be used for scripting.
 
