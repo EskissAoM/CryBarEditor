@@ -1,7 +1,7 @@
 using System.Buffers.Binary;
 using System.Numerics;
-using System.Text;
 using CryBar.TMM;
+using static CryBar.Export.TmmWriteHelpers;
 
 namespace CryBar.Export;
 
@@ -273,8 +273,9 @@ public static class TmmWriter
         w.Write(4);   // blockByteLength
         w.Write(0u);  // numImportNames
 
-        WriteBoundingBoxes(w, model);
-        w.Write(ComputeBoundsRadius(model));
+        var (bboxMin, bboxMax) = ComputeBbox(model);
+        WriteBoundingBoxes(w, model, bboxMin, bboxMax);
+        w.Write(bboxMax.Y);
 
         int meshGroupCount   = model.Mesh.Primitives.Length;
         int materialCount    = model.Materials.Length;
@@ -323,11 +324,8 @@ public static class TmmWriter
         foreach (var section in model.Extras?.Tmm.LossySections ?? [])
             warnings.Add($"Source had {section} data; dropped on re-import (v1 limitation)");
 
-        // Fallback-default warnings: surface whenever the source GLB carried no
-        // extras.crybar so the UI can tell the user their model is missing metadata
-        // that visibly affects in-game behavior. We key off `model.Extras == null`
-        // because that's the exact condition under which all extras-derived fields
-        // were defaulted earlier in this method.
+        // No extras.crybar => all extras-derived fields were defaulted; surface that
+        // to the UI since the missing metadata visibly affects in-game behavior.
         if (model.Extras == null)
         {
             warnings.Add("No main_matrix in source GLB; defaulted to identity. Model may appear at wrong absolute scale in-game (relative bone motion correct).");
@@ -394,9 +392,8 @@ public static class TmmWriter
         return 0;
     }
 
-    static void WriteBoundingBoxes(BinaryWriter w, GlbModel model)
+    static void WriteBoundingBoxes(BinaryWriter w, GlbModel model, Vector3 min, Vector3 max)
     {
-        var (min, max) = ComputeBbox(model);
         w.Write(min.X); w.Write(min.Y); w.Write(min.Z);
         w.Write(max.X); w.Write(max.Y); w.Write(max.Z);
 
@@ -405,43 +402,36 @@ public static class TmmWriter
         w.Write(eMax.X); w.Write(eMax.Y); w.Write(eMax.Z);
     }
 
-    static (System.Numerics.Vector3 Min, System.Numerics.Vector3 Max) ComputeBbox(GlbModel model)
+    static (Vector3 Min, Vector3 Max) ComputeBbox(GlbModel model)
     {
         if (model.Mesh.Primitives.Length == 0)
-            return (System.Numerics.Vector3.Zero, System.Numerics.Vector3.Zero);
+            return (Vector3.Zero, Vector3.Zero);
 
-        var min = new System.Numerics.Vector3(float.PositiveInfinity);
-        var max = new System.Numerics.Vector3(float.NegativeInfinity);
+        var min = new Vector3(float.PositiveInfinity);
+        var max = new Vector3(float.NegativeInfinity);
         foreach (var prim in model.Mesh.Primitives)
         {
             for (int i = 0; i < prim.Positions.Length; i += 3)
             {
-                var p = new System.Numerics.Vector3(prim.Positions[i], prim.Positions[i + 1], prim.Positions[i + 2]);
-                min = System.Numerics.Vector3.Min(min, p);
-                max = System.Numerics.Vector3.Max(max, p);
+                var p = new Vector3(prim.Positions[i], prim.Positions[i + 1], prim.Positions[i + 2]);
+                min = Vector3.Min(min, p);
+                max = Vector3.Max(max, p);
             }
         }
         return (min, max);
     }
 
-    static (System.Numerics.Vector3 Min, System.Numerics.Vector3 Max) ComputeExtendedBbox(
-        GlbModel model, System.Numerics.Vector3 bboxMin, System.Numerics.Vector3 bboxMax)
+    static (Vector3 Min, Vector3 Max) ComputeExtendedBbox(GlbModel model, Vector3 bboxMin, Vector3 bboxMax)
     {
         if (model.Extras != null && model.Extras.Tmm.ExtendedBbox.Length == 6)
         {
             var b = model.Extras.Tmm.ExtendedBbox;
-            return (new System.Numerics.Vector3(b[0], b[1], b[2]),
-                    new System.Numerics.Vector3(b[3], b[4], b[5]));
+            return (new Vector3(b[0], b[1], b[2]),
+                    new Vector3(b[3], b[4], b[5]));
         }
         bool skinned = model.Bones is { Length: > 0 };
         if (skinned) return (bboxMin * 3, bboxMax * 3);
         return (bboxMin, bboxMax);
-    }
-
-    static float ComputeBoundsRadius(GlbModel model)
-    {
-        var (_, max) = ComputeBbox(model);
-        return max.Y;
     }
 
     static float[] IdentityMatrix4x3() =>
@@ -495,26 +485,6 @@ public static class TmmWriter
             WriteMatrix4x4Fmf(w, worldMat);
             WriteMatrix4x4Fmf(w, invBindMat);
         }
-    }
-
-    // Applies F*M*F (F = diag(-1,1,1,1)) then writes 16 floats in TMM's flat convention.
-    // F*M*F negates entries where exactly one of (row, col) is 0; entry [0,0] is double-negated.
-    // Storage convention: TMM (and the python reference) stores col-major flat of the col-vector
-    // matrix, which is identical to row-major flat of the equivalent System.Numerics row-vector
-    // matrix (col i of M_col = row i of M_col^T = row i of M_sn). Hence we serialize System.Numerics
-    // fields in row-major order: M11..M14, M21..M24, M31..M34, M41..M44.
-    static void WriteMatrix4x4Fmf(BinaryWriter w, Matrix4x4 m)
-    {
-        var r = new Matrix4x4(
-             m.M11, -m.M12, -m.M13, -m.M14,
-            -m.M21,  m.M22,  m.M23,  m.M24,
-            -m.M31,  m.M32,  m.M33,  m.M34,
-            -m.M41,  m.M42,  m.M43,  m.M44);
-
-        w.Write(r.M11); w.Write(r.M12); w.Write(r.M13); w.Write(r.M14);
-        w.Write(r.M21); w.Write(r.M22); w.Write(r.M23); w.Write(r.M24);
-        w.Write(r.M31); w.Write(r.M32); w.Write(r.M33); w.Write(r.M34);
-        w.Write(r.M41); w.Write(r.M42); w.Write(r.M43); w.Write(r.M44);
     }
 
     static void WriteAttachments(BinaryWriter w, GlbModel model)
@@ -612,12 +582,5 @@ public static class TmmWriter
         w.Write((uint)impactPoints.Length);
         foreach (var pt in impactPoints)
             for (int i = 0; i < 4; i++) w.Write(i < pt.Length ? pt[i] : 0f);
-    }
-
-    static void WriteUtf16String(BinaryWriter w, string s)
-    {
-        w.Write(s.Length);
-        if (s.Length > 0)
-            w.Write(Encoding.Unicode.GetBytes(s));
     }
 }

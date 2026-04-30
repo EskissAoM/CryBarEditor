@@ -492,13 +492,16 @@ public static class GlbReader
                 if (boneIdx < 0) continue;
                 var (times, values, _) = samplerData[samplerIdx];
 
+                // Output frames are sampled at strictly increasing times, so the keyframe cursor
+                // only advances forward across the inner loop.
+                int hint = 1;
                 for (int f = 0; f < frameCount; f++)
                 {
                     float t = frameCount > 1 ? duration * f / (frameCount - 1) : 0;
                     if (path == "translation")
-                        tracks[boneIdx].Translations[f] = SampleVec3(times, values, t);
+                        tracks[boneIdx].Translations[f] = SampleVec3(times, values, t, ref hint);
                     else if (path == "rotation")
-                        tracks[boneIdx].Rotations[f] = SampleQuat(times, values, t);
+                        tracks[boneIdx].Rotations[f] = SampleQuat(times, values, t, ref hint);
                     // scale ignored (always identity for our exports)
                 }
             }
@@ -542,7 +545,9 @@ public static class GlbReader
         return (uint)Math.Max(1, MathF.Ceiling(duration * 30));
     }
 
-    static System.Numerics.Vector3 SampleVec3(float[] times, float[] values, float t)
+    // hint is the keyframe cursor; callers that sample at monotonically increasing t pass the same
+    // ref hint across calls so we never scan keys we've already passed.
+    static System.Numerics.Vector3 SampleVec3(float[] times, float[] values, float t, ref int hint)
     {
         if (times.Length == 0) return System.Numerics.Vector3.Zero;
         if (times.Length == 1 || t <= times[0])
@@ -552,17 +557,17 @@ public static class GlbReader
             int b = (times.Length - 1) * 3;
             return new System.Numerics.Vector3(values[b], values[b + 1], values[b + 2]);
         }
-        int hi = 1;
-        while (hi < times.Length && times[hi] < t) hi++;
-        int lo = hi - 1;
-        float a = (t - times[lo]) / (times[hi] - times[lo]);
-        int li = lo * 3, ri = hi * 3;
+        if (hint < 1) hint = 1;
+        while (hint < times.Length && times[hint] < t) hint++;
+        int lo = hint - 1;
+        float a = (t - times[lo]) / (times[hint] - times[lo]);
+        int li = lo * 3, ri = hint * 3;
         return System.Numerics.Vector3.Lerp(
             new System.Numerics.Vector3(values[li], values[li + 1], values[li + 2]),
             new System.Numerics.Vector3(values[ri], values[ri + 1], values[ri + 2]), a);
     }
 
-    static System.Numerics.Quaternion SampleQuat(float[] times, float[] values, float t)
+    static System.Numerics.Quaternion SampleQuat(float[] times, float[] values, float t, ref int hint)
     {
         if (times.Length == 0) return System.Numerics.Quaternion.Identity;
         if (times.Length == 1 || t <= times[0])
@@ -572,11 +577,11 @@ public static class GlbReader
             int b = (times.Length - 1) * 4;
             return new System.Numerics.Quaternion(values[b], values[b + 1], values[b + 2], values[b + 3]);
         }
-        int hi = 1;
-        while (hi < times.Length && times[hi] < t) hi++;
-        int lo = hi - 1;
-        float a = (t - times[lo]) / (times[hi] - times[lo]);
-        int li = lo * 4, ri = hi * 4;
+        if (hint < 1) hint = 1;
+        while (hint < times.Length && times[hint] < t) hint++;
+        int lo = hint - 1;
+        float a = (t - times[lo]) / (times[hint] - times[lo]);
+        int li = lo * 4, ri = hint * 4;
         var q1 = new System.Numerics.Quaternion(values[li], values[li + 1], values[li + 2], values[li + 3]);
         var q2 = new System.Numerics.Quaternion(values[ri], values[ri + 1], values[ri + 2], values[ri + 3]);
         return System.Numerics.Quaternion.Slerp(q1, q2, a);

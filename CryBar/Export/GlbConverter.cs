@@ -78,9 +78,15 @@ public static class GlbConverter
             }
             else
             {
-                foreach (var anim in model.Animations)
+                var anims = model.Animations;
+                var tmaResults = new (OutputFile File, IReadOnlyList<string> Warn)[anims.Length];
+                var prepWarnings = new ConcurrentBag<string>();
+
+                // CPU-bound and independent per animation; resampling and Quat64 packing dominate
+                // for many-bone skeletons.
+                Parallel.For(0, anims.Length, new ParallelOptions { CancellationToken = token }, i =>
                 {
-                    token.ThrowIfCancellationRequested();
+                    var anim = anims[i];
                     progress?.Report($"Encoding {anim.Name}.tma");
                     GlbExtras.TmaSection? tmaExtras = null;
                     model.Extras?.Tma.TryGetValue(anim.Name, out tmaExtras);
@@ -102,13 +108,19 @@ public static class GlbConverter
                         }
                         else
                         {
-                            warnings.Add($"fbximport for '{anim.Name}' could not be parsed; ignored.");
+                            prepWarnings.Add($"fbximport for '{anim.Name}' could not be parsed; ignored.");
                         }
                     }
 
                     var (tmaBytes, tmaWarn) = TmaWriter.Write(anim, model.Bones, tmaExtras);
-                    files.Add(new OutputFile($"{anim.Name}.tma", tmaBytes));
-                    warnings.AddRange(tmaWarn);
+                    tmaResults[i] = (new OutputFile($"{anim.Name}.tma", tmaBytes), tmaWarn);
+                });
+
+                warnings.AddRange(prepWarnings);
+                foreach (var (file, warn) in tmaResults)
+                {
+                    files.Add(file);
+                    warnings.AddRange(warn);
                 }
             }
         }

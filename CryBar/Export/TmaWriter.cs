@@ -1,6 +1,6 @@
 using System.Numerics;
-using System.Text;
 using CryBar.TMM;
+using static CryBar.Export.TmmWriteHelpers;
 
 namespace CryBar.Export;
 
@@ -86,15 +86,24 @@ public static class TmaWriter
     {
         int frameCount = (int)anim.FrameCount;
 
+        var tracksByBone = new GlbBoneTrack?[bones.Length];
+        if (anim.Tracks != null)
+        {
+            foreach (var t in anim.Tracks)
+            {
+                if ((uint)t.BoneIndex < (uint)bones.Length)
+                    tracksByBone[t.BoneIndex] = t;
+            }
+        }
+
         for (int i = 0; i < bones.Length; i++)
         {
             WriteUtf16String(w, bones[i].Name);
 
-            // trackVersion=1, translationEncoding=Raw(1), rotationEncoding=Quat64(3), scaleEncoding=Constant(0)
-            w.Write((byte)1);
-            w.Write((byte)1); // Raw translation
-            w.Write((byte)3); // Quat64 rotation
-            w.Write((byte)0); // Constant scale
+            w.Write((byte)1); // trackVersion
+            w.Write((byte)TmaEncoding.Raw);      // translation
+            w.Write((byte)TmaEncoding.Quat64);   // rotation
+            w.Write((byte)TmaEncoding.Constant); // scale
 
             w.Write(frameCount);
 
@@ -107,14 +116,7 @@ public static class TmaWriter
             var bindR = new Quaternion(bindR_glb.X, -bindR_glb.Y, -bindR_glb.Z, bindR_glb.W);
             var invBindR = Quaternion.Inverse(bindR);
 
-            GlbBoneTrack? track = null;
-            if (anim.Tracks != null)
-            {
-                foreach (var t in anim.Tracks)
-                {
-                    if (t.BoneIndex == i) { track = t; break; }
-                }
-            }
+            var track = tracksByBone[i];
 
             // Translation: Raw = 4-byte size prefix + frameCount * 12 bytes
             int translationBytes = frameCount * 12;
@@ -242,7 +244,8 @@ public static class TmaWriter
         float mag = MathF.Sqrt(q.X * q.X + q.Y * q.Y + q.Z * q.Z + q.W * q.W);
         if (mag > 0f) { q = new Quaternion(q.X / mag, q.Y / mag, q.Z / mag, q.W / mag); }
 
-        float[] c = [q.X, q.Y, q.Z, q.W];
+        Span<float> c = stackalloc float[4];
+        c[0] = q.X; c[1] = q.Y; c[2] = q.Z; c[3] = q.W;
 
         // Find the largest absolute component
         int largestIdx = 0;
@@ -291,28 +294,4 @@ public static class TmaWriter
         return packed;
     }
 
-    // Applies F*M*F (F = diag(-1,1,1,1)) then writes 16 floats in TMA's flat convention.
-    // Storage convention is identical to TMM: col-major flat of the col-vector matrix, which
-    // is row-major flat of the equivalent System.Numerics row-vector matrix. Verified by
-    // byte-comparing vanilla TMM and TMA bones describing the same skeleton.
-    static void WriteMatrix4x4Fmf(BinaryWriter w, Matrix4x4 m)
-    {
-        var r = new Matrix4x4(
-             m.M11, -m.M12, -m.M13, -m.M14,
-            -m.M21,  m.M22,  m.M23,  m.M24,
-            -m.M31,  m.M32,  m.M33,  m.M34,
-            -m.M41,  m.M42,  m.M43,  m.M44);
-
-        w.Write(r.M11); w.Write(r.M12); w.Write(r.M13); w.Write(r.M14);
-        w.Write(r.M21); w.Write(r.M22); w.Write(r.M23); w.Write(r.M24);
-        w.Write(r.M31); w.Write(r.M32); w.Write(r.M33); w.Write(r.M34);
-        w.Write(r.M41); w.Write(r.M42); w.Write(r.M43); w.Write(r.M44);
-    }
-
-    static void WriteUtf16String(BinaryWriter w, string s)
-    {
-        w.Write(s.Length);
-        if (s.Length > 0)
-            w.Write(Encoding.Unicode.GetBytes(s));
-    }
 }
