@@ -128,13 +128,23 @@ public partial class MainWindow
                             if (companionData != null)
                             {
                                 byte[]? convertedBytes;
+                                List<(string Name, TmaFile Tma)>? sourceTmasForFbx = null;
                                 if (options?.TmmToGltf == true)
                                 {
+                                    var sourceDdts = new List<(string Material, DDTImage Ddt)>();
+                                    var sourceTmas = new List<(string Name, TmaFile Tma)>();
+                                    sourceTmasForFbx = sourceTmas;
+
                                     var glbMaterials = (options.ExportMaterials && _fileIndex != null)
-                                        ? await BuildGlbMaterials(tmmFileName) : null;
+                                        ? await BuildGlbMaterials(tmmFileName, sourceDdts) : null;
                                     var glbAnimations = (options.ExportAnimations && _fileIndex != null)
-                                        ? await BuildGlbAnimations(tmmFileName) : null;
-                                    convertedBytes = ConversionHelper.ConvertTmmToGlbBytes(data.Memory, companionData.Memory, glbMaterials, glbAnimations);
+                                        ? await BuildGlbAnimations(tmmFileName, sourceTmas) : null;
+
+                                    convertedBytes = ConversionHelper.ConvertTmmToGlbBytes(
+                                        data.Memory, companionData.Memory,
+                                        glbMaterials, glbAnimations,
+                                        sourceTmas: sourceTmas,
+                                        sourceDdts: sourceDdts);
                                 }
                                 else
                                 {
@@ -147,6 +157,10 @@ public partial class MainWindow
                                 if (convertedBytes != null)
                                 {
                                     file.Write(convertedBytes);
+
+                                    if (options?.EmitFbximport == true && sourceTmasForFbx != null)
+                                        await EmitFbximportSidecars(exported_path, data.Memory, sourceTmasForFbx);
+
                                     continue;
                                 }
                             }
@@ -248,10 +262,47 @@ public partial class MainWindow
         return null;
     }
 
+    static async Task EmitFbximportSidecars(
+        string glbExportedPath,
+        ReadOnlyMemory<byte> tmmData,
+        IReadOnlyList<(string Name, TmaFile Tma)> sourceTmas)
+    {
+        var dir = Path.GetDirectoryName(glbExportedPath) ?? "";
+        var stem = Path.GetFileNameWithoutExtension(glbExportedPath);
+
+        var tmm = new TmmFile(tmmData);
+        if (!tmm.Parsed) return;
+
+        var hasSkin = tmm.Bones is { Length: > 0 };
+        var extras = GlbExtras.From(tmm, sourceTmas, []);
+
+        var tmmFbx = FbximportEmitter.EmitForTmm(extras.Tmm, hasSkin);
+        await File.WriteAllBytesAsync(Path.Combine(dir, stem + ".fbximport"), tmmFbx);
+
+        foreach (var (name, tma) in sourceTmas)
+        {
+            if (!tma.Parsed) continue;
+            extras.Tma.TryGetValue(name, out var section);
+            var tmaFbx = FbximportEmitter.EmitForTma(section, tma.Duration);
+            var safe = SanitizeFileName(name);
+            await File.WriteAllBytesAsync(Path.Combine(dir, safe + ".fbximport"), tmaFbx);
+        }
+    }
+
+    static string SanitizeFileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new StringBuilder(name.Length);
+        foreach (var c in name) sb.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
+        return sb.ToString();
+    }
+
     /// <summary>
     /// Builds glTF material list with embedded PNG textures for a TMM model.
     /// </summary>
-    async ValueTask<IReadOnlyList<GlbExporter.GlbMaterial>?> BuildGlbMaterials(string tmmFileName)
+    async ValueTask<IReadOnlyList<GlbExporter.GlbMaterial>?> BuildGlbMaterials(
+        string tmmFileName,
+        List<(string Material, DDTImage Ddt)>? sourceDdtsOut = null)
     {
         var resolved = await ResolveTmmMaterialsAsync(tmmFileName);
         if (resolved == null) return null;
@@ -271,6 +322,21 @@ public partial class MainWindow
                     resolved.Value.Textures.TryGetValue(texPath, out var texInfo))
                 {
                     textureTasks[texPath] = ConversionHelper.ConvertDdtToPngBytes(texInfo.DdtData);
+
+                    if (sourceDdtsOut != null)
+                    {
+                        var img = new DDTImage(texInfo.DdtData);
+                        if (img.ParseHeader())
+                        {
+                            var ddtKey = lower switch
+                            {
+                                "basecolor" or "diffuse"  => mat.Name,
+                                "normals"   or "normal"   => $"{mat.Name}_normal",
+                                _                         => $"{mat.Name}_{lower}",
+                            };
+                            sourceDdtsOut.Add((ddtKey, img));
+                        }
+                    }
                 }
             }
         }
@@ -421,7 +487,9 @@ public partial class MainWindow
     /// <summary>
     /// Discovers and decodes TMA animations for a TMM model via on-demand animfile search.
     /// </summary>
-    async ValueTask<IReadOnlyList<GlbExporter.GlbAnimation>?> BuildGlbAnimations(string tmmFileName)
+    async ValueTask<IReadOnlyList<GlbExporter.GlbAnimation>?> BuildGlbAnimations(
+        string tmmFileName,
+        List<(string Name, TmaFile Tma)>? sourceTmasOut = null)
     {
         if (_fileIndex == null) return null;
 
@@ -464,6 +532,8 @@ public partial class MainWindow
                 if (decoded == null || decoded.Length == 0) continue;
 
                 var baseName = !string.IsNullOrEmpty(animRef.AnimName) ? animRef.AnimName : tmaFileName;
+                // sourceTmasOut must stay in lockstep with animations (same index, same order)
+                // so the dedup-rename pass below can update both lists by index.
                 animations.Add(new GlbExporter.GlbAnimation
                 {
                     Name = baseName,
@@ -471,6 +541,7 @@ public partial class MainWindow
                     Duration = tma.Duration,
                     FrameCount = tma.FrameCount,
                 });
+                sourceTmasOut?.Add((baseName, tma));
             }
 
             // deduplicate names: "Attack" stays if unique, becomes "Attack 1", "Attack 2" if not
@@ -479,12 +550,16 @@ public partial class MainWindow
                 nameCounts[anim.Name] = nameCounts.GetValueOrDefault(anim.Name) + 1;
 
             var nameCounters = new Dictionary<string, int>(StringComparer.Ordinal);
-            foreach (var anim in animations)
+            for (int i = 0; i < animations.Count; i++)
             {
+                var anim = animations[i];
                 if (nameCounts[anim.Name] <= 1) continue;
                 int idx = nameCounters.GetValueOrDefault(anim.Name) + 1;
                 nameCounters[anim.Name] = idx;
-                anim.Name = $"{anim.Name} {idx}";
+                var newName = $"{anim.Name} {idx}";
+                anim.Name = newName;
+                if (sourceTmasOut != null && i < sourceTmasOut.Count)
+                    sourceTmasOut[i] = (newName, sourceTmasOut[i].Tma);
             }
 
             return animations.Count > 0 ? animations : null;

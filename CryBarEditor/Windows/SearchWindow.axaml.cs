@@ -307,7 +307,7 @@ public partial class SearchWindow : SimpleWindow
 
         try
         {
-            // Search entries inside a BAR file (each call owns its stream — no shared cache)
+            // Search entries inside a BAR file (each call owns its stream - no shared cache)
             async ValueTask SearchBar(BarFile bar, Stream barStream, string file, CancellationToken token)
             {
                 if (bar.Entries == null) return;

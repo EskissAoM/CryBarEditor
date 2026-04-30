@@ -14,6 +14,7 @@ The purpose of this tool is to enable fast and easy modding of Age of Mythology 
 - **Read BAR archives**
 - **Read FMOD banks** (play, view and export FMOD events)
 - **Preview 3D TMM models** (export to OBJ or glTF with or without materials)
+- **Round-trip 3D models** (TMM/TMA/DDT <-> GLB) - export a model + animations to a single GLB, edit it in Blender, and re-import it back into TMM/TMA/DDT
 - **Read Scenario(mythscn) files** (export to XML and back) - **currently experimental**
 - **Dependency Finder and Graph** (easily find what other files are references in a file)
 - Pick a **Root directory** (usually `\games` folder) for fast switching between BAR and other files
@@ -22,9 +23,10 @@ The purpose of this tool is to enable fast and easy modding of Age of Mythology 
     - BAR (decoding)
     - XMB (decoding + encoding)
     - DDT (decoding + encoding)
-    - TMM (decoding)
-    - TMM.DATA (decoding)
-    - TMA (decoding)
+    - TMM (decoding + encoding)
+    - TMM.DATA (decoding + encoding)
+    - TMA (decoding + encoding)
+    - fbximport (decoding + encoding)
     - mythscn/TRG (decoding + encoding)
 - Rich preview for TMM models (bones, mesh groups, materials, attachments) and TMM.DATA (vertex/triangle stats)
 - Syntax highlighting for common formats (json,xml,ini,xs,...) and folding support for XML
@@ -37,7 +39,8 @@ The purpose of this tool is to enable fast and easy modding of Age of Mythology 
   - Convert DDT -> TGA
   - Convert DDT -> PNG
   - Convert TMM -> OBJ (optionally with materials)
-  - Convert TMM -> glTF (optionally with materials)
+  - Convert TMM -> GLB (glTF) (optionally with materials, animations, and `.fbximport` sidecars)
+  - Convert GLB -> TMM/TMM.DATA/TMA/DDT (full reverse pipeline; preserves bones, attachments, materials, animations and animation_controllers)
   - Convert image -> DDT
   - Convert mythscn -> XML
   - Convert XML -> mythscn
@@ -67,6 +70,23 @@ The purpose of this tool is to enable fast and easy modding of Age of Mythology 
 For people new to GitHub - the releases are located [here](https://github.com/CryShana/CryBarEditor/releases).
 
 Just download the latest version .zip and extract it into a folder, run the .exe file and that will open the app.
+
+## Model round-tripping (TMM/TMA/DDT <-> GLB)
+The editor can export a TMM model + its TMA animations + its DDT textures to a single GLB file, and convert that GLB back into TMM/TMA/DDT files - so you can edit AoM:Retold models in Blender (or any glTF tool) and re-pack them.
+
+**Export side** (Advanced Export, with `Convert` + `TMM -> glTF` checked):
+- `Export TMM materials` packs base color and normal-map textures into the GLB
+- `Export animations` discovers the model's TMA animations via its animfile XML and embeds them into the GLB
+- `Emit .fbximport files` writes `.fbximport` sidecar JSON files alongside the GLB (one for the mesh, one per animation) - these stubs are valid input for the official Model Convert Tool and they carry `animation_controllers` data (visibility windows for attach points like arrows/projectiles)
+- All non-mesh metadata (bone collisions, attachment slots, autoburn, raytracing flags, DDT params, animation controllers...) is embedded in the GLB's `extras.crybar` block so a re-import doesn't need to re-prompt or guess
+
+**Convert side** (top-level `GLB -> TMM` menu, or right-click a `.glb`):
+- Parses the GLB and shows a preview of every output file it will produce (`.tmm`, `.tmm.data`, `.tma`, `.ddt`)
+- DDT textures missing params (e.g. for GLBs that didn't come from this tool) prompt you for format/usage/alpha values (with an "apply to all" option)
+- `.fbximport` files in the same directory as the GLB are auto-linked to matching animations by exact name match; you can also manually link or override any per-animation `.fbximport` from the UI
+- Output files are written atomically into a folder next to the source GLB
+
+The result of `TMM -> GLB -> TMM` is byte-similar (vertex positions, bone matrices, attachment matrices, animation track values, controllers all round-trip within tolerance).
 
 ## Modding Basics
 Please read [Modding Basics](Documentation/Modding.md) document to get started.
@@ -104,6 +124,8 @@ Otherwise I recommend you check out the official documentation in game's folder.
 ![CryBarEditor_10](https://assets.cryshana.me/9vougwHtzSd9.avif)
 ### XML <-> XS conversion (Lossy)
 ![CryBarEditor_11](https://assets.cryshana.me/fYJTyJ4ODeAN.avif)
+### GLB -> TMM/TMA/DDT conversion
+![CryBarEditor_12](https://assets.cryshana.me/bZcCeQUDcW4H.avif)
 ### Extra CLI tool
 Not part of editor, but a separate tool download. The CLI `crybar.exe` implements most of the functions that the editor supports. Can be used for scripting.
 

@@ -154,6 +154,31 @@ internal static class TmmTestHelpers
         return new TmmFile(tmmBytes);
     }
 
+    internal static byte[] CreateSyntheticTma(uint numBones = 0, uint frameCount = 30, float duration = 1.0f)
+    {
+        using var ms = new MemoryStream();
+        using var w = new BinaryWriter(ms);
+
+        // Signature "BTMA" (0x42 0x54 0x4D 0x41)
+        w.Write((byte)0x42); w.Write((byte)0x54); w.Write((byte)0x4D); w.Write((byte)0x41);
+        w.Write(12u);        // version
+        w.Write(0u);         // numTracks
+        w.Write(frameCount);
+        w.Write(duration);
+
+        // Root bone bounding box: minX minY minZ maxX maxY maxZ (6 x f32 = 24 bytes)
+        w.Write(0.0f); w.Write(0.0f); w.Write(0.0f);
+        w.Write(0.0f); w.Write(0.0f); w.Write(0.0f);
+
+        // numBones and numControllers -- zero, so no bone/track/controller loops execute
+        w.Write(0u); // numBones
+        w.Write(0u); // numControllers
+
+        _ = numBones;
+
+        return ms.ToArray();
+    }
+
     internal static byte[] CreateSyntheticData(
         uint numVertices, uint numTriangleVerts, bool hasSkinning,
         bool includeHeights = false)
@@ -236,5 +261,48 @@ internal static class TmmTestHelpers
         w.Write(value.Length);
         if (value.Length > 0)
             w.Write(Encoding.Unicode.GetBytes(value));
+    }
+
+    internal static TmaDecoder.DecodedTrack[] SyntheticTracksUniform(int boneCount, int frameCount, float duration)
+    {
+        var tracks = new TmaDecoder.DecodedTrack[boneCount];
+        for (int b = 0; b < boneCount; b++)
+        {
+            var trans = new System.Numerics.Vector3[frameCount];
+            var rots = new System.Numerics.Quaternion[frameCount];
+            var scales = new System.Numerics.Vector3[frameCount];
+            for (int f = 0; f < frameCount; f++)
+            {
+                trans[f] = new System.Numerics.Vector3(0, 0.1f * f, 0);
+                rots[f] = System.Numerics.Quaternion.Identity;
+                scales[f] = System.Numerics.Vector3.One;
+            }
+            tracks[b] = new TmaDecoder.DecodedTrack
+            {
+                Name = $"bone_{b}",
+                Translations = trans,
+                Rotations = rots,
+                Scales = scales,
+            };
+        }
+        return tracks;
+    }
+
+    internal static float[] Identity16Local() => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
+    internal static (TmmFile tmm, TmmDataFile dataFile) CreateMinimalModel()
+    {
+        uint numVerts = 3;
+        uint numTris = 3;
+
+        var tmm = CreateSyntheticTmmFile(numVerts, numTris, false,
+            numMeshGroups: 1, materials: ["default_mat"], submodels: ["default"]);
+        Assert.True(tmm.Parsed);
+
+        var dataBytes = CreateSyntheticData(numVertices: numVerts, numTriangleVerts: numTris, hasSkinning: false);
+        var dataFile = new TmmDataFile(dataBytes, tmm);
+        Assert.True(dataFile.Parsed);
+
+        return (tmm, dataFile);
     }
 }

@@ -37,6 +37,9 @@ public class ExportOptions
     /// <summary>Discover and embed TMA animations in GLB export</summary>
     public bool ExportAnimations { get; set; }
 
+    /// <summary>Emit .fbximport files alongside .glb / .tma</summary>
+    public bool EmitFbximport { get; set; }
+
     /// <summary>Whether any file in the selection is convertible (XMB/DDT)</summary>
     public bool AnyConvertible { get; set; }
 

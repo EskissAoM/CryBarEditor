@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 
 using CryBar;
+using CryBar.Export;
 
 using CryBarEditor.Classes;
 
@@ -25,11 +26,19 @@ public partial class DDTCreateDialogue : SimpleWindow
 
     public string InputFile { get; } = "";
     public string OutputFile { get; } = "";
+    public string MaterialName { get; private set; } = "";
 
     public string InputFileShort => Path.GetFileName(InputFile);
     public string OutputFileShort => Path.GetFileName(OutputFile);
 
+    public bool ParamsOnlyMode { get; private set; }
+    public bool FileMode => !ParamsOnlyMode;
+
     readonly Image<Rgba32>? _image;
+
+    public sealed record Result(GlbConverter.DdtMaterialParams Params, bool ApplyToAll);
+    Result? _pickedResult;
+    public Result? PickedResult => _pickedResult;
 
     static int _lastIndexVersion = 1;
     static int _lastIndexUsage = 0;
@@ -61,19 +70,47 @@ public partial class DDTCreateDialogue : SimpleWindow
             var data = File.ReadAllBytes(in_file);
             _image = Image.Load<Rgba32>(data);
 
-            var mipmaps = DDTImage.GetMaxMinmapLevels(_image.Width, _image.Height);
-
-            _txtMipmapNumber.Minimum = 1;
-            _txtMipmapNumber.Maximum = mipmaps;
-            _txtMipmapNumber.Value = mipmaps;
+            InitMipmapsFromImage();
         }
         catch (Exception ex)
         {
             throw new Exception("Failed to load image: " + ex.Message);
         }
 
+        LoadLastUsedIndices();
+    }
 
-        // load last used settings
+    public DDTCreateDialogue(string materialName, byte[] pngBytes) : this()
+    {
+        ParamsOnlyMode = true;
+        MaterialName = materialName;
+        OnPropertyChanged(nameof(MaterialName));
+        OnPropertyChanged(nameof(ParamsOnlyMode));
+        OnPropertyChanged(nameof(FileMode));
+
+        try
+        {
+            _image = Image.Load<Rgba32>(pngBytes);
+            InitMipmapsFromImage();
+        }
+        catch (Exception ex)
+        {
+            throw new Exception("Failed to load image: " + ex.Message);
+        }
+
+        LoadLastUsedIndices();
+    }
+
+    void InitMipmapsFromImage()
+    {
+        var mipmaps = DDTImage.GetMaxMinmapLevels(_image!.Width, _image.Height);
+        _txtMipmapNumber.Minimum = 1;
+        _txtMipmapNumber.Maximum = mipmaps;
+        _txtMipmapNumber.Value = mipmaps;
+    }
+
+    void LoadLastUsedIndices()
+    {
         _comboVersion.SelectedIndex = _lastIndexVersion;
         _comboUsage.SelectedIndex = _lastIndexUsage;
         _comboAlpha.SelectedIndex = _lastIndexAlpha;
@@ -108,6 +145,15 @@ public partial class DDTCreateDialogue : SimpleWindow
             var alpha = (DDTAlpha)_lastIndexAlpha;
             var format = (DDTFormat)_lastIndexFormat;
             byte mipmaps = (byte)_txtMipmapNumber.Value!;
+
+            if (ParamsOnlyMode)
+            {
+                _pickedResult = new Result(
+                    new GlbConverter.DdtMaterialParams(version, usage, alpha, format, mipmaps, null),
+                    _chkApplyToAll.IsChecked ?? false);
+                Close();
+                return;
+            }
 
             var data = await DDTImage.EncodeImageToDDT(_image, version, usage, alpha, format, mipmaps);
 

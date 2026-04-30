@@ -19,8 +19,13 @@
 		<StackPanel>
 			<TextBlock Text="Create DDT from image" FontWeight="Bold" Margin="0,0,0,10" />
 
-			<TextBlock Margin="0,0,0,16">
+			<TextBlock Margin="0,0,0,16" IsVisible="{Binding FileMode}">
 				<Run Text="{Binding OutputFileShort}"  Foreground="Cyan" />
+			</TextBlock>
+
+			<TextBlock Margin="0,0,0,16" IsVisible="{Binding ParamsOnlyMode}">
+				<Run Text="Material:" />
+				<Run Text="{Binding MaterialName}" Foreground="Cyan" />
 			</TextBlock>
 			
 			<StackPanel Orientation="Horizontal" Margin="0,0,0,8">
@@ -106,6 +111,12 @@
 							   Minimum="1" 
 							   Value="1" />
 			</StackPanel>
+
+			<CheckBox x:Name="_chkApplyToAll"
+					  Content="Apply to all remaining missing"
+					  IsVisible="{Binding ParamsOnlyMode}"
+					  IsEnabled="{Binding !Busy}"
+					  Margin="0,8,0,0" />
 
 			<TextBlock Margin="0,12,0,0"
 					   Text="{Binding ErrorMessage}"

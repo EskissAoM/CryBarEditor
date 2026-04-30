@@ -1,0 +1,122 @@
+<Window
+	x:Class="CryBarEditor.Windows.GlbConvertWindow"
+	xmlns="https://github.com/avaloniaui"
+	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+	xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+	xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+	xmlns:ce="using:CryBarEditor.Windows"
+	Title="Convert GLB to TMM/TMA/DDT"
+	Width="640"
+	MinWidth="500"
+	Height="600"
+	MinHeight="400"
+	d:DesignHeight="600"
+	d:DesignWidth="640"
+	Background="#141414"
+	Foreground="#d9d9d9"
+	DataContext="{Binding RelativeSource={RelativeSource Self}}"
+	WindowStartupLocation="CenterOwner"
+	mc:Ignorable="d"
+	x:DataType="ce:GlbConvertWindow">
+	<Window.Styles>
+		<Style Selector="ListBox">
+			<Setter Property="Background" Value="#171717" />
+		</Style>
+		<Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+			<Setter Property="Background" Value="#2b3c57" />
+		</Style>
+		<Style Selector="ListBoxItem:focus /template/ ContentPresenter">
+			<Setter Property="Background" Value="#2b3c57" />
+		</Style>
+		<Style Selector="ListBoxItem:pointerover /template/ ContentPresenter">
+			<Setter Property="Background" Value="#1a2436" />
+		</Style>
+		<Style Selector="ListBoxItem">
+			<Setter Property="Padding" Value="4" />
+			<Setter Property="MinHeight" Value="0" />
+		</Style>
+	</Window.Styles>
+
+	<DockPanel Margin="10">
+		<!-- Source / Output paths -->
+		<StackPanel DockPanel.Dock="Top" Spacing="2">
+			<TextBlock TextTrimming="CharacterEllipsis">
+				<Run Text="Source: " Foreground="#808080" />
+				<Run Text="{Binding SourcePathDisplay}" />
+			</TextBlock>
+			<TextBlock TextTrimming="CharacterEllipsis">
+				<Run Text="Output: " Foreground="#808080" />
+				<Run Text="{Binding OutputDirDisplay}" />
+			</TextBlock>
+		</StackPanel>
+
+		<!-- Summary -->
+		<Border DockPanel.Dock="Top" BorderBrush="#333" BorderThickness="0,1,0,0" Margin="0,8,0,0" Padding="0,8,0,0">
+			<StackPanel Spacing="2">
+				<TextBlock Text="What we found" FontWeight="Bold" />
+				<TextBlock Text="{Binding SummaryDisplay}" TextWrapping="Wrap" FontFamily="Consolas" Foreground="#b0b0b0" />
+			</StackPanel>
+		</Border>
+
+		<!-- Bottom block: progress bar, status, warnings, buttons -->
+		<StackPanel DockPanel.Dock="Bottom" Spacing="6" Margin="0,8,0,0">
+			<ProgressBar IsIndeterminate="True" Height="3"
+						 IsVisible="{Binding IsConverting}" />
+			<TextBlock Text="{Binding StatusLine}" Foreground="#808080" TextWrapping="Wrap" />
+			<ScrollViewer MaxHeight="100" IsVisible="{Binding HasWarnings}">
+				<ItemsControl ItemsSource="{Binding Warnings}">
+					<ItemsControl.ItemTemplate>
+						<DataTemplate x:DataType="x:String">
+							<TextBlock Text="{Binding}" Foreground="#cc8800" TextWrapping="Wrap" />
+						</DataTemplate>
+					</ItemsControl.ItemTemplate>
+				</ItemsControl>
+			</ScrollViewer>
+			<StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+				<Button Content="Cancel" Click="CancelClick" IsEnabled="{Binding NotBusy}" />
+				<Button Content="Convert" Click="ConvertClick" IsEnabled="{Binding CanConvertAndNotBusy}" />
+			</StackPanel>
+		</StackPanel>
+
+		<!-- Output files (fills middle) -->
+		<Border BorderBrush="#333" BorderThickness="0,1,0,0" Margin="0,8,0,0" Padding="0,8,0,0">
+			<DockPanel LastChildFill="True">
+				<TextBlock DockPanel.Dock="Top" Text="Output files" FontWeight="Bold" Margin="0,0,0,4" />
+				<ListBox ItemsSource="{Binding PlannedRows}">
+					<ListBox.ItemTemplate>
+						<DataTemplate x:DataType="ce:PlannedRow">
+							<Grid ColumnDefinitions="Auto,*,Auto,Auto" Margin="0,0,12,0">
+								<CheckBox Grid.Column="0" IsChecked="{Binding Enabled, Mode=TwoWay}" />
+								<TextBlock Grid.Column="1" Text="{Binding Name}" Margin="6,0,0,0"
+										   Foreground="{Binding ExtensionColor}"
+										   VerticalAlignment="Center" />
+								<StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6"
+											Margin="0,0,8,0"
+											IsVisible="{Binding IsTmaRow}" VerticalAlignment="Center">
+									<TextBlock Text="{Binding FbximportStatus}" Foreground="#7e8aa0"
+											   FontSize="12" VerticalAlignment="Center" />
+									<Button Content="link fbximport"
+											IsVisible="{Binding !HasLinkedFbximport}"
+											Click="LinkFbximportClick" Tag="{Binding}"
+											Background="#2c3a4f" Foreground="#cfd8e8" Padding="10,4" FontSize="12" />
+									<Button Content="x"
+											IsVisible="{Binding HasLinkedFbximport}"
+											Click="ClearFbximportClick" Tag="{Binding}"
+											Background="#3a3030" Foreground="White" Padding="12,4" FontSize="12"
+											MinWidth="32" />
+								</StackPanel>
+								<Button Grid.Column="3" Content="{Binding StatusText}"
+										IsVisible="{Binding NeedsClick}"
+										Click="MissingParamsClick" Tag="{Binding}"
+										Background="#553030" Foreground="White" Padding="10,4" FontSize="12" />
+								<TextBlock Grid.Column="3" Text="{Binding StatusText}"
+										   IsVisible="{Binding !NeedsClick}"
+										   Foreground="#808080" VerticalAlignment="Center" FontSize="12" />
+							</Grid>
+						</DataTemplate>
+					</ListBox.ItemTemplate>
+				</ListBox>
+			</DockPanel>
+		</Border>
+	</DockPanel>
+</Window>

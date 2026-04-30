@@ -377,22 +377,6 @@ public class GlbExporterTests
 
     #region Helper Methods
 
-    static (TmmFile tmm, TmmDataFile dataFile) CreateMinimalModel()
-    {
-        uint numVerts = 3;
-        uint numTris = 3; // 1 triangle = 3 indices
-
-        var tmm = CreateSyntheticTmmFile(numVerts, numTris, false,
-            numMeshGroups: 1, materials: ["default_mat"], submodels: ["default"]);
-        Assert.True(tmm.Parsed);
-
-        var dataBytes = CreateSyntheticData(numVertices: numVerts, numTriangleVerts: numTris, hasSkinning: false);
-        var dataFile = new TmmDataFile(dataBytes, tmm);
-        Assert.True(dataFile.Parsed);
-
-        return (tmm, dataFile);
-    }
-
     static (TmmFile tmm, TmmDataFile dataFile) CreateSkinnedModel()
     {
         uint numVerts = 3;
@@ -524,4 +508,178 @@ public class GlbExporterTests
     }
 
     #endregion
+
+    [Fact]
+    public void ExportGlb_WithExtrasParameter_StillReturnsValidGlb()
+    {
+        var (tmm, dataFile) = CreateMinimalModel();
+        var extras = new GlbExtras();
+
+        var glb = GlbExporter.ExportGlb(tmm, dataFile, extras: extras);
+
+        Assert.NotNull(glb);
+        Assert.Equal(0x46546C67u, BinaryPrimitives.ReadUInt32LittleEndian(glb.AsSpan(0, 4)));
+    }
+
+    [Fact]
+    public void ExportGlb_WithExtras_EmitsCrybarObjectAtRoot()
+    {
+        var (tmm, dataFile) = CreateMinimalModel();
+        var extras = new GlbExtras
+        {
+            Tmm = new GlbExtras.TmmSection
+            {
+                MainMatrix = [0.5f, 0, 0, 0,  0, 0.5f, 0, 0,  0, 0, 0.5f, 0,  0, 0, 0, 1],
+                AutoBurnMode = 3,
+            }
+        };
+
+        var glb = GlbExporter.ExportGlb(tmm, dataFile, extras: extras)!;
+
+        var json = ExtractJson(glb);
+        Assert.True(json.TryGetProperty("extras", out var extrasEl));
+        Assert.True(extrasEl.TryGetProperty("crybar", out var crybar));
+        Assert.Equal(0.5f, crybar.GetProperty("tmm").GetProperty("main_matrix")[0].GetSingle());
+        Assert.Equal(3, crybar.GetProperty("tmm").GetProperty("autoburn_mode").GetByte());
+    }
+
+    [Fact]
+    public void ExportGlb_NoExtras_NoCrybarObject()
+    {
+        var (tmm, dataFile) = CreateMinimalModel();
+        var glb = GlbExporter.ExportGlb(tmm, dataFile)!;
+        var json = ExtractJson(glb);
+        if (json.TryGetProperty("extras", out var extrasEl))
+        {
+            Assert.False(extrasEl.TryGetProperty("crybar", out _));
+        }
+    }
+
+    [Fact]
+    public void ExportGlb_WithAttachments_EachAttachmentNodeMarked()
+    {
+        var tmm = CreateSyntheticTmmFile(3, 3, true,
+            numMeshGroups: 1, materials: ["default_mat"], submodels: ["default"],
+            numBones: 2, numAttachments: 2);
+        Assert.True(tmm.Parsed);
+        Assert.Equal(2, tmm.Attachments!.Length);
+
+        var dataBytes = CreateSyntheticData(numVertices: 3, numTriangleVerts: 3, hasSkinning: true);
+        var dataFile = new TmmDataFile(dataBytes, tmm);
+        Assert.True(dataFile.Parsed);
+
+        var glb = GlbExporter.ExportGlb(tmm, dataFile, extras: new GlbExtras())!;
+        var json = ExtractJson(glb);
+
+        int markedCount = 0;
+        foreach (var node in json.GetProperty("nodes").EnumerateArray())
+        {
+            if (!node.TryGetProperty("extras", out var nx)) continue;
+            if (!nx.TryGetProperty("crybar", out var cb)) continue;
+            if (!cb.TryGetProperty("node_type", out var nt)) continue;
+            if (nt.GetString() == "attachment")
+            {
+                markedCount++;
+                Assert.True(cb.TryGetProperty("index", out var idx));
+                Assert.True(idx.GetInt32() >= 0);
+            }
+        }
+        Assert.Equal(2, markedCount);
+    }
+
+    [Fact]
+    public void ExportGlb_WithAttachments_NoExtrasArg_AttachmentNodesStillMarked()
+    {
+        var tmm = CreateSyntheticTmmFile(3, 3, true,
+            numMeshGroups: 1, materials: ["default_mat"], submodels: ["default"],
+            numBones: 2, numAttachments: 2);
+        var dataBytes = CreateSyntheticData(numVertices: 3, numTriangleVerts: 3, hasSkinning: true);
+        var dataFile = new TmmDataFile(dataBytes, tmm);
+
+        var glb = GlbExporter.ExportGlb(tmm, dataFile)!;
+        var json = ExtractJson(glb);
+
+        int markedCount = 0;
+        foreach (var node in json.GetProperty("nodes").EnumerateArray())
+        {
+            if (!node.TryGetProperty("extras", out var nx)) continue;
+            if (!nx.TryGetProperty("crybar", out var cb)) continue;
+            if (cb.TryGetProperty("node_type", out var nt) && nt.GetString() == "attachment")
+                markedCount++;
+        }
+        Assert.Equal(2, markedCount);
+    }
+
+    [Fact]
+    public void ExportGlb_WithExtras_MeshNodeHasMainMatrixRedundancy()
+    {
+        var (tmm, dataFile) = CreateMinimalModel();
+        var extras = new GlbExtras
+        {
+            Tmm = new GlbExtras.TmmSection
+            {
+                MainMatrix = [0.0115f, 0, 0, 0,  0, 0.0115f, 0, 0,  0, 0, 0.0115f, 0,  0, 0, 0, 1]
+            }
+        };
+
+        var glb = GlbExporter.ExportGlb(tmm, dataFile, extras: extras)!;
+        var json = ExtractJson(glb);
+
+        // Node 0 is the mesh node by convention
+        var node0 = json.GetProperty("nodes")[0];
+        var nodeExtras = node0.GetProperty("extras").GetProperty("crybar");
+        var mm = nodeExtras.GetProperty("main_matrix");
+
+        Assert.Equal(16, mm.GetArrayLength());
+        Assert.Equal(0.0115f, mm[0].GetSingle());
+        Assert.Equal(0.0115f, mm[5].GetSingle());
+        Assert.Equal(0.0115f, mm[10].GetSingle());
+        Assert.Equal(1.0f, mm[15].GetSingle());
+    }
+
+    [Fact]
+    public void ConvertTmmToGlbBytes_WithSourceFiles_EmitsExtras()
+    {
+        uint nv = 3, nt = 3;
+        uint vbl = nv * (uint)TmmVertex.SizeInBytes;
+        var tmmRawBytes = CreateSyntheticTmm(materials: ["body"], numMeshGroups: 1, numVertices: nv, numTriangleVerts: nt,
+            submodels: ["default"],
+            verticesStart: 0, verticesByteLength: vbl,
+            trianglesStart: vbl, trianglesByteLength: nt * 2,
+            weightsStart: 0, weightsByteLength: 0);
+        var dataBytes = CreateSyntheticData(numVertices: nv, numTriangleVerts: nt, hasSkinning: false);
+
+        var glb = ConversionHelper.ConvertTmmToGlbBytes(
+            tmmRawBytes, dataBytes,
+            materials: null, animations: null,
+            sourceTmas: [], sourceDdts: []);
+
+        Assert.NotNull(glb);
+        var json = ExtractJson(glb);
+        Assert.True(json.TryGetProperty("extras", out var ex));
+        Assert.True(ex.TryGetProperty("crybar", out _));
+    }
+
+    [Fact]
+    public void ConvertTmmToGlbBytes_WithoutSourceFiles_StillEmbedsTmmExtras()
+    {
+        uint nv = 3, nt = 3;
+        uint vbl = nv * (uint)TmmVertex.SizeInBytes;
+        var tmmRawBytes = CreateSyntheticTmm(materials: ["body"], numMeshGroups: 1, numVertices: nv, numTriangleVerts: nt,
+            submodels: ["default"],
+            verticesStart: 0, verticesByteLength: vbl,
+            trianglesStart: vbl, trianglesByteLength: nt * 2,
+            weightsStart: 0, weightsByteLength: 0);
+        var dataBytes = CreateSyntheticData(numVertices: nv, numTriangleVerts: nt, hasSkinning: false);
+
+        var glb = ConversionHelper.ConvertTmmToGlbBytes(tmmRawBytes, dataBytes);
+
+        Assert.NotNull(glb);
+        var json = ExtractJson(glb);
+        // Extras now always present (carries TMM-only data like bone collisions, autoburn, attachments).
+        // Tma/ddt sections will be empty when no source files are supplied.
+        Assert.True(json.TryGetProperty("extras", out var ex));
+        Assert.True(ex.TryGetProperty("crybar", out var crybar));
+        Assert.True(crybar.TryGetProperty("tmm", out _));
+    }
 }

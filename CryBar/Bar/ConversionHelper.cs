@@ -175,13 +175,31 @@ public static class ConversionHelper
 
     /// <summary>
     /// Converts TMM+TMM.DATA pair to GLB (glTF binary) format with optional materials and animations.
+    /// Extras metadata (TMM bone collisions, attachments, autoburn, etc., plus TMA/DDT info when supplied)
+    /// is always embedded so re-importers can recover non-mesh fields.
     /// </summary>
     public static byte[]? ConvertTmmToGlbBytes(ReadOnlyMemory<byte> tmmData, ReadOnlyMemory<byte> tmmDataData,
         IReadOnlyList<GlbExporter.GlbMaterial>? materials = null,
-        IReadOnlyList<GlbExporter.GlbAnimation>? animations = null)
+        IReadOnlyList<GlbExporter.GlbAnimation>? animations = null,
+        IReadOnlyList<(string Name, TmaFile Tma)>? sourceTmas = null,
+        IReadOnlyList<(string Material, DDTImage Ddt)>? sourceDdts = null)
     {
         if (!TryParseTmmPair(tmmData, tmmDataData, out var tmm, out var dataFile)) return null;
-        return GlbExporter.ExportGlb(tmm, dataFile, materials, animations);
+
+        // Always surface TMM material names so re-import preserves per-primitive material indices
+        // even when no DDT textures are provided. Caller-supplied materials win when present.
+        if (materials == null && tmm.Materials is { Length: > 0 })
+        {
+            materials = tmm.Materials
+                .Select(name => new GlbExporter.GlbMaterial { Name = name })
+                .ToArray();
+        }
+
+        var extras = GlbExtras.From(tmm,
+            sourceTmas ?? Array.Empty<(string, TmaFile)>(),
+            sourceDdts ?? Array.Empty<(string, DDTImage)>());
+
+        return GlbExporter.ExportGlb(tmm, dataFile, materials, animations, extras);
     }
 
     /// <summary>

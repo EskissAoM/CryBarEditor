@@ -18,6 +18,7 @@ public partial class AdvancedExportWindow : SimpleWindow
     bool _doExportMaterials;
     bool _doTmmToGltf;
     bool _doExportAnimations;
+    bool _doEmitFbximport;
     bool _openInEditor;
     string _overrideName = "";
     string _defaultOverrideName = "";
@@ -36,11 +37,12 @@ public partial class AdvancedExportWindow : SimpleWindow
     bool _singleFileIsConvertible;
 
     public bool DoCopy { get => _doCopy; set { _doCopy = value; OnSelfChanged(); OnPropertyChanged(nameof(CanExport)); RefreshOverridePreview(); } }
-    public bool DoConvert { get => _doConvert; set { _doConvert = value; OnSelfChanged(); OnPropertyChanged(nameof(CanExport)); OnPropertyChanged(nameof(ShowDecompressOption)); OnPropertyChanged(nameof(CompressedFileNote)); OnPropertyChanged(nameof(ShowExportMaterialsOption)); OnPropertyChanged(nameof(ShowTmmToGltfOption)); RefreshOverridePreview(); } }
+    public bool DoConvert { get => _doConvert; set { _doConvert = value; OnSelfChanged(); OnPropertyChanged(nameof(CanExport)); OnPropertyChanged(nameof(ShowDecompressOption)); OnPropertyChanged(nameof(CompressedFileNote)); OnPropertyChanged(nameof(ShowExportMaterialsOption)); OnPropertyChanged(nameof(ShowTmmToGltfOption)); OnPropertyChanged(nameof(ShowEmitFbximportOption)); RefreshOverridePreview(); } }
     public bool DoDecompress { get => _doDecompress; set { _doDecompress = value; OnSelfChanged(); } }
     public bool DoExportMaterials { get => _doExportMaterials; set { _doExportMaterials = value; OnSelfChanged(); } }
-    public bool DoTmmToGltf { get => _doTmmToGltf; set { _doTmmToGltf = value; OnSelfChanged(); OnPropertyChanged(nameof(ShowExportAnimationsOption)); RefreshOverridePreview(); } }
+    public bool DoTmmToGltf { get => _doTmmToGltf; set { _doTmmToGltf = value; OnSelfChanged(); OnPropertyChanged(nameof(ShowExportAnimationsOption)); OnPropertyChanged(nameof(ShowEmitFbximportOption)); RefreshOverridePreview(); } }
     public bool DoExportAnimations { get => _doExportAnimations; set { _doExportAnimations = value; OnSelfChanged(); } }
+    public bool DoEmitFbximport { get => _doEmitFbximport; set { _doEmitFbximport = value; OnSelfChanged(); } }
     public bool OpenInEditor { get => _openInEditor; set { _openInEditor = value; OnSelfChanged(); } }
     public string OverrideName
     {
@@ -73,6 +75,7 @@ public partial class AdvancedExportWindow : SimpleWindow
     public bool ShowExportMaterialsOption => DoConvert && _hasTmmFiles;
     public bool ShowTmmToGltfOption => DoConvert && _hasTmmFiles;
     public bool ShowExportAnimationsOption => DoConvert && _hasTmmFiles && DoTmmToGltf;
+    public bool ShowEmitFbximportOption => DoConvert && _hasTmmFiles && DoTmmToGltf;
     public bool ShowDecompressOption => UnhandledCompressedCount > 0;
     public string CompressedFileNote => UnhandledCompressedCount > 0
         ? $"{UnhandledCompressedCount} of {_files.Count} file(s) are compressed and won't be auto-decompressed by conversion. " +
@@ -243,6 +246,7 @@ public partial class AdvancedExportWindow : SimpleWindow
         if (savedConfig?.ExportDoExportMaterials is bool m) DoExportMaterials = m;
         if (savedConfig?.ExportTmmToGltf is bool g) DoTmmToGltf = g;
         if (savedConfig?.ExportAnimations is bool ea) DoExportAnimations = ea;
+        if (savedConfig?.ExportEmitFbximport is bool ef) DoEmitFbximport = ef;
     }
 
     /// <summary>
@@ -299,6 +303,7 @@ public partial class AdvancedExportWindow : SimpleWindow
         _result.ExportMaterials = DoExportMaterials;
         _result.TmmToGltf = DoTmmToGltf;
         _result.ExportAnimations = DoExportAnimations;
+        _result.EmitFbximport = DoEmitFbximport;
         _result.OpenInEditor = OpenInEditor;
         _result.OverrideBaseName = ShowOverrideName && !string.IsNullOrWhiteSpace(OverrideName)
             && _overrideNameModified ? OverrideName.Trim() : null;

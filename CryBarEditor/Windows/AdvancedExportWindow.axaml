@@ -4,7 +4,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
 		xmlns:micons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
 		xmlns:ce="using:CryBarEditor.Windows"
-        mc:Ignorable="d" d:DesignWidth="460" d:DesignHeight="560"
+        mc:Ignorable="d" d:DesignWidth="460" d:DesignHeight="620"
         x:Class="CryBarEditor.Windows.AdvancedExportWindow"
 		x:DataType="ce:AdvancedExportWindow"
 		WindowStartupLocation="CenterOwner"
@@ -13,7 +13,7 @@
 		Foreground="#d9d9d9"
 		Background="#141414"
 		DataContext="{Binding RelativeSource={RelativeSource Self}}"
-		CanResize="False" Width="460" Height="560"
+		CanResize="False" Width="460" Height="620"
         Title="Advanced Export">
 	<Border Padding="10" BorderThickness="2" BorderBrush="#d9d9d9">
 		<DockPanel>
@@ -112,6 +112,16 @@
 				<StackPanel>
 					<TextBlock Text="Export animations" VerticalAlignment="Center" />
 					<TextBlock Text="Discovers TMA animations via animfile XML and embeds in GLB"
+							   Foreground="Gray" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
+				</StackPanel>
+			</CheckBox>
+
+			<!-- Emit fbximport option (only when glTF export is enabled) -->
+			<CheckBox DockPanel.Dock="Top" IsChecked="{Binding DoEmitFbximport}" Margin="36,0,0,2"
+					  IsVisible="{Binding ShowEmitFbximportOption}">
+				<StackPanel>
+					<TextBlock Text="Emit .fbximport files" VerticalAlignment="Center" />
+					<TextBlock Text="Stub files for Model Convert Tool; carries animation_controllers"
 							   Foreground="Gray" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
 				</StackPanel>
 			</CheckBox>

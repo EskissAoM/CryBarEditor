@@ -98,7 +98,8 @@ public static class GlbExporter
     /// <returns>GLB bytes, or null if the input is not valid.</returns>
     public static byte[]? ExportGlb(TmmFile tmm, TmmDataFile dataFile,
         IReadOnlyList<GlbMaterial>? materials = null,
-        IReadOnlyList<GlbAnimation>? animations = null)
+        IReadOnlyList<GlbAnimation>? animations = null,
+        GlbExtras? extras = null)
     {
         if (!tmm.Parsed || dataFile.Vertices == null || dataFile.Indices == null)
             return null;
@@ -244,7 +245,7 @@ public static class GlbExporter
 
         // Build JSON chunk first to know its size
         var jsonBytes = BuildJson(tmm, meshGroups, bones, attachments, hasSkin, hasMaterials, materials,
-            vertexCount, layout, groupBounds, animBuffers);
+            vertexCount, layout, groupBounds, animBuffers, extras);
 
         int jsonPadded = Align4(jsonBytes.Length);
 
@@ -313,7 +314,7 @@ public static class GlbExporter
                 foreach (var mt in ab.Tracks)
                 {
                     var bind = bones[mt.BoneIndex].ParentSpaceMatrix;
-                    DecomposeColumnMajor(bind, out var bindT, out var bindR, out var bindS);
+                    MatrixDecomp.Decompose(bind, out var bindT, out var bindR, out var bindS);
 
                     WriteComposedTranslations(glb, binStart + mt.TransOffset, mt.Track.Translations, bindT, ab.FrameCount);
                     WriteAnimationRotations(glb, binStart + mt.RotOffset, mt.Track.Rotations, bindR, ab.FrameCount);
@@ -471,35 +472,6 @@ public static class GlbExporter
     }
 
     /// <summary>
-    /// Decomposes a column-major 4x4 affine matrix into translation, rotation, scale.
-    /// Column-major columns become rows in System.Numerics row-vector Matrix4x4.
-    /// </summary>
-    static void DecomposeColumnMajor(float[] m, out Vector3 translation, out Quaternion rotation, out Vector3 scale)
-    {
-        translation = new Vector3(m[12], m[13], m[14]);
-
-        // Extract scale from column lengths
-        var col0 = new Vector3(m[0], m[1], m[2]);
-        var col1 = new Vector3(m[4], m[5], m[6]);
-        var col2 = new Vector3(m[8], m[9], m[10]);
-        scale = new Vector3(col0.Length(), col1.Length(), col2.Length());
-
-        // Build normalized rotation matrix
-        if (scale.X > 0) col0 /= scale.X;
-        if (scale.Y > 0) col1 /= scale.Y;
-        if (scale.Z > 0) col2 /= scale.Z;
-
-        // System.Numerics uses row-vector convention (v' = v * M),
-        // so column-major columns become rows (transpose)
-        var rotMatrix = new Matrix4x4(
-            col0.X, col0.Y, col0.Z, 0,
-            col1.X, col1.Y, col1.Z, 0,
-            col2.X, col2.Y, col2.Z, 0,
-            0, 0, 0, 1);
-        rotation = Quaternion.CreateFromRotationMatrix(rotMatrix);
-    }
-
-    /// <summary>
     /// TMA translations are deltas from bind pose in parent space.
     /// Composes: final_T = bind_T + anim_T, then X-negate for RH.
     /// </summary>
@@ -565,7 +537,8 @@ public static class GlbExporter
         bool hasSkin, bool hasMaterials, IReadOnlyList<GlbMaterial>? materials,
         int vertexCount, in BufferLayout bl,
         (float[] min, float[] max)[] groupBounds,
-        List<AnimBuffer> animBuffers)
+        List<AnimBuffer> animBuffers,
+        GlbExtras? extras)
     {
         using var ms = new MemoryStream();
         using var w = new Utf8JsonWriter(ms, new JsonWriterOptions { Indented = false });
@@ -635,6 +608,8 @@ public static class GlbExporter
                 w.WriteNumberValue(idx);
             w.WriteEndArray();
         }
+        if (extras != null)
+            GlbExtras.WriteMeshNodeRedundancy(w, extras.Tmm.MainMatrix);
         w.WriteEndObject();
 
         // Bone nodes
@@ -681,6 +656,8 @@ public static class GlbExporter
 
             // Convert row-major 3x4 attachment transform to column-major 4x4 for glTF
             WriteAxisNegatedMatrixJson(w, RowMajor3x4ToColumnMajor4x4(attachments[i].AdjustmentTransformMatrix));
+
+            GlbExtras.WriteAttachmentMarker(w, i);
 
             w.WriteEndObject();
         }
@@ -1072,6 +1049,14 @@ public static class GlbExporter
         w.WriteEndObject();
         w.WriteEndArray();
 
+        // --- extras (CryBar metadata) ---
+        if (extras != null)
+        {
+            w.WriteStartObject("extras");
+            extras.Write(w);
+            w.WriteEndObject();
+        }
+
         w.WriteEndObject(); // root
         w.Flush();
 
@@ -1121,7 +1106,7 @@ public static class GlbExporter
     /// </summary>
     static void WriteBoneTrsJson(Utf8JsonWriter w, float[] matrix)
     {
-        DecomposeColumnMajor(matrix, out var t, out var r, out var s);
+        MatrixDecomp.Decompose(matrix, out var t, out var r, out var s);
 
         w.WriteStartArray("translation");
         w.WriteNumberValue(-t.X);
