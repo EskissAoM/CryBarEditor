@@ -85,16 +85,29 @@
 				<ListBox ItemsSource="{Binding PlannedRows}">
 					<ListBox.ItemTemplate>
 						<DataTemplate x:DataType="ce:PlannedRow">
-							<Grid ColumnDefinitions="Auto,*,Auto">
+							<Grid ColumnDefinitions="Auto,*,Auto,Auto">
 								<CheckBox Grid.Column="0" IsChecked="{Binding Enabled, Mode=TwoWay}" />
 								<TextBlock Grid.Column="1" Text="{Binding Name}" Margin="6,0,0,0"
 										   Foreground="{Binding ExtensionColor}"
 										   VerticalAlignment="Center" />
-								<Button Grid.Column="2" Content="{Binding StatusText}"
+								<StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4"
+											IsVisible="{Binding IsTmaRow}" VerticalAlignment="Center">
+									<TextBlock Text="{Binding FbximportStatus}" Foreground="#7e8aa0"
+											   FontSize="11" VerticalAlignment="Center" />
+									<Button Content="link fbximport"
+											IsVisible="{Binding !HasLinkedFbximport}"
+											Click="LinkFbximportClick" Tag="{Binding}"
+											Background="#2c3a4f" Foreground="#cfd8e8" Padding="6,2" FontSize="11" />
+									<Button Content="x"
+											IsVisible="{Binding HasLinkedFbximport}"
+											Click="ClearFbximportClick" Tag="{Binding}"
+											Background="#3a3030" Foreground="White" Padding="6,2" FontSize="11" />
+								</StackPanel>
+								<Button Grid.Column="3" Content="{Binding StatusText}"
 										IsVisible="{Binding NeedsClick}"
 										Click="MissingParamsClick" Tag="{Binding}"
 										Background="#553030" Foreground="White" Padding="6,2" />
-								<TextBlock Grid.Column="2" Text="{Binding StatusText}"
+								<TextBlock Grid.Column="3" Text="{Binding StatusText}"
 										   IsVisible="{Binding !NeedsClick}"
 										   Foreground="#808080" VerticalAlignment="Center" />
 							</Grid>

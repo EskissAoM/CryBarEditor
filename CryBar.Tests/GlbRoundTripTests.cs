@@ -21,6 +21,128 @@ public class GlbRoundTripTests
         File.Exists(Path.Combine(GamePath, "modelcache", "ArtModelCacheMeta.bar"));
 
     [Fact]
+    public void TmaController_RoundTripsThroughExtrasOnly()
+    {
+        // Bone has identity local matrix so the writer's mirror/unmirror is identity-preserving.
+        var bones = new[]
+        {
+            new GlbBone { Name = "root", ParentIndex = -1,
+                LocalMatrix = Identity16Local(),
+                InverseBindMatrix = Identity16Local() },
+        };
+
+        var anim = new GlbAnimation
+        {
+            Name = "attack",
+            FrameCount = 2,
+            Duration = 1.0f,
+            Tracks = [new GlbBoneTrack { BoneIndex = 0, Translations = [], Rotations = [] }],
+        };
+
+        var section = new GlbExtras.TmaSection
+        {
+            OriginalFrameCount = 2,
+            Controllers =
+            [
+                new GlbExtras.TmaControllerEntry
+                {
+                    Type = 1, Start = 0.32f, End = 0.65f, EaseIn = 0.0f, EaseOut = 0.0f,
+                    InvertLogic = true, AttachPointName = "arrow",
+                },
+                new GlbExtras.TmaControllerEntry
+                {
+                    Type = 2, SpawnTime = 0.5f, FootprintName = "boot_left", FootprintId = 7,
+                    InvertTextureY = false, AttachPointName = "LeftFoot", IsRightSide = false,
+                },
+            ],
+        };
+
+        var (tmaBytes, warnings) = TmaWriter.Write(anim, bones, section);
+        Assert.Empty(warnings);
+
+        var roundTripped = new TmaFile(tmaBytes);
+        Assert.True(roundTripped.Parsed);
+        Assert.NotNull(roundTripped.Controllers);
+        Assert.Equal(2, roundTripped.Controllers!.Length);
+
+        var vis = Assert.IsType<TmaVisibilityController>(roundTripped.Controllers[0]);
+        Assert.Equal(0.32f, vis.Start, 5);
+        Assert.Equal(0.65f, vis.End, 5);
+        Assert.True(vis.InvertLogic);
+        Assert.Equal("arrow", vis.AttachPointName);
+
+        var foot = Assert.IsType<TmaFootprintController>(roundTripped.Controllers[1]);
+        Assert.Equal(0.5f, foot.SpawnTime, 5);
+        Assert.Equal(7, foot.FootprintId);
+        Assert.Equal("boot_left", foot.FootprintName);
+        Assert.Equal("LeftFoot", foot.AttachPointName);
+        Assert.False(foot.IsRightSide);
+    }
+
+    [Fact]
+    public async Task FbximportOverride_ReplacesControllersDuringConvert()
+    {
+        // Synthetic GLB model with one bone and one animation that has no extras controllers.
+        // Convert with a fbximport override and verify the resulting TMA carries the controller.
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh { Primitives = [] },
+            Bones =
+            [
+                new GlbBone { Name = "root", ParentIndex = -1,
+                    LocalMatrix = Identity16Local(),
+                    InverseBindMatrix = Identity16Local() },
+            ],
+            Animations =
+            [
+                new GlbAnimation
+                {
+                    Name = "shoot",
+                    FrameCount = 2,
+                    Duration = 1.0f,
+                    Tracks = [new GlbBoneTrack { BoneIndex = 0, Translations = [], Rotations = [] }],
+                }
+            ],
+            Materials = [],
+        };
+
+        var fbxBytes = FbximportEmitter.EmitForTma(
+            new GlbExtras.TmaSection
+            {
+                Controllers =
+                [
+                    new GlbExtras.TmaControllerEntry
+                    {
+                        Type = 1, Start = 0.1f, End = 0.9f, InvertLogic = false,
+                        AttachPointName = "arrow",
+                    },
+                ],
+            },
+            duration: 1.0f);
+
+        var fbxByName = new Dictionary<string, byte[]>(StringComparer.Ordinal)
+        {
+            ["shoot"] = fbxBytes,
+        };
+
+        var result = await GlbConverter.ConvertAsync(
+            model, "synth", new Dictionary<string, GlbConverter.DdtMaterialParams>(),
+            progress: null, token: default,
+            fbximportByAnimName: fbxByName);
+
+        var tmaFile = result.Files.FirstOrDefault(f => f.Name == "shoot.tma");
+        Assert.NotNull(tmaFile);
+
+        var parsed = new TmaFile(tmaFile.Bytes);
+        Assert.True(parsed.Parsed);
+        Assert.NotNull(parsed.Controllers);
+        var vis = Assert.IsType<TmaVisibilityController>(Assert.Single(parsed.Controllers!));
+        Assert.Equal(0.1f, vis.Start, 5);
+        Assert.Equal(0.9f, vis.End, 5);
+        Assert.Equal("arrow", vis.AttachPointName);
+    }
+
+    [Fact]
     public void Layer1_SyntheticRoundTrip_StructurallyEquivalent()
     {
         var model = new GlbModel

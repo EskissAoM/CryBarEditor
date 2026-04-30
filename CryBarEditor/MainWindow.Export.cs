@@ -128,10 +128,12 @@ public partial class MainWindow
                             if (companionData != null)
                             {
                                 byte[]? convertedBytes;
+                                List<(string Name, TmaFile Tma)>? sourceTmasForFbx = null;
                                 if (options?.TmmToGltf == true)
                                 {
                                     var sourceDdts = new List<(string Material, DDTImage Ddt)>();
                                     var sourceTmas = new List<(string Name, TmaFile Tma)>();
+                                    sourceTmasForFbx = sourceTmas;
 
                                     var glbMaterials = (options.ExportMaterials && _fileIndex != null)
                                         ? await BuildGlbMaterials(tmmFileName, sourceDdts) : null;
@@ -155,6 +157,10 @@ public partial class MainWindow
                                 if (convertedBytes != null)
                                 {
                                     file.Write(convertedBytes);
+
+                                    if (options?.EmitFbximport == true && sourceTmasForFbx != null)
+                                        await EmitFbximportSidecars(exported_path, data.Memory, sourceTmasForFbx);
+
                                     continue;
                                 }
                             }
@@ -254,6 +260,41 @@ public partial class MainWindow
         }
 
         return null;
+    }
+
+    static async Task EmitFbximportSidecars(
+        string glbExportedPath,
+        ReadOnlyMemory<byte> tmmData,
+        IReadOnlyList<(string Name, TmaFile Tma)> sourceTmas)
+    {
+        var dir = Path.GetDirectoryName(glbExportedPath) ?? "";
+        var stem = Path.GetFileNameWithoutExtension(glbExportedPath);
+
+        var tmm = new TmmFile(tmmData);
+        if (!tmm.Parsed) return;
+
+        var hasSkin = tmm.Bones is { Length: > 0 };
+        var extras = GlbExtras.From(tmm, sourceTmas, []);
+
+        var tmmFbx = FbximportEmitter.EmitForTmm(extras.Tmm, hasSkin);
+        await File.WriteAllBytesAsync(Path.Combine(dir, stem + ".fbximport"), tmmFbx);
+
+        foreach (var (name, tma) in sourceTmas)
+        {
+            if (!tma.Parsed) continue;
+            extras.Tma.TryGetValue(name, out var section);
+            var tmaFbx = FbximportEmitter.EmitForTma(section, tma.Duration);
+            var safe = SanitizeFileName(name);
+            await File.WriteAllBytesAsync(Path.Combine(dir, safe + ".fbximport"), tmaFbx);
+        }
+    }
+
+    static string SanitizeFileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new StringBuilder(name.Length);
+        foreach (var c in name) sb.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
+        return sb.ToString();
     }
 
     /// <summary>

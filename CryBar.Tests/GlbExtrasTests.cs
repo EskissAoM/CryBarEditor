@@ -53,7 +53,7 @@ public class GlbExtrasTests
             },
             Tma =
             {
-                ["idle"] = new GlbExtras.TmaSection { HadControllers = false, OriginalFrameCount = 30 }
+                ["idle"] = new GlbExtras.TmaSection { OriginalFrameCount = 30 }
             },
             Ddt =
             {
@@ -151,7 +151,23 @@ public class GlbExtrasTests
             },
             Tma =
             {
-                ["walk"] = new GlbExtras.TmaSection { HadControllers = true, OriginalFrameCount = 24 }
+                ["walk"] = new GlbExtras.TmaSection
+                {
+                    OriginalFrameCount = 24,
+                    Controllers =
+                    [
+                        new GlbExtras.TmaControllerEntry
+                        {
+                            Type = 1, Start = 0.1f, End = 0.5f, EaseIn = 0.05f, EaseOut = 0.0f,
+                            InvertLogic = true, AttachPointName = "arrow",
+                        },
+                        new GlbExtras.TmaControllerEntry
+                        {
+                            Type = 2, SpawnTime = 0.2f, FootprintName = "boot_left", FootprintId = 7,
+                            InvertTextureY = false, AttachPointName = "LeftFoot", IsRightSide = false,
+                        },
+                    ],
+                }
             },
             Ddt =
             {
@@ -203,8 +219,18 @@ public class GlbExtrasTests
 
         Assert.Equal(2, roundTripped.Tmm.LossySections.Count);
 
-        Assert.True(roundTripped.Tma["walk"].HadControllers);
         Assert.Equal(24u, roundTripped.Tma["walk"].OriginalFrameCount);
+        Assert.Equal(2, roundTripped.Tma["walk"].Controllers.Length);
+        var rtVis = roundTripped.Tma["walk"].Controllers[0];
+        Assert.Equal(1, rtVis.Type);
+        Assert.Equal("arrow", rtVis.AttachPointName);
+        Assert.True(rtVis.InvertLogic);
+        Assert.Equal(0.5f, rtVis.End);
+        var rtFoot = roundTripped.Tma["walk"].Controllers[1];
+        Assert.Equal(2, rtFoot.Type);
+        Assert.Equal("boot_left", rtFoot.FootprintName);
+        Assert.Equal(7, rtFoot.FootprintId);
+        Assert.Equal("LeftFoot", rtFoot.AttachPointName);
 
         Assert.Single(roundTripped.Ddt);
         Assert.Equal(DDTFormat.DXT5, roundTripped.Ddt[0].Format);

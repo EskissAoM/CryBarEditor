@@ -39,8 +39,30 @@ public sealed class GlbExtras
 
     public sealed class TmaSection
     {
-        public bool HadControllers { get; set; }
         public uint OriginalFrameCount { get; set; }
+        public TmaControllerEntry[] Controllers { get; set; } = [];
+    }
+
+    /// <summary>
+    /// Animation controller round-tripped via extras so TMA -> GLB -> TMA preserves visibility
+    /// and footprint controllers without external fbximport input. Mirrors the binary fields
+    /// of TmaVisibilityController (Type=1) and TmaFootprintController (Type=2).
+    /// </summary>
+    public sealed class TmaControllerEntry
+    {
+        public int Type { get; set; }
+        public float Start { get; set; }
+        public float End { get; set; }
+        public float EaseIn { get; set; }
+        public float EaseOut { get; set; }
+        public bool InvertLogic { get; set; }
+        public string AttachPointName { get; set; } = "";
+        // Footprint-specific (Type=2)
+        public float SpawnTime { get; set; }
+        public string FootprintName { get; set; } = "";
+        public int FootprintId { get; set; }
+        public bool InvertTextureY { get; set; }
+        public bool IsRightSide { get; set; }
     }
 
     public sealed class DdtEntry
@@ -190,8 +212,33 @@ public sealed class GlbExtras
         foreach (var (name, entry) in Tma)
         {
             w.WriteStartObject(name);
-            w.WriteBoolean("had_controllers", entry.HadControllers);
             w.WriteNumber("original_frame_count", entry.OriginalFrameCount);
+            w.WriteStartArray("controllers");
+            foreach (var c in entry.Controllers)
+            {
+                w.WriteStartObject();
+                w.WriteNumber("type", c.Type);
+                if (c.Type == TmaControllerType.Visibility)
+                {
+                    w.WriteNumber("start", c.Start);
+                    w.WriteNumber("end", c.End);
+                    w.WriteNumber("ease_in", c.EaseIn);
+                    w.WriteNumber("ease_out", c.EaseOut);
+                    w.WriteBoolean("invert_logic", c.InvertLogic);
+                    w.WriteString("attach_point", c.AttachPointName);
+                }
+                else if (c.Type == TmaControllerType.Footprint)
+                {
+                    w.WriteNumber("spawn_time", c.SpawnTime);
+                    w.WriteString("footprint_name", c.FootprintName);
+                    w.WriteNumber("footprint_id", c.FootprintId);
+                    w.WriteBoolean("invert_texture_y", c.InvertTextureY);
+                    w.WriteString("attach_point", c.AttachPointName);
+                    w.WriteBoolean("is_right_side", c.IsRightSide);
+                }
+                w.WriteEndObject();
+            }
+            w.WriteEndArray();
             w.WriteEndObject();
         }
         w.WriteEndObject(); // tma
@@ -255,10 +302,31 @@ public sealed class GlbExtras
             foreach (var prop in tmaEl.EnumerateObject())
             {
                 var entry = new TmaSection();
-                if (prop.Value.TryGetProperty("had_controllers", out var hc))
-                    entry.HadControllers = hc.GetBoolean();
                 if (prop.Value.TryGetProperty("original_frame_count", out var fc))
                     entry.OriginalFrameCount = fc.GetUInt32();
+                if (prop.Value.TryGetProperty("controllers", out var ctrls)
+                    && ctrls.ValueKind == JsonValueKind.Array)
+                {
+                    var list = new List<TmaControllerEntry>();
+                    foreach (var c in ctrls.EnumerateArray())
+                    {
+                        var ce = new TmaControllerEntry();
+                        if (c.TryGetProperty("type", out var t)) ce.Type = t.GetInt32();
+                        if (c.TryGetProperty("start", out var st)) ce.Start = st.GetSingle();
+                        if (c.TryGetProperty("end", out var en)) ce.End = en.GetSingle();
+                        if (c.TryGetProperty("ease_in", out var ei)) ce.EaseIn = ei.GetSingle();
+                        if (c.TryGetProperty("ease_out", out var eo)) ce.EaseOut = eo.GetSingle();
+                        if (c.TryGetProperty("invert_logic", out var il)) ce.InvertLogic = il.GetBoolean();
+                        if (c.TryGetProperty("attach_point", out var ap)) ce.AttachPointName = ap.GetString() ?? "";
+                        if (c.TryGetProperty("spawn_time", out var sp)) ce.SpawnTime = sp.GetSingle();
+                        if (c.TryGetProperty("footprint_name", out var fn)) ce.FootprintName = fn.GetString() ?? "";
+                        if (c.TryGetProperty("footprint_id", out var fid)) ce.FootprintId = fid.GetInt32();
+                        if (c.TryGetProperty("invert_texture_y", out var ity)) ce.InvertTextureY = ity.GetBoolean();
+                        if (c.TryGetProperty("is_right_side", out var rs)) ce.IsRightSide = rs.GetBoolean();
+                        list.Add(ce);
+                    }
+                    entry.Controllers = list.ToArray();
+                }
                 result.Tma[prop.Name] = entry;
             }
         }
@@ -373,11 +441,46 @@ public sealed class GlbExtras
         foreach (var (name, tma) in tmas)
         {
             if (!tma.Parsed) continue;
-            extras.Tma[name] = new TmaSection
+            var section = new TmaSection
             {
-                HadControllers = tma.Controllers is { Length: > 0 },
                 OriginalFrameCount = tma.FrameCount,
             };
+            if (tma.Controllers is { Length: > 0 })
+            {
+                var list = new List<TmaControllerEntry>(tma.Controllers.Length);
+                foreach (var c in tma.Controllers)
+                {
+                    switch (c)
+                    {
+                        case TmaVisibilityController v:
+                            list.Add(new TmaControllerEntry
+                            {
+                                Type = TmaControllerType.Visibility,
+                                Start = v.Start,
+                                End = v.End,
+                                EaseIn = v.EaseIn,
+                                EaseOut = v.EaseOut,
+                                InvertLogic = v.InvertLogic,
+                                AttachPointName = v.AttachPointName,
+                            });
+                            break;
+                        case TmaFootprintController f:
+                            list.Add(new TmaControllerEntry
+                            {
+                                Type = TmaControllerType.Footprint,
+                                SpawnTime = f.SpawnTime,
+                                FootprintName = f.FootprintName,
+                                FootprintId = f.FootprintId,
+                                InvertTextureY = f.InvertTextureY,
+                                AttachPointName = f.AttachPointName,
+                                IsRightSide = f.IsRightSide,
+                            });
+                            break;
+                    }
+                }
+                section.Controllers = list.ToArray();
+            }
+            extras.Tma[name] = section;
         }
 
         foreach (var (material, ddt) in ddts)

@@ -698,6 +698,7 @@ public partial class MainWindow : SimpleWindow
         _lastConfiguration.ExportDoExportMaterials = options.ExportMaterials;
         _lastConfiguration.ExportTmmToGltf = options.TmmToGltf;
         _lastConfiguration.ExportAnimations = options.ExportAnimations;
+        _lastConfiguration.ExportEmitFbximport = options.EmitFbximport;
         _lastConfiguration.ExportOpenInEditor = options.OpenInEditor;
         SaveConfiguration();
     }

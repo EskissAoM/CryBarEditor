@@ -58,7 +58,8 @@ public static class GlbConverter
         string glbBaseName,
         IReadOnlyDictionary<string, DdtMaterialParams> ddtParams,
         IProgress<string>? progress = null,
-        CancellationToken token = default)
+        CancellationToken token = default,
+        IReadOnlyDictionary<string, byte[]>? fbximportByAnimName = null)
     {
         var files = new List<OutputFile>();
         var warnings = new List<string>();
@@ -83,6 +84,28 @@ public static class GlbConverter
                     progress?.Report($"Encoding {anim.Name}.tma");
                     GlbExtras.TmaSection? tmaExtras = null;
                     model.Extras?.Tma.TryGetValue(anim.Name, out tmaExtras);
+
+                    // fbximport override: replaces extras controllers when supplied for this animation.
+                    // Only the controllers field is overridden - frame count remains from extras/binary.
+                    if (fbximportByAnimName != null
+                        && fbximportByAnimName.TryGetValue(anim.Name, out var fbxBytes)
+                        && fbxBytes is { Length: > 0 })
+                    {
+                        var ctrls = FbximportReader.ParseAnimationControllers(fbxBytes);
+                        if (ctrls != null)
+                        {
+                            tmaExtras = new GlbExtras.TmaSection
+                            {
+                                OriginalFrameCount = tmaExtras?.OriginalFrameCount ?? 0,
+                                Controllers = ctrls,
+                            };
+                        }
+                        else
+                        {
+                            warnings.Add($"fbximport for '{anim.Name}' could not be parsed; ignored.");
+                        }
+                    }
+
                     var (tmaBytes, tmaWarn) = TmaWriter.Write(anim, model.Bones, tmaExtras);
                     files.Add(new OutputFile($"{anim.Name}.tma", tmaBytes));
                     warnings.AddRange(tmaWarn);

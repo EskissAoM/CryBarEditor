@@ -104,6 +104,59 @@ public partial class GlbConvertWindow : SimpleWindow
                 Enabled = !p.NeedsDdtParams,
             });
         }
+        AutoLinkFbximports();
+    }
+
+    /// <summary>
+    /// Conservative match: same directory as the GLB, and exactly "<anim_name>.fbximport"
+    /// (case-insensitive, no fuzzy matching). Misses are silent - users can manually link.
+    /// </summary>
+    void AutoLinkFbximports()
+    {
+        var dir = Path.GetDirectoryName(_glbPath);
+        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
+
+        foreach (var row in PlannedRows)
+        {
+            if (!row.IsTmaRow) continue;
+            var animName = Path.GetFileNameWithoutExtension(row.Name);
+            var candidate = Path.Combine(dir, animName + ".fbximport");
+            if (File.Exists(candidate))
+            {
+                row.LinkedFbximportPath = candidate;
+                row.FbximportStatus = "auto: " + Path.GetFileName(candidate);
+            }
+        }
+    }
+
+    async void LinkFbximportClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not PlannedRow row) return;
+
+        var picker = await StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
+        {
+            Title = $"Link fbximport for {row.Name}",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                new Avalonia.Platform.Storage.FilePickerFileType("fbximport") { Patterns = ["*.fbximport"] },
+            ],
+        });
+        if (picker.Count == 0) return;
+
+        var file = picker[0];
+        var localPath = file.Path.LocalPath;
+        if (string.IsNullOrEmpty(localPath)) return;
+
+        row.LinkedFbximportPath = localPath;
+        row.FbximportStatus = "linked: " + Path.GetFileName(localPath);
+    }
+
+    void ClearFbximportClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not PlannedRow row) return;
+        row.LinkedFbximportPath = null;
+        row.FbximportStatus = "";
     }
 
     async void MissingParamsClick(object? sender, RoutedEventArgs e)
@@ -192,7 +245,26 @@ public partial class GlbConvertWindow : SimpleWindow
 
         try
         {
-            var result = await GlbConverter.ConvertAsync(_model, _glbBaseName, _ddtParams, progress);
+            // Read linked fbximport files into a name -> bytes map.
+            // Map keys are the same animation names that appear as `<name>.tma` rows.
+            Dictionary<string, byte[]>? fbxByAnim = null;
+            foreach (var row in PlannedRows)
+            {
+                if (!row.IsTmaRow || string.IsNullOrEmpty(row.LinkedFbximportPath)) continue;
+                try
+                {
+                    var bytes = await File.ReadAllBytesAsync(row.LinkedFbximportPath);
+                    fbxByAnim ??= new Dictionary<string, byte[]>(StringComparer.Ordinal);
+                    fbxByAnim[Path.GetFileNameWithoutExtension(row.Name)] = bytes;
+                }
+                catch (Exception ex)
+                {
+                    Warnings.Add($"Failed to read {row.LinkedFbximportPath}: {ex.Message}");
+                }
+            }
+
+            var result = await GlbConverter.ConvertAsync(_model, _glbBaseName, _ddtParams, progress,
+                fbximportByAnimName: fbxByAnim);
 
             var enabledNames = new HashSet<string>(
                 PlannedRows.Where(r => r.Enabled).Select(r => r.Name),
@@ -253,10 +325,14 @@ public sealed class PlannedRow : INotifyPropertyChanged
 {
     bool _enabled = true;
     string _statusText = "";
+    string? _linkedFbximportPath;
+    string _fbximportStatus = "";
 
     public required string Name { get; init; }
     public required bool NeedsClick { get; init; }
     public string? DdtMaterialName { get; init; }
+
+    public bool IsTmaRow => Name.EndsWith(".tma", StringComparison.Ordinal);
 
     public string ExtensionColor => Name switch
     {
@@ -277,6 +353,26 @@ public sealed class PlannedRow : INotifyPropertyChanged
     {
         get => _statusText;
         set { if (_statusText == value) return; _statusText = value; OnPropertyChanged(); }
+    }
+
+    public string? LinkedFbximportPath
+    {
+        get => _linkedFbximportPath;
+        set
+        {
+            if (_linkedFbximportPath == value) return;
+            _linkedFbximportPath = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasLinkedFbximport));
+        }
+    }
+
+    public bool HasLinkedFbximport => !string.IsNullOrEmpty(_linkedFbximportPath);
+
+    public string FbximportStatus
+    {
+        get => _fbximportStatus;
+        set { if (_fbximportStatus == value) return; _fbximportStatus = value; OnPropertyChanged(); }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

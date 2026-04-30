@@ -1,5 +1,12 @@
 namespace CryBar.TMM;
 
+/// <summary>Discriminator for TMA controller binary records.</summary>
+public static class TmaControllerType
+{
+    public const int Visibility = 1;
+    public const int Footprint = 2;
+}
+
 /// <summary>Base class for TMA animation controllers (visibility, footprints, etc.).</summary>
 public abstract class TmaController
 {

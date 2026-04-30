@@ -10,8 +10,12 @@ public static class TmaWriter
         GlbAnimation anim, GlbBone[] bones, GlbExtras.TmaSection? extras)
     {
         var warnings = new List<string>();
-        if (extras?.HadControllers == true)
-            warnings.Add($"Animation '{anim.Name}' had controllers in source; not re-emitted.");
+        var allControllers = extras?.Controllers ?? [];
+        var controllers = allControllers
+            .Where(c => c.Type == TmaControllerType.Visibility || c.Type == TmaControllerType.Footprint)
+            .ToArray();
+        foreach (var skipped in allControllers.Where(c => c.Type != TmaControllerType.Visibility && c.Type != TmaControllerType.Footprint))
+            warnings.Add($"Animation '{anim.Name}' had unknown controller type {skipped.Type}; skipped.");
 
         using var ms = new MemoryStream();
         using var w = new BinaryWriter(ms);
@@ -33,12 +37,12 @@ public static class TmaWriter
         for (int i = 0; i < 6; i++) w.Write(0f);
 
         w.Write((uint)bones.Length); // numBones
-        w.Write(0u);                 // numControllers
+        w.Write((uint)controllers.Length);
 
         WriteBones(w, bones);
         WriteTracks(w, anim, bones, warnings);
+        WriteControllers(w, controllers, anim.Name, warnings);
 
-        // No controllers emitted (numControllers = 0).
         // Error section
         w.Write(0u); // errorFlags
         w.Write(0u); // errorCount
@@ -139,6 +143,36 @@ public static class TmaWriter
 
             // Scale: Constant = 16 bytes inline (__m128), uniform scale 1,1,1
             w.Write(1f); w.Write(1f); w.Write(1f); w.Write(0f); // XYZ scale + padding
+        }
+    }
+
+    static void WriteControllers(BinaryWriter w, GlbExtras.TmaControllerEntry[] controllers, string animName, List<string> warnings)
+    {
+        foreach (var c in controllers)
+        {
+            switch (c.Type)
+            {
+                case TmaControllerType.Visibility:
+                    w.Write(TmaControllerType.Visibility);
+                    w.Write(c.Start);
+                    w.Write(c.End);
+                    w.Write(c.EaseIn);
+                    w.Write(c.EaseOut);
+                    w.Write((byte)(c.InvertLogic ? 1 : 0));
+                    WriteUtf16String(w, c.AttachPointName);
+                    break;
+                case TmaControllerType.Footprint:
+                    w.Write(TmaControllerType.Footprint);
+                    w.Write(c.SpawnTime);
+                    WriteUtf16String(w, c.FootprintName);
+                    w.Write(c.FootprintId);
+                    w.Write((byte)(c.InvertTextureY ? 1 : 0));
+                    WriteUtf16String(w, c.AttachPointName);
+                    w.Write((byte)(c.IsRightSide ? 1 : 0));
+                    break;
+                default:
+                    throw new InvalidOperationException($"Unhandled controller type {c.Type} (should have been filtered).");
+            }
         }
     }
 
