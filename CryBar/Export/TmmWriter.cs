@@ -198,12 +198,14 @@ public static class TmmWriter
         // glTF tangent.w: -1 = non-mirrored (handedness=0), +1 = mirrored (handedness=1)
         int handedness = tw > 0.0f ? 1 : 0;
 
-        // Compute game-space B from T x N (B_game = cross(T_game, N_game))
-        // For mirrored faces the stored B is negated, so the cross product always
-        // gives the "real" B that, when negated back per the handedness encoding, round-trips.
-        float bgx = tgy * ngz - tgz * ngy;
-        float bgy = tgz * ngx - tgx * ngz;
-        float bgz = tgx * ngy - tgy * ngx;
+        // Game-space B = N x T. The TmmDecoder builds matrix [T | B | N] where col1 is exactly
+        // this cross product (verified against vanilla samples). Using T x N would feed Shepperd
+        // a left-handed frame and produce a quaternion whose decoded normal points the wrong way.
+        // For mirrored faces (handedness=1) the cross still produces the "real" B; the handedness
+        // bit signals the decoder to flip B back at unpack time.
+        float bgx = ngy * tgz - ngz * tgy;
+        float bgy = ngz * tgx - ngx * tgz;
+        float bgz = ngx * tgy - ngy * tgx;
 
         // Build proper-rotation matrix [T_g | B_g | N_g] for Shepperd.
         // Mirrored faces use -B so the matrix has det=+1 (right-handed frame),

@@ -497,6 +497,16 @@ public class GlbRoundTripTests
                 if (maxPosDrift > 0.01f)
                     failed.Add($"{entry.Name}: max position drift {maxPosDrift:F5} > 0.01");
 
+                // TBN drift check - regression guard for B = N x T (not T x N) cross product in PackTbn.
+                // Threshold 0.1 leaves room for 15-bit TBN packing + half-precision noise (~0.013 observed).
+                (float maxN, float maxT, int signFlips) = MaxTbnDrift(origData.Vertices, reparsedData.Vertices);
+                if (maxN > 0.1f)
+                    failed.Add($"{entry.Name}: max normal drift {maxN:F4} > 0.1");
+                if (maxT > 0.1f)
+                    failed.Add($"{entry.Name}: max tangent drift {maxT:F4} > 0.1");
+                if (signFlips > 0)
+                    failed.Add($"{entry.Name}: {signFlips} normals have flipped sign");
+
                 if (origTmm.Bones != null && reparsed.Bones != null &&
                     origTmm.Bones.Length == reparsed.Bones.Length)
                 {
@@ -807,6 +817,26 @@ public class GlbRoundTripTests
             if (d > max) max = d;
         }
         return max;
+    }
+
+    static (float MaxNormal, float MaxTangent, int SignFlips) MaxTbnDrift(TmmVertex[] orig, TmmVertex[] reparsed)
+    {
+        float maxN = 0f, maxT = 0f;
+        int flips = 0;
+        int count = Math.Min(orig.Length, reparsed.Length);
+        for (int i = 0; i < count; i++)
+        {
+            var (qax, qay, qaz, qaw, ha) = TbnDecoder.QuatFromPacked(orig[i].TbnX, orig[i].TbnY, orig[i].TbnZ);
+            var (qbx, qby, qbz, qbw, hb) = TbnDecoder.QuatFromPacked(reparsed[i].TbnX, reparsed[i].TbnY, reparsed[i].TbnZ);
+            var (ta, _, na) = TbnDecoder.QuatToTbn(qax, qay, qaz, qaw, ha);
+            var (tb, _, nb) = TbnDecoder.QuatToTbn(qbx, qby, qbz, qbw, hb);
+            float nd = MathF.Sqrt((na.x - nb.x) * (na.x - nb.x) + (na.y - nb.y) * (na.y - nb.y) + (na.z - nb.z) * (na.z - nb.z));
+            float td = MathF.Sqrt((ta.x - tb.x) * (ta.x - tb.x) + (ta.y - tb.y) * (ta.y - tb.y) + (ta.z - tb.z) * (ta.z - tb.z));
+            if (nd > maxN) maxN = nd;
+            if (td > maxT) maxT = td;
+            if (Math.Sign(na.x) != Math.Sign(nb.x) && MathF.Abs(na.x) > 0.1f) flips++;
+        }
+        return (maxN, maxT, flips);
     }
 
     static float MaxBoneMatrixDrift(TmmBone[] orig, TmmBone[] reparsed)
