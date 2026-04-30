@@ -286,7 +286,15 @@ public partial class MainWindow
                     {
                         var img = new DDTImage(texInfo.DdtData);
                         if (img.ParseHeader())
-                            sourceDdtsOut.Add((mat.Name, img));
+                        {
+                            var ddtKey = lower switch
+                            {
+                                "basecolor" or "diffuse"  => mat.Name,
+                                "normals"   or "normal"   => $"{mat.Name}_normal",
+                                _                         => $"{mat.Name}_{lower}",
+                            };
+                            sourceDdtsOut.Add((ddtKey, img));
+                        }
                     }
                 }
             }

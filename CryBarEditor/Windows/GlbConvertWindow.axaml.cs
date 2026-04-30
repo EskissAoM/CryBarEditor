@@ -258,6 +258,15 @@ public sealed class PlannedRow : INotifyPropertyChanged
     public required bool NeedsClick { get; init; }
     public string? DdtMaterialName { get; init; }
 
+    public string ExtensionColor => Name switch
+    {
+        _ when Name.EndsWith(".tmm.data", StringComparison.Ordinal) => "#90A4AE",
+        _ when Name.EndsWith(".tmm",      StringComparison.Ordinal) => "#64B5F6",
+        _ when Name.EndsWith(".tma",      StringComparison.Ordinal) => "#81C784",
+        _ when Name.EndsWith(".ddt",      StringComparison.Ordinal) => "#FFB74D",
+        _                                                            => "#d9d9d9",
+    };
+
     public bool Enabled
     {
         get => _enabled;

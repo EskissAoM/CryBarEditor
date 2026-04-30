@@ -88,6 +88,7 @@
 							<Grid ColumnDefinitions="Auto,*,Auto">
 								<CheckBox Grid.Column="0" IsChecked="{Binding Enabled, Mode=TwoWay}" />
 								<TextBlock Grid.Column="1" Text="{Binding Name}" Margin="6,0,0,0"
+										   Foreground="{Binding ExtensionColor}"
 										   VerticalAlignment="Center" />
 								<Button Grid.Column="2" Content="{Binding StatusText}"
 										IsVisible="{Binding NeedsClick}"
