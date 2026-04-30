@@ -79,6 +79,17 @@ public static class GlbReader
 
     internal static string StripSuffixForTests(string s) => SuffixRegex.Replace(s, "");
 
+    // Extensions that genuinely change the binary layout or decoding pipeline: parsing produces
+    // garbage if they're listed in extensionsRequired and we ignore them. Anything outside this
+    // list is allowed through (we may not honor it perfectly, but the output is usable).
+    static readonly Dictionary<string, string> BlockingExtensions = new(StringComparer.Ordinal)
+    {
+        ["KHR_draco_mesh_compression"] = "Draco-compressed GLBs are not supported; re-export without Draco compression (Blender: glTF export -> Compression unchecked).",
+        ["KHR_mesh_quantization"]      = "Mesh quantization is not supported; re-export with float positions/normals.",
+        ["KHR_texture_basisu"]         = "Basis Universal textures are not supported; re-export with PNG textures.",
+        ["EXT_meshopt_compression"]    = "meshopt-compressed GLBs are not supported; re-export without meshopt compression.",
+    };
+
     /// <summary>Parses a GLB byte stream into an in-memory <see cref="GlbModel"/>.</summary>
     public static GlbModel Parse(ReadOnlyMemory<byte> glb)
     {
@@ -86,6 +97,9 @@ public static class GlbReader
         using (json)
         {
             var root = json.RootElement;
+
+            CheckRequiredExtensions(root);
+            CheckEmbeddedBuffer(root);
 
             GlbExtras? extras = null;
             if (root.TryGetProperty("extras", out var extrasEl))
@@ -189,7 +203,7 @@ public static class GlbReader
                 $"Multi-mesh GLBs are not supported (found {meshes.GetArrayLength()}). Merge meshes in Blender first.");
 
         var mesh = meshes[0];
-        if (!mesh.TryGetProperty("primitives", out var primsEl))
+        if (!mesh.TryGetProperty("primitives", out var primsEl) || primsEl.GetArrayLength() == 0)
             throw new GlbParseException("Mesh has no primitives.");
 
         var prims = new List<GlbMeshPrimitive>();
@@ -220,7 +234,13 @@ public static class GlbReader
 
             string materialName = "default";
             if (p.TryGetProperty("material", out var matIdx))
-                materialName = materialNames[matIdx.GetInt32()];
+            {
+                int idx = matIdx.GetInt32();
+                if ((uint)idx >= (uint)materialNames.Length)
+                    throw new GlbParseException(
+                        $"Mesh primitive references material index {idx}, but only {materialNames.Length} materials are defined.");
+                materialName = materialNames[idx];
+            }
 
             prims.Add(new GlbMeshPrimitive
             {
@@ -236,6 +256,30 @@ public static class GlbReader
         }
 
         return new GlbMesh { Primitives = prims.ToArray() };
+    }
+
+    static void CheckRequiredExtensions(JsonElement root)
+    {
+        if (!root.TryGetProperty("extensionsRequired", out var req)) return;
+
+        foreach (var ext in req.EnumerateArray())
+        {
+            var name = ext.GetString();
+            if (name != null && BlockingExtensions.TryGetValue(name, out var hint))
+                throw new GlbParseException($"GLB requires unsupported extension '{name}'. {hint}");
+        }
+    }
+
+    static void CheckEmbeddedBuffer(JsonElement root)
+    {
+        if (!root.TryGetProperty("buffers", out var buffers) || buffers.GetArrayLength() == 0)
+            return;
+        if (buffers.GetArrayLength() > 1)
+            throw new GlbParseException(
+                $"GLB has {buffers.GetArrayLength()} buffers; only single-buffer GLBs are supported.");
+        if (buffers[0].TryGetProperty("uri", out _))
+            throw new GlbParseException(
+                "GLB buffer is referenced by external URI; only embedded BIN chunks are supported. Re-export as a single binary .glb.");
     }
 
     static int RequireAttribute(JsonElement attrs, string name, string? extraHelp = null)
