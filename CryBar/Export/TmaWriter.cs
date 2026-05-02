@@ -124,8 +124,9 @@ public static class TmaWriter
             for (int f = 0; f < frameCount; f++)
             {
                 var glbT = SampleTrackTranslation(track, f, frameCount, anim.Duration, bindT);
-                // Forward: glbT = mirror(bindT + tmaT). Reverse: tmaT = unmirror(glbT) - bindT.
-                var tmaT = new Vector3(-glbT.X, glbT.Y, glbT.Z) - bindT;
+                // Forward: glbT = mirror(bindT + bindR · tmaT). Reverse: tmaT = invBindR · (unmirror(glbT) - bindT).
+                var deltaParent = new Vector3(-glbT.X, glbT.Y, glbT.Z) - bindT;
+                var tmaT = Vector3.Transform(deltaParent, invBindR);
                 w.Write(tmaT.X);
                 w.Write(tmaT.Y);
                 w.Write(tmaT.Z);

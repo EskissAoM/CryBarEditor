@@ -316,7 +316,7 @@ public static class GlbExporter
                     var bind = bones[mt.BoneIndex].ParentSpaceMatrix;
                     MatrixDecomp.Decompose(bind, out var bindT, out var bindR, out var bindS);
 
-                    WriteComposedTranslations(glb, binStart + mt.TransOffset, mt.Track.Translations, bindT, ab.FrameCount);
+                    WriteComposedTranslations(glb, binStart + mt.TransOffset, mt.Track.Translations, bindT, bindR, ab.FrameCount);
                     WriteAnimationRotations(glb, binStart + mt.RotOffset, mt.Track.Rotations, bindR, ab.FrameCount);
                     WriteAnimationScales(glb, binStart + mt.ScaleOffset, mt.Track.Scales, bindS, ab.FrameCount);
                 }
@@ -472,15 +472,20 @@ public static class GlbExporter
     }
 
     /// <summary>
-    /// TMA translations are deltas from bind pose in parent space.
-    /// Composes: final_T = bind_T + anim_T, then X-negate for RH.
+    /// TMA translations are deltas from bind pose, expressed in the bone's *local* frame
+    /// (the same frame used by the rotation channel). Composing the local-frame delta into
+    /// parent space requires rotating it by bindR before adding bindT — i.e. the standard
+    /// bind_matrix * delta_matrix decomposition. Skipping the rotation worked for bones with
+    /// near-identity bindR but produced visibly wrong motion on bones with large bind
+    /// rotations (e.g. chimera RootPart1_M's 180°-around-(X+Z)/√2 flip — Y delta inverted).
+    /// Composes: final_T = bind_T + bindR · anim_T, then X-negate for RH.
     /// </summary>
     static void WriteComposedTranslations(byte[] buf, int offset,
-        Vector3[] translations, Vector3 bindT, int frameCount)
+        Vector3[] translations, Vector3 bindT, Quaternion bindR, int frameCount)
     {
         for (int i = 0; i < frameCount; i++)
         {
-            var finalT = bindT + translations[i];
+            var finalT = bindT + Vector3.Transform(translations[i], bindR);
             BinaryPrimitives.WriteSingleLittleEndian(buf.AsSpan(offset), -finalT.X); offset += 4;
             BinaryPrimitives.WriteSingleLittleEndian(buf.AsSpan(offset), finalT.Y); offset += 4;
             BinaryPrimitives.WriteSingleLittleEndian(buf.AsSpan(offset), finalT.Z); offset += 4;
