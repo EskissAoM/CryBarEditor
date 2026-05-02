@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Nodes;
 using CryBar.Export;
 using CryBar.TMM;
 using static CryBar.Tests.TmmTestHelpers;
@@ -219,16 +220,16 @@ public class GlbReaderTests
         // The JSON sits at glb[20 .. 20+jsonChunkLen]; trailing space-padding allowed.
         var jsonText = Encoding.UTF8.GetString(glb, 20, jsonChunkLen).TrimEnd(' ', '\0');
 
-        var node = System.Text.Json.Nodes.JsonNode.Parse(jsonText)!;
-        if (node["animations"] is System.Text.Json.Nodes.JsonArray anims)
+        var node = JsonNode.Parse(jsonText)!;
+        if (node["animations"] is JsonArray anims)
         {
             foreach (var a in anims)
             {
-                if (a?["samplers"] is System.Text.Json.Nodes.JsonArray ss)
+                if (a?["samplers"] is JsonArray ss)
                 {
                     foreach (var s in ss)
                     {
-                        if (s is System.Text.Json.Nodes.JsonObject so) so["interpolation"] = newInterp;
+                        if (s is JsonObject so) so["interpolation"] = newInterp;
                     }
                 }
             }
@@ -302,6 +303,176 @@ public class GlbReaderTests
     }
 
     [Fact]
+    public void Parse_GlbWithTaggedImpactPointNodes_PopulatesImpactPoints()
+    {
+        // Inject empty nodes carrying extras.crybar.{node_type:"impact_point", index} and a
+        // translation; the reader should harvest them into Extras.Tmm.ImpactPoints in index order
+        // (with the LH<->RH X-flip reversed).
+        var (tmm, dataFile) = CreateMinimalModel();
+        var glb = GlbExporter.ExportGlb(tmm, dataFile)!;
+        var withTagged = AddTaggedImpactPoints(glb,
+            (idx: 1, x: 2.0f, y: 3.0f, z: 4.0f),
+            (idx: 0, x: 1.0f, y: 0.0f, z: 0.0f)); // out-of-order on purpose
+
+        var model = GlbReader.Parse(withTagged);
+
+        Assert.NotNull(model.Extras);
+        Assert.Equal(2, model.Extras!.Tmm.ImpactPoints.Length);
+        // After sort by index: [0]=(1,0,0), [1]=(2,3,4).
+        Assert.Equal(1.0f, model.Extras.Tmm.ImpactPoints[0][0]);
+        Assert.Equal(2.0f, model.Extras.Tmm.ImpactPoints[1][0]);
+        Assert.Equal(3.0f, model.Extras.Tmm.ImpactPoints[1][1]);
+        Assert.Equal(4.0f, model.Extras.Tmm.ImpactPoints[1][2]);
+    }
+
+    [Fact]
+    public void Parse_GlbWithRootExtrasImpactPoints_StillWorksWhenNoNodeTags()
+    {
+        // Backward-compat path: GLBs that came from older exporters carry impact_points only in
+        // root extras. With no tagged nodes present, the merge should leave that data alone.
+        var (tmm, dataFile) = CreateMinimalModel();
+        var extras = new GlbExtras
+        {
+            Tmm = new GlbExtras.TmmSection
+            {
+                ImpactPoints = [[5.0f, 6.0f, 7.0f]],
+            },
+        };
+        var glb = GlbExporter.ExportGlb(tmm, dataFile, extras: extras)!;
+
+        var model = GlbReader.Parse(glb);
+
+        Assert.NotNull(model.Extras);
+        Assert.Single(model.Extras!.Tmm.ImpactPoints);
+        Assert.Equal(5.0f, model.Extras.Tmm.ImpactPoints[0][0]);
+    }
+
+    /// <summary>
+    /// Inserts empty nodes with translation + extras.crybar.{node_type:"impact_point", index}
+    /// into a GLB's scene graph, parented to the existing scene root. Used to simulate either
+    /// our exporter's output (post node-tagging) or a user manually tagging empties in Blender.
+    /// </summary>
+    static byte[] AddTaggedImpactPoints(byte[] glb, params (int idx, float x, float y, float z)[] points)
+    {
+        int jsonChunkLen = BitConverter.ToInt32(glb, 12);
+        var jsonText = Encoding.UTF8.GetString(glb, 20, jsonChunkLen).TrimEnd(' ', '\0');
+        var node = JsonNode.Parse(jsonText)!;
+
+        var nodes = (JsonArray)node["nodes"]!;
+        // Attach impact-point nodes as children of node[0] (the mesh node) - matches our exporter.
+        var meshNode = (JsonObject)nodes[0]!;
+        var children = meshNode["children"] as JsonArray;
+        if (children == null) { children = new JsonArray(); meshNode["children"] = children; }
+
+        foreach (var p in points)
+        {
+            var ipNode = new JsonObject
+            {
+                ["name"] = $"ImpactPoint_{p.idx}",
+                ["translation"] = new JsonArray(-p.x, p.y, p.z), // exporter's LH->RH X-flip
+                ["extras"] = new JsonObject
+                {
+                    ["crybar"] = new JsonObject
+                    {
+                        ["node_type"] = "impact_point",
+                        ["index"] = p.idx,
+                    },
+                },
+            };
+            int newIdx = nodes.Count;
+            nodes.Add(ipNode);
+            children.Add(newIdx);
+        }
+        return ReassembleGlb(glb, jsonChunkLen, node);
+    }
+
+    [Fact]
+    public void Parse_GlbWithBlenderArmatureWrapper_RecoversMainMatrixFromWrapperExtras()
+    {
+        // Blender's glTF round-trip wraps the mesh in an "Armature" node and migrates Object
+        // custom properties (including extras.crybar.main_matrix that we stamp on the mesh node)
+        // to that wrapper. Verify the reader still recovers main_matrix in this layout.
+        var (tmm, dataFile) = CreateMinimalModel();
+        var extras = new GlbExtras
+        {
+            Tmm = new GlbExtras.TmmSection
+            {
+                MainMatrix = [1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0.099f, 1],
+            },
+        };
+        var glb = GlbExporter.ExportGlb(tmm, dataFile, extras: extras)!;
+        var blenderGlb = SimulateBlenderArmatureWrapping(glb);
+
+        var model = GlbReader.Parse(blenderGlb);
+        Assert.NotNull(model.Extras);
+        Assert.Equal(0.099f, model.Extras!.Tmm.MainMatrix[14]);
+    }
+
+    /// <summary>
+    /// Mutates a CryBar-exported GLB into the layout Blender produces on round-trip:
+    /// an "Armature" node becomes the scene root with the original mesh node as its child,
+    /// and the mesh node's extras.crybar.main_matrix is migrated to the Armature wrapper.
+    /// </summary>
+    static byte[] SimulateBlenderArmatureWrapping(byte[] glb)
+    {
+        int jsonChunkLen = BitConverter.ToInt32(glb, 12);
+        var jsonText = Encoding.UTF8.GetString(glb, 20, jsonChunkLen).TrimEnd(' ', '\0');
+        var node = JsonNode.Parse(jsonText)!;
+
+        var nodes = (JsonArray)node["nodes"]!;
+        var meshNode = (JsonObject)nodes[0]!;
+
+        // Migrate main_matrix from mesh node's extras to a fresh wrapper.
+        var meshExtras = meshNode["extras"]?["crybar"]?["main_matrix"];
+        Assert.NotNull(meshExtras); // sanity: exporter must have stamped it
+        var wrapper = new JsonObject
+        {
+            ["name"] = "Armature",
+            ["children"] = new JsonArray(0), // mesh stays at index 0
+            ["extras"] = new JsonObject
+            {
+                ["crybar"] = new JsonObject
+                {
+                    ["main_matrix"] = meshExtras.DeepClone(),
+                },
+            },
+        };
+        meshNode.Remove("extras");
+
+        int wrapperIdx = nodes.Count;
+        nodes.Add(wrapper);
+
+        // Re-root the scene at the wrapper.
+        var scenes = (JsonArray)node["scenes"]!;
+        var scene0 = (JsonObject)scenes[0]!;
+        scene0["nodes"] = new JsonArray(wrapperIdx);
+
+        return ReassembleGlb(glb, jsonChunkLen, node);
+    }
+
+    static byte[] ReassembleGlb(byte[] glb, int oldJsonChunkLen, JsonNode root)
+    {
+        var newJsonBytes = Encoding.UTF8.GetBytes(root.ToJsonString());
+        int padded = (newJsonBytes.Length + 3) & ~3;
+        var jsonBuf = new byte[padded];
+        Array.Copy(newJsonBytes, jsonBuf, newJsonBytes.Length);
+        Array.Fill(jsonBuf, (byte)' ', newJsonBytes.Length, padded - newJsonBytes.Length);
+
+        int binChunkOffset = 20 + oldJsonChunkLen;
+        int binChunkLen = BitConverter.ToInt32(glb, binChunkOffset);
+        int totalLen = 12 + 8 + jsonBuf.Length + 8 + binChunkLen;
+
+        var result = new byte[totalLen];
+        Array.Copy(glb, 0, result, 0, 12);
+        BitConverter.GetBytes(totalLen).CopyTo(result.AsSpan(8));
+        BitConverter.GetBytes(jsonBuf.Length).CopyTo(result.AsSpan(12));
+        BitConverter.GetBytes(0x4E4F534A).CopyTo(result.AsSpan(16));
+        Array.Copy(jsonBuf, 0, result, 20, jsonBuf.Length);
+        Array.Copy(glb, binChunkOffset, result, 20 + jsonBuf.Length, 8 + binChunkLen);
+        return result;
+    }
+
+    [Fact]
     public void Parse_GlbWithAttachments_ReturnsAttachmentArrayWithIndex()
     {
         var tmm = CreateSyntheticTmmFile(numVertices: 3, numTriangleVerts: 3, hasSkinning: true,
@@ -330,7 +501,6 @@ public class GlbReaderTests
     [Theory]
     [InlineData("POSITION")]
     [InlineData("NORMAL")]
-    [InlineData("TANGENT")]
     [InlineData("TEXCOORD_0")]
     public void Parse_PrimitiveMissingRequiredAttribute_ThrowsClearError(string missing)
     {
@@ -370,6 +540,46 @@ public class GlbReaderTests
 
         var ex = Assert.Throws<GlbParseException>(() => GlbReader.Parse(glb));
         Assert.Contains(missing, ex.Message);
+    }
+
+    [Fact]
+    public void Parse_PrimitiveWithoutTangent_FillsViaMikkTSpace()
+    {
+        // TANGENT is optional now: when absent, the reader recomputes via MikkTSpace.
+        // Build a minimal GLB and strip TANGENT from its primitive's attributes; the resulting
+        // primitive should still expose a vertexCount*4 tangent array with unit XYZ and unit W.
+        var (tmm, dataFile) = CreateMinimalModel();
+        var glb = GlbExporter.ExportGlb(tmm, dataFile)!;
+        var stripped = StripTangentAttribute(glb);
+
+        var model = GlbReader.Parse(stripped);
+        var prim = model.Mesh.Primitives[0];
+        int vc = prim.Positions.Length / 3;
+        Assert.Equal(vc * 4, prim.Tangents.Length);
+        for (int v = 0; v < vc; v++)
+        {
+            int o = v * 4;
+            float lenSq = prim.Tangents[o] * prim.Tangents[o]
+                        + prim.Tangents[o + 1] * prim.Tangents[o + 1]
+                        + prim.Tangents[o + 2] * prim.Tangents[o + 2];
+            Assert.InRange(MathF.Sqrt(lenSq), 0.99f, 1.01f);
+            Assert.True(prim.Tangents[o + 3] == 1f || prim.Tangents[o + 3] == -1f);
+        }
+    }
+
+    static byte[] StripTangentAttribute(byte[] glb)
+    {
+        int jsonChunkLen = BitConverter.ToInt32(glb, 12);
+        var jsonText = Encoding.UTF8.GetString(glb, 20, jsonChunkLen).TrimEnd(' ', '\0');
+        var node = JsonNode.Parse(jsonText)!;
+        foreach (var mesh in (JsonArray)node["meshes"]!)
+        {
+            foreach (var prim in (JsonArray)mesh!["primitives"]!)
+            {
+                ((JsonObject)prim!["attributes"]!).Remove("TANGENT");
+            }
+        }
+        return ReassembleGlb(glb, jsonChunkLen, node);
     }
 
     [Fact]

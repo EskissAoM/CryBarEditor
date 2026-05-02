@@ -104,7 +104,7 @@ public static class GlbReader
             GlbExtras? extras = null;
             if (root.TryGetProperty("extras", out var extrasEl))
                 extras = GlbExtras.Read(extrasEl);
-            extras = MergeMeshNodeMainMatrix(extras, root);
+            extras = MergeNodeTaggedExtras(extras, root);
 
             var mesh = ReadMesh(root, bin);
             var bones = ReadBones(root, bin);
@@ -119,24 +119,58 @@ public static class GlbReader
         }
     }
 
-    static GlbExtras? MergeMeshNodeMainMatrix(GlbExtras? assetExtras, JsonElement root)
+    /// <summary>
+    /// Recovers per-node CryBar metadata in a single pass: <c>main_matrix</c> from any node's
+    /// extras (the exporter stamps it on the mesh node, but Blender migrates Object custom
+    /// properties to the Armature wrapper on round-trip), and <c>impact_point</c> positions from
+    /// tagged empty nodes (survives Blender, unlike root-extras). Both fall through unchanged
+    /// when nothing is found, preserving any data parsed from root extras earlier.
+    /// </summary>
+    static GlbExtras? MergeNodeTaggedExtras(GlbExtras? assetExtras, JsonElement root)
     {
         if (!root.TryGetProperty("nodes", out var nodes)) return assetExtras;
+
+        float[]? mainMatrix = null;
+        var impactPoints = new List<(int Index, float[] Pos)>();
+
         foreach (var node in nodes.EnumerateArray())
         {
-            if (!node.TryGetProperty("mesh", out _)) continue;
             if (!node.TryGetProperty("extras", out var nx)) continue;
             if (!nx.TryGetProperty("crybar", out var cb)) continue;
-            if (!cb.TryGetProperty("main_matrix", out var mm)) continue;
 
-            // Mesh-node main_matrix wins.
-            var result = assetExtras ?? new GlbExtras();
-            var arr = new float[mm.GetArrayLength()];
-            for (int i = 0; i < arr.Length; i++) arr[i] = mm[i].GetSingle();
-            result.Tmm.MainMatrix = arr;
-            return result;
+            if (mainMatrix is null && cb.TryGetProperty("main_matrix", out var mm))
+            {
+                mainMatrix = new float[mm.GetArrayLength()];
+                for (int i = 0; i < mainMatrix.Length; i++) mainMatrix[i] = mm[i].GetSingle();
+            }
+
+            if (cb.TryGetProperty("node_type", out var nt) && nt.GetString() == GlbExtras.NodeTypeImpactPoint)
+            {
+                int idx = cb.TryGetProperty("index", out var iEl) ? iEl.GetInt32() : impactPoints.Count;
+                // Reverse the LH->RH X-negation applied at export.
+                float x = 0, y = 0, z = 0;
+                if (node.TryGetProperty("translation", out var t) && t.GetArrayLength() == 3)
+                {
+                    x = -t[0].GetSingle();
+                    y = t[1].GetSingle();
+                    z = t[2].GetSingle();
+                }
+                impactPoints.Add((idx, [x, y, z]));
+            }
         }
-        return assetExtras;
+
+        if (mainMatrix is null && impactPoints.Count == 0) return assetExtras;
+
+        var result = assetExtras ?? new GlbExtras();
+        if (mainMatrix is not null) result.Tmm.MainMatrix = mainMatrix;
+        if (impactPoints.Count > 0)
+        {
+            impactPoints.Sort((a, b) => a.Index.CompareTo(b.Index));
+            var ips = new float[impactPoints.Count][];
+            for (int i = 0; i < ips.Length; i++) ips[i] = impactPoints[i].Pos;
+            result.Tmm.ImpactPoints = ips;
+        }
+        return result;
     }
 
     static GlbAttachment[]? ReadAttachments(JsonElement root, GlbExtras? extras, GlbBone[]? bones)
@@ -166,7 +200,7 @@ public static class GlbReader
             var node = nodes[n];
             if (!node.TryGetProperty("extras", out var nx)) continue;
             if (!nx.TryGetProperty("crybar", out var cb)) continue;
-            if (!cb.TryGetProperty("node_type", out var nt) || nt.GetString() != "attachment") continue;
+            if (!cb.TryGetProperty("node_type", out var nt) || nt.GetString() != GlbExtras.NodeTypeAttachment) continue;
 
             int attIdx = cb.GetProperty("index").GetInt32();
             string name = SuffixRegex.Replace(
@@ -216,10 +250,10 @@ public static class GlbReader
 
             int posAcc  = RequireAttribute(attrs, "POSITION");
             int normAcc = RequireAttribute(attrs, "NORMAL");
-            // TANGENT is optional in the glTF spec but required by TMM for TBN packing.
-            // Most DCC tools omit it by default (Blender: enable "Tangents" under Mesh in glTF export).
-            int tanAcc  = RequireAttribute(attrs, "TANGENT",
-                "Re-export from your tool with tangents enabled (Blender: glTF export -> Mesh -> Tangents).");
+            // TANGENT is optional in the glTF spec; TMM requires it for TBN packing.
+            // If the source GLB lacks tangents (Blender export with Mesh -> Tangents disabled),
+            // we recompute via MikkTSpace below - matches Blender's own algorithm bit-for-bit.
+            int tanAcc  = attrs.TryGetProperty("TANGENT", out var tanEl) ? tanEl.GetInt32() : -1;
             int uvAcc   = RequireAttribute(attrs, "TEXCOORD_0");
             if (!p.TryGetProperty("indices", out var indicesProp))
                 throw new GlbParseException("Mesh primitive has no 'indices'; non-indexed (point/strip) geometry is not supported. Triangulate before export.");
@@ -242,16 +276,24 @@ public static class GlbReader
                 materialName = materialNames[idx];
             }
 
+            var positions = ReadAccessorFloats(root, bin, posAcc);
+            var normalsArr = ReadAccessorFloats(root, bin, normAcc);
+            var texCoords = ReadAccessorFloats(root, bin, uvAcc);
+            var triIndices = ReadAccessorIndices(root, bin, indicesAcc);
+            var tangents = tanAcc >= 0
+                ? ReadAccessorFloats(root, bin, tanAcc)
+                : MikkTSpace.ComputeTangents(positions, normalsArr, texCoords, triIndices);
+
             prims.Add(new GlbMeshPrimitive
             {
                 MaterialName = materialName,
-                Positions = ReadAccessorFloats(root, bin, posAcc),
-                Normals = ReadAccessorFloats(root, bin, normAcc),
-                Tangents = ReadAccessorFloats(root, bin, tanAcc),
-                TexCoords = ReadAccessorFloats(root, bin, uvAcc),
+                Positions = positions,
+                Normals = normalsArr,
+                Tangents = tangents,
+                TexCoords = texCoords,
                 JointIndices = joints,
                 JointWeights = weights,
-                Indices = ReadAccessorIndices(root, bin, indicesAcc),
+                Indices = triIndices,
             });
         }
 

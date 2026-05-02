@@ -5,6 +5,7 @@
 	xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
 	xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
 	xmlns:ce="using:CryBarEditor.Windows"
+	xmlns:micons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
 	Title="Convert GLB to TMM/TMA/DDT"
 	Width="640"
 	MinWidth="500"
@@ -38,17 +39,25 @@
 	</Window.Styles>
 
 	<DockPanel Margin="10">
-		<!-- Source / Output paths -->
-		<StackPanel DockPanel.Dock="Top" Spacing="2">
-			<TextBlock TextTrimming="CharacterEllipsis">
-				<Run Text="Source: " Foreground="#808080" />
-				<Run Text="{Binding SourcePathDisplay}" />
-			</TextBlock>
-			<TextBlock TextTrimming="CharacterEllipsis">
-				<Run Text="Output: " Foreground="#808080" />
-				<Run Text="{Binding OutputDirDisplay}" />
-			</TextBlock>
-		</StackPanel>
+		<!-- Source / Output paths + info icon -->
+		<Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto">
+			<StackPanel Grid.Column="0" Spacing="2">
+				<TextBlock TextTrimming="CharacterEllipsis">
+					<Run Text="Source: " Foreground="#808080" />
+					<Run Text="{Binding SourcePathDisplay}" />
+				</TextBlock>
+				<TextBlock TextTrimming="CharacterEllipsis">
+					<Run Text="Output: " Foreground="#808080" />
+					<Run Text="{Binding OutputDirDisplay}" />
+				</TextBlock>
+			</StackPanel>
+			<Button Grid.Column="1" Click="TipsClick"
+			        Background="Transparent" BorderThickness="0" Padding="6,2"
+			        ToolTip.Tip="Blender export &amp; tagging tips"
+			        VerticalAlignment="Top" Cursor="Hand">
+				<micons:MaterialIcon Kind="InformationOutline" Width="20" Height="20" Foreground="#77c1e0" />
+			</Button>
+		</Grid>
 
 		<!-- Summary -->
 		<Border DockPanel.Dock="Top" BorderBrush="#333" BorderThickness="0,1,0,0" Margin="0,8,0,0" Padding="0,8,0,0">

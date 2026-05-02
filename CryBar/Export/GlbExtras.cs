@@ -124,18 +124,22 @@ public sealed class GlbExtras
     }
 
     /// <summary>
-    /// Emits a glTF node marker so a future GLB reader can identify TMM attachment nodes.
-    /// Unconditional (does not depend on caller-supplied extras).
+    /// Emits a glTF node marker (extras.crybar.{node_type, index}) so the GLB reader can identify
+    /// the node on round-trip. Survives Blender via Object custom properties; root-level extras
+    /// would not. Use <see cref="NodeTypeAttachment"/> / <see cref="NodeTypeImpactPoint"/>.
     /// </summary>
-    public static void WriteAttachmentMarker(Utf8JsonWriter w, int index)
+    public static void WriteNodeMarker(Utf8JsonWriter w, string nodeType, int index)
     {
         w.WriteStartObject("extras");
         w.WriteStartObject("crybar");
-        w.WriteString("node_type", "attachment");
+        w.WriteString("node_type", nodeType);
         w.WriteNumber("index", index);
         w.WriteEndObject();
         w.WriteEndObject();
     }
+
+    public const string NodeTypeAttachment = "attachment";
+    public const string NodeTypeImpactPoint = "impact_point";
 
     /// <summary>
     /// Writes this object as the value of a <c>"crybar"</c> property on the

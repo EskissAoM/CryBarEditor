@@ -319,6 +319,12 @@ public partial class GlbConvertWindow : SimpleWindow
     }
 
     void CancelClick(object? sender, RoutedEventArgs e) => Close();
+
+    async void TipsClick(object? sender, RoutedEventArgs e)
+    {
+        var dialog = new BlenderTipsDialog();
+        await dialog.ShowDialog(this);
+    }
 }
 
 public sealed class PlannedRow : INotifyPropertyChanged

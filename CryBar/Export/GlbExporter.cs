@@ -657,7 +657,7 @@ public static class GlbExporter
             // Convert row-major 3x4 attachment transform to column-major 4x4 for glTF
             WriteAxisNegatedMatrixJson(w, RowMajor3x4ToColumnMajor4x4(attachments[i].AdjustmentTransformMatrix));
 
-            GlbExtras.WriteAttachmentMarker(w, i);
+            GlbExtras.WriteNodeMarker(w, GlbExtras.NodeTypeAttachment, i);
 
             w.WriteEndObject();
         }
@@ -674,6 +674,7 @@ public static class GlbExporter
             w.WriteNumberValue(pt[1]);
             w.WriteNumberValue(pt[2]);
             w.WriteEndArray();
+            GlbExtras.WriteNodeMarker(w, GlbExtras.NodeTypeImpactPoint, i);
             w.WriteEndObject();
         }
 
