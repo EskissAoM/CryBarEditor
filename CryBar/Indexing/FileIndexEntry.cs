@@ -1,5 +1,3 @@
-using System.IO;
-
 namespace CryBar.Indexing;
 
 public enum FileIndexSource : byte { RootFile, BarEntry }
@@ -29,6 +27,16 @@ public readonly struct FileIndexEntry
 
     /// <summary>
     /// Derives filename from FullRelativePath. Zero-allocation slice.
+    /// Accepts both '/' and '\\' as separators so game-format Windows paths
+    /// resolve correctly when the host OS is Linux/macOS.
     /// </summary>
-    public ReadOnlySpan<char> FileName => Path.GetFileName(FullRelativePath.AsSpan());
+    public ReadOnlySpan<char> FileName
+    {
+        get
+        {
+            var span = FullRelativePath.AsSpan();
+            int sep = span.LastIndexOfAny('/', '\\');
+            return sep >= 0 ? span[(sep + 1)..] : span;
+        }
+    }
 }

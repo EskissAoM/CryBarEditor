@@ -506,14 +506,29 @@ public static class GlbReader
             {
                 var sm = samplers[s];
                 string interp = sm.TryGetProperty("interpolation", out var ip) ? ip.GetString() ?? "LINEAR" : "LINEAR";
-                if (interp != "LINEAR")
-                    throw new GlbParseException(
-                        $"Animation '{name}' uses {interp} interpolation; only LINEAR is supported.");
 
-                samplerData[s] = (
-                    ReadAccessorFloats(root, bin, sm.GetProperty("input").GetInt32()),
-                    ReadAccessorFloats(root, bin, sm.GetProperty("output").GetInt32()),
-                    "");
+                var times = ReadAccessorFloats(root, bin, sm.GetProperty("input").GetInt32());
+                var values = ReadAccessorFloats(root, bin, sm.GetProperty("output").GetInt32());
+
+                if (interp == "STEP")
+                {
+                    // Materialize STEP into dense LINEAR keyframes - the downstream sampler
+                    // assumes linear interpolation between adjacent keys. Blender's exporter
+                    // emits STEP when Sampling Animations is enabled and it detects flat segments.
+                    (times, values) = ExpandStepToLinear(times, values);
+                }
+                else if (interp == "CUBICSPLINE")
+                {
+                    throw new GlbParseException(
+                        $"Animation '{name}' uses CUBICSPLINE interpolation; not supported. Re-export with LINEAR or STEP.");
+                }
+                else if (interp != "LINEAR")
+                {
+                    throw new GlbParseException(
+                        $"Animation '{name}' uses unknown interpolation '{interp}'.");
+                }
+
+                samplerData[s] = (times, values, "");
             }
 
             // Bind sampler index to channel.target.path so we know which TRS each one is for.
@@ -627,6 +642,46 @@ public static class GlbReader
         return System.Numerics.Vector3.Lerp(
             new System.Numerics.Vector3(values[li], values[li + 1], values[li + 2]),
             new System.Numerics.Vector3(values[ri], values[ri + 1], values[ri + 2]), a);
+    }
+
+    /// <summary>
+    /// Converts STEP-interpolated keyframes into dense LINEAR keyframes that reproduce the
+    /// step-hold behavior. For each transition i-1 -> i, an extra "hold" key is inserted at
+    /// (t[i] - epsilon) carrying values[i-1]. Linear interpolation between (t[i] - epsilon, v[i-1])
+    /// and (t[i], v[i]) gives a near-instant transition, matching STEP semantics within sub-frame
+    /// precision. Output keyframe count is 2N - 1 for an N-key STEP sampler.
+    /// </summary>
+    internal static (float[] Times, float[] Values) ExpandStepToLinear(float[] times, float[] values)
+    {
+        int n = times.Length;
+        if (n < 2) return (times, values);
+        if (values.Length % n != 0) return (times, values); // malformed; pass through
+        int comp = values.Length / n;
+        if (comp <= 0) return (times, values);
+
+        int outN = 2 * n - 1;
+        var newTimes = new float[outN];
+        var newValues = new float[outN * comp];
+
+        const int floatSize = sizeof(float);
+        newTimes[0] = times[0];
+        Buffer.BlockCopy(values, 0, newValues, 0, comp * floatSize);
+
+        int oi = 1;
+        for (int i = 1; i < n; i++)
+        {
+            float gap = times[i] - times[i - 1];
+            float epsilon = Math.Clamp(gap * 1e-4f, 1e-7f, gap * 0.5f);
+
+            newTimes[oi] = times[i] - epsilon;
+            Buffer.BlockCopy(values, (i - 1) * comp * floatSize, newValues, oi * comp * floatSize, comp * floatSize);
+            oi++;
+
+            newTimes[oi] = times[i];
+            Buffer.BlockCopy(values, i * comp * floatSize, newValues, oi * comp * floatSize, comp * floatSize);
+            oi++;
+        }
+        return (newTimes, newValues);
     }
 
     static System.Numerics.Quaternion SampleQuat(float[] times, float[] values, float t, ref int hint)

@@ -114,6 +114,152 @@ public class GlbReaderTests
     }
 
     [Fact]
+    public void ExpandStepToLinear_TwoKeysVec3_InsertsHoldKeyBeforeTransition()
+    {
+        // Two keys at t=0 (v=1,2,3) and t=1 (v=4,5,6); expanded should be:
+        //   (0,    1,2,3)
+        //   (1-eps,1,2,3)  hold
+        //   (1,    4,5,6)
+        var times = new float[] { 0f, 1f };
+        var values = new float[] { 1, 2, 3,  4, 5, 6 };
+
+        var (nt, nv) = GlbReader.ExpandStepToLinear(times, values);
+
+        Assert.Equal(3, nt.Length);
+        Assert.Equal(9, nv.Length);
+        Assert.Equal(0f, nt[0]);
+        Assert.True(nt[1] > nt[0] && nt[1] < nt[2], "hold key must sit strictly between adjacent originals");
+        Assert.Equal(1f, nt[2]);
+
+        // First key: v0
+        Assert.Equal(1f, nv[0]); Assert.Equal(2f, nv[1]); Assert.Equal(3f, nv[2]);
+        // Hold key: still v0
+        Assert.Equal(1f, nv[3]); Assert.Equal(2f, nv[4]); Assert.Equal(3f, nv[5]);
+        // Second key: v1
+        Assert.Equal(4f, nv[6]); Assert.Equal(5f, nv[7]); Assert.Equal(6f, nv[8]);
+    }
+
+    [Fact]
+    public void ExpandStepToLinear_FourKeysQuat_ProducesCorrectShape()
+    {
+        // 4 quat keys -> 7 output keys, each 4 floats
+        var times = new float[] { 0f, 1f, 2f, 3f };
+        var values = new float[] {
+            0,0,0,1,    0,0,1,0,    0,1,0,0,    1,0,0,0
+        };
+
+        var (nt, nv) = GlbReader.ExpandStepToLinear(times, values);
+
+        Assert.Equal(7, nt.Length);
+        Assert.Equal(28, nv.Length);
+
+        // Hold keys carry previous values; inspect the hold before t=1 (index 1)
+        Assert.Equal(0f, nv[4]); Assert.Equal(0f, nv[5]); Assert.Equal(0f, nv[6]); Assert.Equal(1f, nv[7]);
+        // Real key at t=1
+        Assert.Equal(0f, nv[8]); Assert.Equal(0f, nv[9]); Assert.Equal(1f, nv[10]); Assert.Equal(0f, nv[11]);
+    }
+
+    [Fact]
+    public void ExpandStepToLinear_SingleKey_PassesThrough()
+    {
+        var times = new float[] { 0f };
+        var values = new float[] { 1, 2, 3 };
+
+        var (nt, nv) = GlbReader.ExpandStepToLinear(times, values);
+
+        Assert.Same(times, nt);
+        Assert.Same(values, nv);
+    }
+
+    [Fact]
+    public void Parse_GlbWithStepInterpolation_DoesNotThrow_AndPreservesStepHold()
+    {
+        // Build an animation with a STEP rotation track and verify the reader accepts it
+        // and that mid-interval samples still hold the previous value (rather than slerping
+        // halfway, which is what LINEAR interpolation would produce).
+        //
+        // Use a 2-bone synthetic skeleton; only bone 0 has a rotation track.
+        // STEP keys: t=0.0 -> identity; t=0.5 -> 90deg-X; t=1.0 -> 180deg-X.
+        var tmm = CreateSyntheticTmmFile(numVertices: 3, numTriangleVerts: 3, hasSkinning: true,
+            numMeshGroups: 1, materials: ["m"], submodels: ["default"], numBones: 2);
+        var dataBytes = CreateSyntheticData(numVertices: 3, numTriangleVerts: 3, hasSkinning: true);
+        var dataFile = new TmmDataFile(dataBytes, tmm);
+
+        var anim = new GlbExporter.GlbAnimation
+        {
+            Name = "step_test",
+            Tracks = SyntheticTracksUniform(boneCount: 2, frameCount: 3, duration: 1.0f),
+            Duration = 1.0f,
+            FrameCount = 3,
+        };
+        var glb = GlbExporter.ExportGlb(tmm, dataFile, animations: [anim])!;
+        var stepGlb = RewriteSamplerInterpolations(glb, "STEP");
+
+        var model = GlbReader.Parse(stepGlb);
+        Assert.NotNull(model.Animations);
+        Assert.Single(model.Animations!);
+
+        // Reader must not throw; track length matches a sane sampling of the original duration.
+        var a = model.Animations![0];
+        Assert.True(a.FrameCount >= 3, "expanded STEP should yield at least the original key count");
+        Assert.Equal(2, a.Tracks.Length);
+    }
+
+    /// <summary>
+    /// Walks a GLB JSON chunk and replaces every "interpolation": "X" with the requested value.
+    /// Used to fabricate a STEP GLB without modifying the production exporter.
+    /// </summary>
+    static byte[] RewriteSamplerInterpolations(byte[] glb, string newInterp)
+    {
+        // Read JSON chunk header at offset 12 (after GLB header)
+        int jsonChunkLen = BitConverter.ToInt32(glb, 12);
+        int jsonChunkType = BitConverter.ToInt32(glb, 16);
+        Assert.Equal(0x4E4F534A, jsonChunkType); // "JSON"
+
+        // The JSON sits at glb[20 .. 20+jsonChunkLen]; trailing space-padding allowed.
+        var jsonText = Encoding.UTF8.GetString(glb, 20, jsonChunkLen).TrimEnd(' ', '\0');
+
+        var node = System.Text.Json.Nodes.JsonNode.Parse(jsonText)!;
+        if (node["animations"] is System.Text.Json.Nodes.JsonArray anims)
+        {
+            foreach (var a in anims)
+            {
+                if (a?["samplers"] is System.Text.Json.Nodes.JsonArray ss)
+                {
+                    foreach (var s in ss)
+                    {
+                        if (s is System.Text.Json.Nodes.JsonObject so) so["interpolation"] = newInterp;
+                    }
+                }
+            }
+        }
+
+        var newJsonBytes = Encoding.UTF8.GetBytes(node.ToJsonString());
+        // Pad with spaces to a 4-byte boundary
+        int padded = (newJsonBytes.Length + 3) & ~3;
+        var jsonBuf = new byte[padded];
+        Array.Copy(newJsonBytes, jsonBuf, newJsonBytes.Length);
+        for (int i = newJsonBytes.Length; i < padded; i++) jsonBuf[i] = (byte)' ';
+
+        // Reassemble GLB: header (12) + JSON chunk header (8) + JSON + BIN chunk (rest)
+        int binChunkOffset = 20 + jsonChunkLen; // after old JSON
+        int binChunkLen = BitConverter.ToInt32(glb, binChunkOffset);
+        int totalLen = 12 + 8 + jsonBuf.Length + 8 + binChunkLen;
+
+        var result = new byte[totalLen];
+        Array.Copy(glb, 0, result, 0, 12); // GLB header
+        // Patch total length in header
+        BitConverter.GetBytes(totalLen).CopyTo(result.AsSpan(8));
+        // JSON chunk header
+        BitConverter.GetBytes(jsonBuf.Length).CopyTo(result.AsSpan(12));
+        BitConverter.GetBytes(0x4E4F534A).CopyTo(result.AsSpan(16)); // "JSON"
+        Array.Copy(jsonBuf, 0, result, 20, jsonBuf.Length);
+        // BIN chunk header + data
+        Array.Copy(glb, binChunkOffset, result, 20 + jsonBuf.Length, 8 + binChunkLen);
+        return result;
+    }
+
+    [Fact]
     public void Parse_GlbWithMaterial_ExtractsPngBytes()
     {
         var (tmm, dataFile) = CreateMinimalModel();

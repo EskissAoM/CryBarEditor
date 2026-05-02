@@ -88,26 +88,15 @@ public class FileIndexBuilderTests : IDisposable
     public void FindSupplemental_SkipsDriveRoot()
     {
         // If root is a direct child of the drive root, we should not scan the drive root
+        // (which would scan the entire filesystem). The production code only inspects the
+        // path string here, so the directory itself does not need to exist - which keeps
+        // this test runnable on Linux where '/' is unwriteable for non-root users.
         var driveRoot = Path.GetPathRoot(Path.GetTempPath())!;
         var directChild = Path.Combine(driveRoot, "TestDirectChild_" + Guid.NewGuid().ToString("N"));
 
-        try
-        {
-            // We can't actually create dirs at drive root easily, so we test that the method
-            // returns empty and doesn't throw when the parent IS the drive root
-            // Use maxDepth=1 with root = directChild (whose parent is drive root)
-            // Since directChild likely doesn't exist, but we only need to test
-            // that drive root is skipped - create it temporarily
-            Directory.CreateDirectory(directChild);
-            var result = FileIndexBuilder.FindSupplementalBarFiles(directChild, maxDepth: 1);
-            // Should be empty - drive root is skipped
-            Assert.Empty(result);
-        }
-        finally
-        {
-            try { Directory.Delete(directChild, recursive: true); }
-            catch { }
-        }
+        var result = FileIndexBuilder.FindSupplementalBarFiles(directChild, maxDepth: 1);
+        // Should be empty - drive root is skipped
+        Assert.Empty(result);
     }
 
     [Fact]
