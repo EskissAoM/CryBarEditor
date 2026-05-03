@@ -288,6 +288,61 @@ public class TmmWriterTests
         Assert.Null(ex);
     }
 
+    [Fact]
+    public void Write_BlenderStyleInvertedTangentW_ProducesCorrectHandedness()
+    {
+        // Two GLBs of the same X-mirrored surface differing only in tangent.w sign:
+        // one matches MikkTSpace (CryBar-direct), one is sign-inverted (Blender re-export).
+        // The writer must detect the inversion and produce identical TBN bytes for both.
+        var positions = new float[] { -0f, 0, 0,  -1f, 0, 0,  -1f, 1f, 0 };
+        var normals = new float[] { 0, 0, 1, 0, 0, 1, 0, 0, 1 };
+        var texcoords = new float[] { 0, 0, 1, 0, 1, 1 };
+        var directLikeTangents = new float[] { -1, 0, 0, -1,  -1, 0, 0, -1,  -1, 0, 0, -1 };
+        var blenderLikeTangents = new float[] { -1, 0, 0, +1,  -1, 0, 0, +1,  -1, 0, 0, +1 };
+
+        static GlbModel MakeModel(float[] positions, float[] normals, float[] tangents, float[] texcoords) => new()
+        {
+            Mesh = new GlbMesh
+            {
+                Primitives =
+                [
+                    new GlbMeshPrimitive
+                    {
+                        MaterialName = "m",
+                        Positions = positions,
+                        Normals = normals,
+                        Tangents = tangents,
+                        TexCoords = texcoords,
+                        Indices = [0, 1, 2],
+                    }
+                ]
+            },
+            Materials = [new GlbMaterial { Name = "m" }],
+        };
+
+        var (directTmm, directData, _) = TmmWriter.Write(MakeModel(positions, normals, directLikeTangents, texcoords));
+        var (_, blenderData, _) = TmmWriter.Write(MakeModel(positions, normals, blenderLikeTangents, texcoords));
+
+        var dirTmm = new TmmFile(directTmm);
+        Assert.True(dirTmm.FullyParsed);
+
+        for (int i = 0; i < (int)dirTmm.NumVertices; i++)
+        {
+            int off = i * 16 + 10;
+            ushort dTbnX = BitConverter.ToUInt16(directData, off);
+            ushort dTbnY = BitConverter.ToUInt16(directData, off + 2);
+            ushort dTbnZ = BitConverter.ToUInt16(directData, off + 4);
+            ushort bTbnX = BitConverter.ToUInt16(blenderData, off);
+            ushort bTbnY = BitConverter.ToUInt16(blenderData, off + 2);
+            ushort bTbnZ = BitConverter.ToUInt16(blenderData, off + 4);
+            Assert.Equal(dTbnX, bTbnX);
+            Assert.Equal(dTbnY, bTbnY);
+            Assert.Equal(dTbnZ, bTbnZ);
+            Assert.Equal(0, dTbnX & 0x8000);
+            Assert.Equal(0, bTbnX & 0x8000);
+        }
+    }
+
     static float[] Identity16() => [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
 
     static float[] TranslationMatrix(float x, float y, float z)

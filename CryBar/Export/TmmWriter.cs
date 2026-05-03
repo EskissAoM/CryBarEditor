@@ -76,6 +76,10 @@ public static class TmmWriter
         foreach (var prim in primitives)
         {
             int vc = prim.Positions.Length / 3;
+            // Blender's glTF exporter writes tangent.w with the opposite sign of MikkTSpace
+            // for our X-mirrored meshes; without correction the per-vertex handedness bit
+            // ends up inverted and normal-map sampling reads the wrong bitangent direction.
+            bool flipTw = ShouldFlipTangentWForPrimitive(prim);
             for (int i = 0; i < vc; i++)
             {
                 float px = prim.Positions[i * 3];
@@ -102,6 +106,7 @@ public static class TmmWriter
                 float ty = prim.Tangents[i * 4 + 1];
                 float tz = prim.Tangents[i * 4 + 2];
                 float tw = prim.Tangents[i * 4 + 3];
+                if (flipTw) tw = -tw;
 
                 var (px16, py16, pz16) = PackTbn(nx, ny, nz, tx, ty, tz, tw);
                 BinaryPrimitives.WriteUInt16LittleEndian(buf.AsSpan(vOff + 10), px16);
@@ -261,6 +266,24 @@ public static class TmmWriter
         ushort py = (ushort)TbnDecoder.FloatToU15(y);
         ushort pz = (ushort)TbnDecoder.FloatToU15(z);
         return (px, py, pz);
+    }
+
+    // Compares each input tangent.w against the spec-compliant w that MikkTSpace would derive
+    // from positions, normals and UVs. Returns true iff a strict majority of vertices disagree,
+    // signalling that the entire primitive's w convention is inverted and must be flipped.
+    static bool ShouldFlipTangentWForPrimitive(GlbMeshPrimitive prim)
+    {
+        var spec = MikkTSpace.ComputeTangents(prim.Positions, prim.Normals, prim.TexCoords, prim.Indices);
+        int vc = prim.Positions.Length / 3;
+        int agree = 0, disagree = 0;
+        for (int i = 0; i < vc; i++)
+        {
+            float wGlb  = prim.Tangents[i * 4 + 3];
+            float wSpec = spec[i * 4 + 3];
+            if (MathF.Sign(wGlb) == MathF.Sign(wSpec)) agree++;
+            else disagree++;
+        }
+        return disagree > agree;
     }
 
     static byte[] BuildTmmHeader(GlbModel model, in DataLayout dl, List<string> warnings)
