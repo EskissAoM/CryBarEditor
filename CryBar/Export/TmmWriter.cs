@@ -144,41 +144,44 @@ public static class TmmWriter
 
         for (int i = 0; i < vc; i++)
         {
-            // Build (weight, boneIndex) pairs, keep only those with weight > 0, sort desc.
-            int realCount = 0;
+            // Keep all 4 (weight, bone) pairs verbatim. Vanilla preserves bone indices
+            // even where weight=0, and the engine appears to read them for non-skinning
+            // purposes (material/lookup), so dropping zero-weight pairs visibly breaks
+            // textures on units like the chimera.
+            int nonzero = 0;
             for (int s = 0; s < 4; s++)
             {
                 float wt = weights != null ? weights[i * 4 + s] : 0f;
                 byte  bi = joints  != null ? joints [i * 4 + s] : (byte)0;
-                if (wt > 0f) pairs[realCount++] = (wt, bi);
+                pairs[s] = (wt, bi);
+                if (wt > 0f) nonzero++;
             }
 
-            // Sort descending by weight (insertion sort on up-to-4 items).
-            for (int a = 1; a < realCount; a++)
+            // Sort ascending by weight (min..max). Zero-weight entries sort first,
+            // so the dominant bone ends up at slot 3.
+            for (int a = 1; a < 4; a++)
             {
                 var tmp = pairs[a];
                 int b = a - 1;
-                while (b >= 0 && pairs[b].w < tmp.w) { pairs[b + 1] = pairs[b]; b--; }
+                while (b >= 0 && pairs[b].w > tmp.w) { pairs[b + 1] = pairs[b]; b--; }
                 pairs[b + 1] = tmp;
             }
 
-            // Quantize weights to bytes summing to 255.
             int total = 0;
-            for (int s = 0; s < realCount; s++)
+            for (int s = 0; s < 4; s++)
             {
                 wBytes[s] = (byte)MathF.Round(pairs[s].w * 255f);
                 total += wBytes[s];
             }
-            // Adjust last real entry to absorb rounding error.
-            if (realCount > 0)
-                wBytes[realCount - 1] = (byte)(wBytes[realCount - 1] + (255 - total));
+            // Absorb rounding error into slot 3 (largest after ascending sort).
+            if (nonzero > 0)
+                wBytes[3] = (byte)(wBytes[3] + (255 - total));
 
-            // Start-pad with zeros: real entries go at indices [4 - realCount .. 3].
-            int pad = 4 - realCount;
             for (int s = 0; s < 4; s++)
-                buf[wOff + s] = s < pad ? (byte)0 : wBytes[s - pad];
-            for (int s = 0; s < 4; s++)
-                buf[wOff + 4 + s] = s < pad ? (byte)0 : pairs[s - pad].b;
+            {
+                buf[wOff + s] = wBytes[s];
+                buf[wOff + 4 + s] = pairs[s].b;
+            }
 
             wOff += TmmSkinWeight.SizeInBytes;
         }
@@ -313,7 +316,8 @@ public static class TmmWriter
         w.Write((byte)(model.Extras?.Tmm.TerrainEmb == true ? 1 : 0));
         w.Write((byte)(model.Extras?.Tmm.Raytracing == true ? 1 : 0));
 
-        var mm = model.Extras?.Tmm.MainMatrix ?? IdentityMatrix4x3();
+        var mm = model.Extras?.Tmm.MainMatrix;
+        if (mm is null || mm.Length < 12) mm = IdentityMatrix4x3();
         for (int i = 0; i < 12; i++) w.Write(mm[i]);
 
         // Attachment records
@@ -418,7 +422,9 @@ public static class TmmWriter
                 max = Vector3.Max(max, p);
             }
         }
-        return (min, max);
+        // Vertex stream is X-negated on write (glTF Y-up RH -> game Y-up LH).
+        // Bbox must match game space, so swap X and negate.
+        return (new Vector3(-max.X, min.Y, min.Z), new Vector3(-min.X, max.Y, max.Z));
     }
 
     static (Vector3 Min, Vector3 Max) ComputeExtendedBbox(GlbModel model, Vector3 bboxMin, Vector3 bboxMax)

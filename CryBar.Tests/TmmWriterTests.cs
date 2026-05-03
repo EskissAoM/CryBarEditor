@@ -50,6 +50,156 @@ public class TmmWriterTests
     }
 
     [Fact]
+    public void Write_SkinWeights_AscendingOrder_DominantBoneAtSlot3()
+    {
+        // Vanilla format: weights ascending, dominant bone at slot 3.
+        // Three nonzero weights: 0.1, 0.3, 0.6 with bones 5, 7, 9.
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh
+            {
+                Primitives =
+                [
+                    new GlbMeshPrimitive
+                    {
+                        MaterialName = "m",
+                        Positions = [0, 0, 0,  1, 0, 0,  1, 1, 0],
+                        Normals = [0, 0, 1,   0, 0, 1,   0, 0, 1],
+                        Tangents = [1, 0, 0, 1,  1, 0, 0, 1,  1, 0, 0, 1],
+                        TexCoords = [0, 0,  1, 0,  1, 1],
+                        Indices = [0, 1, 2],
+                        // Order intentionally jumbled: slot 0=largest, to verify the writer sorts.
+                        JointIndices = [9, 5, 7, 0,   0, 0, 0, 0,   0, 0, 0, 0],
+                        JointWeights = [0.6f, 0.1f, 0.3f, 0,   1, 0, 0, 0,   1, 0, 0, 0],
+                    }
+                ]
+            },
+            Bones =
+            [
+                new GlbBone { Name = "b0", ParentIndex = -1, LocalMatrix = Identity16(), InverseBindMatrix = Identity16() },
+                new GlbBone { Name = "b1", ParentIndex = 0,  LocalMatrix = Identity16(), InverseBindMatrix = Identity16() },
+                new GlbBone { Name = "b2", ParentIndex = 0,  LocalMatrix = Identity16(), InverseBindMatrix = Identity16() },
+                new GlbBone { Name = "b3", ParentIndex = 0,  LocalMatrix = Identity16(), InverseBindMatrix = Identity16() },
+                new GlbBone { Name = "b4", ParentIndex = 0,  LocalMatrix = Identity16(), InverseBindMatrix = Identity16() },
+                new GlbBone { Name = "b5", ParentIndex = 0,  LocalMatrix = Identity16(), InverseBindMatrix = Identity16() },
+                new GlbBone { Name = "b6", ParentIndex = 0,  LocalMatrix = Identity16(), InverseBindMatrix = Identity16() },
+                new GlbBone { Name = "b7", ParentIndex = 0,  LocalMatrix = Identity16(), InverseBindMatrix = Identity16() },
+                new GlbBone { Name = "b8", ParentIndex = 0,  LocalMatrix = Identity16(), InverseBindMatrix = Identity16() },
+                new GlbBone { Name = "b9", ParentIndex = 0,  LocalMatrix = Identity16(), InverseBindMatrix = Identity16() },
+            ],
+            Materials = [new GlbMaterial { Name = "m" }],
+        };
+
+        var (tmm, data, _) = TmmWriter.Write(model);
+        var parsed = new TmmFile(tmm);
+        var dataFile = new TmmDataFile(data, parsed);
+        var sw = dataFile.SkinWeights![0];
+
+        Assert.Equal(0, sw.Weight0);
+        Assert.True(sw.Weight1 < sw.Weight2);
+        Assert.True(sw.Weight2 < sw.Weight3);
+        Assert.Equal(255, sw.Weight1 + sw.Weight2 + sw.Weight3);
+        Assert.Equal(9, sw.BoneIndex3);
+        Assert.Equal(7, sw.BoneIndex2);
+        Assert.Equal(5, sw.BoneIndex1);
+    }
+
+    [Fact]
+    public void Write_SkinWeights_PreservesBoneIndexEvenWhenWeightZero()
+    {
+        // Vanilla retains bone indices in zero-weight slots; some engine paths read
+        // the index regardless of weight.
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh
+            {
+                Primitives =
+                [
+                    new GlbMeshPrimitive
+                    {
+                        MaterialName = "m",
+                        Positions = [0, 0, 0,  1, 0, 0,  1, 1, 0],
+                        Normals = [0, 0, 1,   0, 0, 1,   0, 0, 1],
+                        Tangents = [1, 0, 0, 1,  1, 0, 0, 1,  1, 0, 0, 1],
+                        TexCoords = [0, 0,  1, 0,  1, 1],
+                        Indices = [0, 1, 2],
+                        // Vertex 0 has bone 25 with weight 0; should still appear in the output.
+                        JointIndices = [25, 18, 19, 29,   0, 0, 0, 0,   0, 0, 0, 0],
+                        JointWeights = [0f, 106f/255f, 97f/255f, 52f/255f,   1, 0, 0, 0,   1, 0, 0, 0],
+                    }
+                ]
+            },
+            Bones = Enumerable.Range(0, 30)
+                .Select(i => new GlbBone { Name = $"b{i}", ParentIndex = i == 0 ? -1 : 0, LocalMatrix = Identity16(), InverseBindMatrix = Identity16() })
+                .ToArray(),
+            Materials = [new GlbMaterial { Name = "m" }],
+        };
+
+        var (tmm, data, _) = TmmWriter.Write(model);
+        var parsed = new TmmFile(tmm);
+        var dataFile = new TmmDataFile(data, parsed);
+        var sw = dataFile.SkinWeights![0];
+
+        // Bone 25 has weight 0; should still be present in the bone-index byte stream.
+        var indices = new[] { sw.BoneIndex0, sw.BoneIndex1, sw.BoneIndex2, sw.BoneIndex3 };
+        Assert.Contains((byte)25, indices);
+        Assert.Contains((byte)18, indices);
+        Assert.Contains((byte)19, indices);
+        Assert.Contains((byte)29, indices);
+        Assert.Equal(0, sw.Weight0);
+    }
+
+    [Fact]
+    public void Write_BoundingBox_IsInGameSpace()
+    {
+        // glTF positions are X-negated relative to game; the written bbox must be in
+        // game space (matching the vertex stream after negation).
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh
+            {
+                Primitives =
+                [
+                    new GlbMeshPrimitive
+                    {
+                        MaterialName = "m",
+                        // Asymmetric in X: glTF X = [-2, 5] -> game X = [-5, 2]
+                        Positions = [-2, 0, 0,  5, 1, 0,  3, 1, 1],
+                        Normals = [0, 0, 1,   0, 0, 1,   0, 0, 1],
+                        Tangents = [1, 0, 0, 1,  1, 0, 0, 1,  1, 0, 0, 1],
+                        TexCoords = [0, 0,  1, 0,  1, 1],
+                        Indices = [0, 1, 2],
+                    }
+                ]
+            },
+            Materials = [new GlbMaterial { Name = "m" }],
+        };
+
+        var (tmm, _, _) = TmmWriter.Write(model);
+        var parsed = new TmmFile(tmm);
+        Assert.Equal(-5f, parsed.BoundingBox.MinX, 4);
+        Assert.Equal(2f,  parsed.BoundingBox.MaxX, 4);
+    }
+
+    [Fact]
+    public void Write_EmptyMainMatrix_FallsBackToIdentity()
+    {
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh { Primitives = [] },
+            Extras = new GlbExtras { Tmm = new GlbExtras.TmmSection { MainMatrix = [] } },
+        };
+
+        var (tmm, _, _) = TmmWriter.Write(model);
+        var parsed = new TmmFile(tmm);
+        Assert.True(parsed.Parsed);
+        // Identity 4x3 (12 floats expanded to 4x4 by parser): diagonal is 1.
+        Assert.Equal(1f, parsed.MainMatrix![0]);
+        Assert.Equal(1f, parsed.MainMatrix[5]);
+        Assert.Equal(1f, parsed.MainMatrix[10]);
+    }
+
+    [Fact]
     public void Write_TwoBoneSkeleton_BoneRecordsRoundTrip()
     {
         var model = new GlbModel
