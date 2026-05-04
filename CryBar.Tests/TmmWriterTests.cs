@@ -515,4 +515,53 @@ public class TmmWriterTests
         Assert.Equal(4, dataFile.Vertices!.Length);
         Assert.Equal(6, dataFile.Indices!.Length);
     }
+
+    [Fact]
+    public void Write_BoundsRadius_RoundTripsViaExtras()
+    {
+        var model = MakeMinimalSkinnedModel(
+            new GlbExtras { Tmm = new GlbExtras.TmmSection { BoundsRadius = 1.2036f } });
+        var (tmm, _, _) = TmmWriter.Write(model);
+        var parsed = new TmmFile(tmm);
+        Assert.True(parsed.Parsed);
+        Assert.Equal(1.2036f, parsed.BoundsRadius);
+    }
+
+    [Fact]
+    public void Write_BoundsRadius_FallsBackToVertexMaxDistance()
+    {
+        // For a triangle at (0,0,0)-(1,0,0)-(1,1,0), max distance from origin is sqrt(2).
+        var model = MakeMinimalSkinnedModel(extras: null);
+        var (tmm, _, _) = TmmWriter.Write(model);
+        var parsed = new TmmFile(tmm);
+        Assert.True(parsed.Parsed);
+        Assert.InRange(parsed.BoundsRadius, 1.4f, 1.5f);
+    }
+
+    static GlbModel MakeMinimalSkinnedModel(GlbExtras? extras = null) => new GlbModel
+    {
+        Mesh = new GlbMesh
+        {
+            Primitives =
+            [
+                new GlbMeshPrimitive
+                {
+                    MaterialName = "m",
+                    Positions = [0, 0, 0,  1, 0, 0,  1, 1, 0],
+                    Normals = [0, 0, 1,   0, 0, 1,   0, 0, 1],
+                    Tangents = [1, 0, 0, 1,  1, 0, 0, 1,  1, 0, 0, 1],
+                    TexCoords = [0, 0,  1, 0,  1, 1],
+                    Indices = [0, 1, 2],
+                    JointIndices = [0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0],
+                    JointWeights = [1, 0, 0, 0,  1, 0, 0, 0,  1, 0, 0, 0],
+                }
+            ]
+        },
+        Bones =
+        [
+            new GlbBone { Name = "root", ParentIndex = -1, LocalMatrix = Identity16(), InverseBindMatrix = Identity16() },
+        ],
+        Materials = [new GlbMaterial { Name = "m" }],
+        Extras = extras,
+    };
 }

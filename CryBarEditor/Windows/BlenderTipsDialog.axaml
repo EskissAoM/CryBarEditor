@@ -7,7 +7,7 @@
 	xmlns:micons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
 	Title="Blender export &amp; tagging tips"
 	Width="680"
-	Height="660"
+	Height="700"
 	d:DesignHeight="660"
 	d:DesignWidth="680"
 	Background="#141414"
@@ -36,9 +36,11 @@
 					<StackPanel Spacing="4">
 						<TextBlock Text="Export checklist" FontWeight="Bold" FontSize="14" />
 						<TextBlock Foreground="#888" FontSize="11" Text="File → Export → glTF 2.0 (.glb/.gltf)" />
+						<TextBlock Foreground="#e6c87a" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0"
+						           Text="Before exporting: select the Armature and Object → Apply → All Transforms (Ctrl+A). Otherwise the armature's world position bakes into the GLB and the unit will appear offset in-game." />
 						<Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto,Auto,Auto" Margin="0,4,0,0">
 							<TextBlock Grid.Row="0" Grid.Column="0" Text="Mesh → Tangents" Foreground="#cfd8e8" FontSize="12" FontWeight="Bold" />
-							<TextBlock Grid.Row="0" Grid.Column="1" Foreground="#b0b0b0" FontSize="12" Text="ON - if off, recomputed via MikkTSpace" />
+							<TextBlock Grid.Row="0" Grid.Column="1" Foreground="#b0b0b0" FontSize="12" Text="optional - if off, recomputed via MikkTSpace" />
 							<TextBlock Grid.Row="1" Grid.Column="0" Text="Animation → Always Sample" Foreground="#cfd8e8" FontSize="12" FontWeight="Bold" />
 							<TextBlock Grid.Row="1" Grid.Column="1" Foreground="#b0b0b0" FontSize="12" Text="OFF - keeps original keyframes intact" />
 							<TextBlock Grid.Row="2" Grid.Column="0" Text="Include → Custom Properties" Foreground="#cfd8e8" FontSize="12" FontWeight="Bold" />

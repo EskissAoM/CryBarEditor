@@ -1,0 +1,82 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:micons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
+        xmlns:windows="using:CryBarEditor.Windows"
+        mc:Ignorable="d" d:DesignWidth="500" d:DesignHeight="250"
+        x:Class="CryBarEditor.Windows.CheckForUpdatesWindow"
+        WindowStartupLocation="CenterOwner"
+        WindowDecorations="None"
+        ExtendClientAreaToDecorationsHint="True"
+        Foreground="#d9d9d9"
+        Background="#141414"
+        DataContext="{Binding RelativeSource={RelativeSource Self}}"
+        x:DataType="windows:CheckForUpdatesWindow"
+        CanResize="False" Width="500" Height="250"
+        Title="Check for Updates">
+    <Border Padding="14" BorderThickness="2" BorderBrush="#d9d9d9">
+        <Grid RowDefinitions="Auto,Auto,Auto,*,Auto">
+
+            <!-- Header -->
+            <TextBlock Grid.Row="0" Text="CryBarEditor" FontWeight="Bold" FontSize="16" Margin="0,0,0,8" />
+
+            <!-- Versions row -->
+            <Grid Grid.Row="1" ColumnDefinitions="120,*" RowDefinitions="Auto,Auto" Margin="0,0,0,8">
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Current version:" Foreground="#9a9a9a" />
+                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding CurrentVersionText}" />
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Latest version:" Foreground="#9a9a9a" Margin="0,4,0,0" />
+                <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,4,0,0">
+                    <ProgressBar IsIndeterminate="True" Width="60" Height="6" Margin="0,0,8,0"
+                                 IsVisible="{Binding ShowChecking}" />
+                    <TextBlock Text="{Binding LatestVersionText}" Foreground="{Binding LatestVersionBrush}" />
+                    <micons:MaterialIcon Kind="CheckCircle" Width="16" Height="16" Foreground="#78f542"
+                                         Margin="6,0,0,0" IsVisible="{Binding ShowUpToDate}" />
+                </StackPanel>
+            </Grid>
+
+            <!-- Up-to-date message -->
+            <TextBlock Grid.Row="2" Text="You are on the latest version."
+                       Foreground="#78f542" Margin="0,0,0,4"
+                       IsVisible="{Binding ShowUpToDate}" />
+
+            <!-- Release page link -->
+            <Button Grid.Row="2" Click="OpenReleasePage_Click"
+                    IsVisible="{Binding ShowReleaseLink}"
+                    Background="Transparent" BorderThickness="0" Padding="0" Cursor="Hand"
+                    Margin="0,0,0,4">
+                <TextBlock Text="View release on GitHub"
+                           Foreground="#5da2e8" TextDecorations="Underline" />
+            </Button>
+
+            <!-- Status / progress region (fixed height to prevent reflow) -->
+            <Border Grid.Row="3" Padding="0,12,0,0" MinHeight="80">
+                <StackPanel IsVisible="{Binding ShowProgressRegion}">
+                    <ProgressBar Minimum="0" Maximum="1"
+                                 Value="{Binding ProgressValue}"
+                                 IsIndeterminate="{Binding ProgressIndeterminate}"
+                                 Height="10" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding StatusText}"
+                               Foreground="{Binding StatusBrush}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- Buttons -->
+            <Grid Grid.Row="4" ColumnDefinitions="*,Auto,Auto">
+                <Button Grid.Column="1" Content="Update Now"
+                        Click="UpdateNow_Click"
+                        IsVisible="{Binding ShowUpdateButton}"
+                        IsEnabled="{Binding UpdateButtonEnabled}"
+                        Background="#3a78c2" Foreground="White"
+                        Padding="14,6" Margin="0,0,8,0" />
+                <Button Grid.Column="2" Content="Close"
+                        Click="Close_Click"
+                        IsCancel="True"
+                        IsEnabled="{Binding CloseButtonEnabled}"
+                        Padding="14,6" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

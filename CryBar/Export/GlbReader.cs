@@ -111,6 +111,12 @@ public static class GlbReader
             var sceneRoot = ComputeSceneRootTransform(root);
             mesh = BakeRootTransformIntoMesh(mesh, sceneRoot);
             bones = BakeRootTransformIntoBones(bones, sceneRoot);
+            // Blender's glTF exporter normalizes bone scales in the InverseBindMatrices, so they
+            // stop being the inverse of the bone world matrices it writes. The engine multiplies
+            // both for skinning, so the asymmetry shows up in-game as stretched limbs even though
+            // Blender renders the rest pose correctly. Recomputing IBM = inverse(world) makes them
+            // consistent again.
+            bones = RecomputeIbmsFromBoneHierarchy(bones);
             var animations = ReadAnimations(root, bin, bones, extras);
             var materials = ReadMaterials(root, bin);
             var attachments = ReadAttachments(root, extras, bones);
@@ -181,7 +187,8 @@ public static class GlbReader
         var nodeToBone = new Dictionary<int, int>();
         if (bones != null && root.TryGetProperty("skins", out var skins) && skins.GetArrayLength() > 0)
         {
-            var joints = skins[0].GetProperty("joints");
+            if (!skins[0].TryGetProperty("joints", out var joints))
+                throw new GlbParseException("Skin is missing required 'joints' array.");
             for (int i = 0; i < joints.GetArrayLength(); i++) nodeToBone[joints[i].GetInt32()] = i;
         }
 
@@ -202,7 +209,10 @@ public static class GlbReader
             if (!nx.TryGetProperty("crybar", out var cb)) continue;
             if (!cb.TryGetProperty("node_type", out var nt) || nt.GetString() != GlbExtras.NodeTypeAttachment) continue;
 
-            int attIdx = cb.GetProperty("index").GetInt32();
+            // Older exports / hand-edited GLBs may omit `index`; fall back to encounter order
+            // so the attachment is still recognized. Order matches node discovery, which is
+            // typically the order the user authored.
+            int attIdx = cb.TryGetProperty("index", out var attIdxProp) ? attIdxProp.GetInt32() : attachments.Count;
             string name = SuffixRegex.Replace(
                 node.TryGetProperty("name", out var nm) ? nm.GetString() ?? "" : "", "");
             float[] local = ReadNodeTransform(node);
@@ -350,7 +360,8 @@ public static class GlbReader
             return null;
 
         var skin = skins[0];
-        var joints = skin.GetProperty("joints");
+        if (!skin.TryGetProperty("joints", out var joints))
+            throw new GlbParseException("Skin is missing required 'joints' array.");
         int boneCount = joints.GetArrayLength();
         int[] jointNodeIndices = new int[boneCount];
         for (int i = 0; i < boneCount; i++) jointNodeIndices[i] = joints[i].GetInt32();
@@ -358,7 +369,8 @@ public static class GlbReader
         var nodeToBone = new Dictionary<int, int>();
         for (int i = 0; i < boneCount; i++) nodeToBone[jointNodeIndices[i]] = i;
 
-        var nodes = root.GetProperty("nodes");
+        if (!root.TryGetProperty("nodes", out var nodes))
+            throw new GlbParseException("GLB JSON has no 'nodes' array.");
         int[] parents = new int[boneCount];
         for (int i = 0; i < boneCount; i++) parents[i] = -1;
         for (int n = 0; n < nodes.GetArrayLength(); n++)
@@ -484,15 +496,22 @@ public static class GlbReader
     static (int Offset, int Count, int ComponentSize, int Components) ResolveAccessor(
         JsonElement root, int accessorIdx, bool expectFloat, int binLength)
     {
-        var accessors = root.GetProperty("accessors");
+        if (!root.TryGetProperty("accessors", out var accessors))
+            throw new GlbParseException("GLB JSON has no 'accessors' array.");
         var acc = accessors[accessorIdx];
 
         if (acc.TryGetProperty("sparse", out _))
             throw new GlbParseException("Sparse accessors are not supported.");
 
-        int count = acc.GetProperty("count").GetInt32();
-        int componentType = acc.GetProperty("componentType").GetInt32();
-        string type = acc.GetProperty("type").GetString() ?? "";
+        if (!acc.TryGetProperty("count", out var countProp))
+            throw new GlbParseException($"Accessor {accessorIdx} is missing required 'count'.");
+        int count = countProp.GetInt32();
+        if (!acc.TryGetProperty("componentType", out var ctProp))
+            throw new GlbParseException($"Accessor {accessorIdx} is missing required 'componentType'.");
+        int componentType = ctProp.GetInt32();
+        if (!acc.TryGetProperty("type", out var typeProp))
+            throw new GlbParseException($"Accessor {accessorIdx} is missing required 'type'.");
+        string type = typeProp.GetString() ?? "";
         int components = type switch
         {
             "SCALAR" => 1,
@@ -511,8 +530,12 @@ public static class GlbReader
         if (expectFloat && componentType != 5126)
             throw new GlbParseException($"Expected float accessor, got componentType {componentType}.");
 
-        int bufferViewIdx = acc.GetProperty("bufferView").GetInt32();
-        var bv = root.GetProperty("bufferViews")[bufferViewIdx];
+        if (!acc.TryGetProperty("bufferView", out var bvIdxProp))
+            throw new GlbParseException($"Accessor {accessorIdx} is missing required 'bufferView'.");
+        int bufferViewIdx = bvIdxProp.GetInt32();
+        if (!root.TryGetProperty("bufferViews", out var bufferViews))
+            throw new GlbParseException("GLB JSON has no 'bufferViews' array.");
+        var bv = bufferViews[bufferViewIdx];
         int bvOffset = bv.TryGetProperty("byteOffset", out var bvo) ? bvo.GetInt32() : 0;
         int accOffset = acc.TryGetProperty("byteOffset", out var ao) ? ao.GetInt32() : 0;
         int offset = bvOffset + accOffset;
@@ -532,16 +555,21 @@ public static class GlbReader
 
         int boneCount = bones.Length;
         var nodeToBone = new Dictionary<int, int>();
-        var skin = root.GetProperty("skins")[0];
-        var joints = skin.GetProperty("joints");
-        for (int i = 0; i < joints.GetArrayLength(); i++) nodeToBone[joints[i].GetInt32()] = i;
+        if (!root.TryGetProperty("skins", out var animSkins) || animSkins.GetArrayLength() == 0)
+            throw new GlbParseException("GLB has animations but no skin.");
+        var animSkin = animSkins[0];
+        if (!animSkin.TryGetProperty("joints", out var animJoints))
+            throw new GlbParseException("Skin is missing required 'joints' array.");
+        for (int i = 0; i < animJoints.GetArrayLength(); i++) nodeToBone[animJoints[i].GetInt32()] = i;
 
         var result = new List<GlbAnimation>();
         foreach (var animEl in animsEl.EnumerateArray())
         {
             string name = animEl.TryGetProperty("name", out var nm) ? nm.GetString() ?? "" : "";
-            var samplers = animEl.GetProperty("samplers");
-            var channels = animEl.GetProperty("channels");
+            if (!animEl.TryGetProperty("samplers", out var samplers))
+                throw new GlbParseException($"Animation '{name}' is missing 'samplers'.");
+            if (!animEl.TryGetProperty("channels", out var channels))
+                throw new GlbParseException($"Animation '{name}' is missing 'channels'.");
 
             var samplerData = new (float[] Times, float[] Values, string Path)[samplers.GetArrayLength()];
             for (int s = 0; s < samplers.GetArrayLength(); s++)
@@ -549,8 +577,12 @@ public static class GlbReader
                 var sm = samplers[s];
                 string interp = sm.TryGetProperty("interpolation", out var ip) ? ip.GetString() ?? "LINEAR" : "LINEAR";
 
-                var times = ReadAccessorFloats(root, bin, sm.GetProperty("input").GetInt32());
-                var values = ReadAccessorFloats(root, bin, sm.GetProperty("output").GetInt32());
+                if (!sm.TryGetProperty("input", out var inputProp))
+                    throw new GlbParseException($"Animation '{name}' sampler {s} is missing 'input'.");
+                if (!sm.TryGetProperty("output", out var outputProp))
+                    throw new GlbParseException($"Animation '{name}' sampler {s} is missing 'output'.");
+                var times = ReadAccessorFloats(root, bin, inputProp.GetInt32());
+                var values = ReadAccessorFloats(root, bin, outputProp.GetInt32());
 
                 if (interp == "STEP")
                 {
@@ -579,9 +611,17 @@ public static class GlbReader
             for (int c = 0; c < channels.GetArrayLength(); c++)
             {
                 var ch = channels[c];
-                int samplerIdx = ch.GetProperty("sampler").GetInt32();
-                int targetNode = ch.GetProperty("target").GetProperty("node").GetInt32();
-                string path = ch.GetProperty("target").GetProperty("path").GetString() ?? "";
+                if (!ch.TryGetProperty("sampler", out var samplerIdxProp))
+                    throw new GlbParseException($"Animation '{name}' channel {c} is missing 'sampler'.");
+                int samplerIdx = samplerIdxProp.GetInt32();
+                if (!ch.TryGetProperty("target", out var chTarget))
+                    throw new GlbParseException($"Animation '{name}' channel {c} is missing 'target'.");
+                if (!chTarget.TryGetProperty("node", out var targetNodeProp))
+                    throw new GlbParseException($"Animation '{name}' channel {c} target is missing 'node'.");
+                int targetNode = targetNodeProp.GetInt32();
+                if (!chTarget.TryGetProperty("path", out var pathProp))
+                    throw new GlbParseException($"Animation '{name}' channel {c} target is missing 'path'.");
+                string path = pathProp.GetString() ?? "";
                 int boneIdx = nodeToBone.TryGetValue(targetNode, out var bi) ? bi : -1;
                 channelInfo[c] = (samplerIdx, boneIdx, path);
 
@@ -757,11 +797,13 @@ public static class GlbReader
             byte[]? baseColor = null, normalMap = null;
 
             if (m.TryGetProperty("pbrMetallicRoughness", out var pbr) &&
-                pbr.TryGetProperty("baseColorTexture", out var bct))
-                baseColor = ReadTextureBytes(root, bin, bct.GetProperty("index").GetInt32());
+                pbr.TryGetProperty("baseColorTexture", out var bct) &&
+                bct.TryGetProperty("index", out var bctIdx))
+                baseColor = ReadTextureBytes(root, bin, bctIdx.GetInt32());
 
-            if (m.TryGetProperty("normalTexture", out var nt))
-                normalMap = ReadTextureBytes(root, bin, nt.GetProperty("index").GetInt32());
+            if (m.TryGetProperty("normalTexture", out var nt) &&
+                nt.TryGetProperty("index", out var ntIdx))
+                normalMap = ReadTextureBytes(root, bin, ntIdx.GetInt32());
 
             materials.Add(new GlbMaterial { Name = name, BaseColorPng = baseColor, NormalMapPng = normalMap });
         }
@@ -770,25 +812,37 @@ public static class GlbReader
 
     static byte[]? ReadTextureBytes(JsonElement root, byte[] bin, int textureIdx)
     {
-        var tex = root.GetProperty("textures")[textureIdx];
+        if (!root.TryGetProperty("textures", out var textures))
+            throw new GlbParseException("GLB JSON has no 'textures' array.");
+        var tex = textures[textureIdx];
         if (!tex.TryGetProperty("source", out var src)) return null;
-        var image = root.GetProperty("images")[src.GetInt32()];
+
+        if (!root.TryGetProperty("images", out var images))
+            throw new GlbParseException("GLB JSON has no 'images' array.");
+        var image = images[src.GetInt32()];
         if (!image.TryGetProperty("bufferView", out var bvIdx)) return null;
 
-        var bv = root.GetProperty("bufferViews")[bvIdx.GetInt32()];
+        if (!root.TryGetProperty("bufferViews", out var bufferViewsTex))
+            throw new GlbParseException("GLB JSON has no 'bufferViews' array.");
+        var bv = bufferViewsTex[bvIdx.GetInt32()];
         int offset = bv.TryGetProperty("byteOffset", out var bo) ? bo.GetInt32() : 0;
-        int length = bv.GetProperty("byteLength").GetInt32();
+        if (!bv.TryGetProperty("byteLength", out var byteLen))
+            throw new GlbParseException($"bufferView for texture {textureIdx} is missing required 'byteLength'.");
+        int length = byteLen.GetInt32();
         return bin.AsSpan(offset, length).ToArray();
     }
 
     static System.Numerics.Matrix4x4 ComputeSceneRootTransform(JsonElement root)
     {
         if (!root.TryGetProperty("scene", out var sceneIdx)) return System.Numerics.Matrix4x4.Identity;
-        var scene = root.GetProperty("scenes")[sceneIdx.GetInt32()];
+        if (!root.TryGetProperty("scenes", out var scenes))
+            throw new GlbParseException("GLB JSON has no 'scenes' array.");
+        var scene = scenes[sceneIdx.GetInt32()];
         if (!scene.TryGetProperty("nodes", out var sceneNodes) || sceneNodes.GetArrayLength() != 1)
             return System.Numerics.Matrix4x4.Identity;
 
-        var nodes = root.GetProperty("nodes");
+        if (!root.TryGetProperty("nodes", out var nodes))
+            throw new GlbParseException("GLB JSON has no 'nodes' array.");
         int nodeIdx = sceneNodes[0].GetInt32();
 
         // Walk down: root scene node may carry a transform (Blender typically applies a 90deg X rotation here).
@@ -888,7 +942,7 @@ public static class GlbReader
             {
                 Name = bones[i].Name,
                 ParentIndex = bones[i].ParentIndex,
-                LocalMatrix = MatrixToColumnMajor(baked),
+                LocalMatrix = MatrixDecomp.MatrixToColMajor(baked),
                 InverseBindMatrix = bones[i].InverseBindMatrix,
             };
         }
@@ -897,9 +951,45 @@ public static class GlbReader
 
 
 
-    static float[] MatrixToColumnMajor(System.Numerics.Matrix4x4 m) =>
-        [m.M11, m.M12, m.M13, m.M14, m.M21, m.M22, m.M23, m.M24,
-         m.M31, m.M32, m.M33, m.M34, m.M41, m.M42, m.M43, m.M44];
+    // Skips the recompute when supplied IBMs already invert the joint world matrices to
+    // within float precision. Avoids per-bone allocation + matrix invert on CryBar's own
+    // round-trips, where Blender isn't in the loop and the IBMs are already correct.
+    static bool IbmsAreConsistent(GlbBone[] bones, System.Numerics.Matrix4x4[] worldMatrices)
+    {
+        const float Tol = 1e-3f;
+        for (int i = 0; i < bones.Length; i++)
+        {
+            var ibm = MatrixDecomp.ColMajorToMatrix(bones[i].InverseBindMatrix);
+            var prod = worldMatrices[i] * ibm;
+            if (MathF.Abs(prod.M11 - 1f) > Tol || MathF.Abs(prod.M22 - 1f) > Tol || MathF.Abs(prod.M33 - 1f) > Tol) return false;
+            if (MathF.Abs(prod.M41) > Tol || MathF.Abs(prod.M42) > Tol || MathF.Abs(prod.M43) > Tol) return false;
+            if (MathF.Abs(prod.M12) > Tol || MathF.Abs(prod.M21) > Tol || MathF.Abs(prod.M13) > Tol) return false;
+        }
+        return true;
+    }
+
+    static GlbBone[]? RecomputeIbmsFromBoneHierarchy(GlbBone[]? bones)
+    {
+        if (bones == null || bones.Length == 0) return bones;
+        var worldMatrices = MatrixDecomp.ComputeBoneWorldMatrices(bones);
+        if (IbmsAreConsistent(bones, worldMatrices)) return bones;
+
+        var result = new GlbBone[bones.Length];
+        for (int i = 0; i < bones.Length; i++)
+        {
+            float[] ibm = System.Numerics.Matrix4x4.Invert(worldMatrices[i], out var invWorld)
+                ? MatrixDecomp.MatrixToColMajor(invWorld)
+                : bones[i].InverseBindMatrix;
+            result[i] = new GlbBone
+            {
+                Name = bones[i].Name,
+                ParentIndex = bones[i].ParentIndex,
+                LocalMatrix = bones[i].LocalMatrix,
+                InverseBindMatrix = ibm,
+            };
+        }
+        return result;
+    }
 
     static (JsonDocument Json, byte[] Bin) ParseContainer(ReadOnlyMemory<byte> glb)
     {

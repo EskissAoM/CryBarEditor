@@ -43,12 +43,28 @@ public static class MatrixDecomp
         var matS = Matrix4x4.CreateScale(s);
         var matR = Matrix4x4.CreateFromQuaternion(r);
         var matT = Matrix4x4.CreateTranslation(t);
-        var m = matS * matR * matT;
-        return [
-            m.M11, m.M12, m.M13, m.M14,
-            m.M21, m.M22, m.M23, m.M24,
-            m.M31, m.M32, m.M33, m.M34,
-            m.M41, m.M42, m.M43, m.M44,
-        ];
+        return MatrixToColMajor(matS * matR * matT);
+    }
+
+    public static float[] MatrixToColMajor(Matrix4x4 m) =>
+    [
+        m.M11, m.M12, m.M13, m.M14,
+        m.M21, m.M22, m.M23, m.M24,
+        m.M31, m.M32, m.M33, m.M34,
+        m.M41, m.M42, m.M43, m.M44,
+    ];
+
+    // Walks the joint chain producing world-space matrices. Assumes parents precede
+    // their children in the array (the standard GLB joint ordering).
+    public static Matrix4x4[] ComputeBoneWorldMatrices(GlbBone[] bones)
+    {
+        var world = new Matrix4x4[bones.Length];
+        for (int i = 0; i < bones.Length; i++)
+        {
+            var local = ColMajorToMatrix(bones[i].LocalMatrix);
+            int parent = bones[i].ParentIndex;
+            world[i] = parent < 0 ? local : local * world[parent];
+        }
+        return world;
     }
 }

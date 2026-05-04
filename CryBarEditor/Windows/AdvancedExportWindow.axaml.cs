@@ -37,10 +37,34 @@ public partial class AdvancedExportWindow : SimpleWindow
     bool _singleFileIsConvertible;
 
     public bool DoCopy { get => _doCopy; set { _doCopy = value; OnSelfChanged(); OnPropertyChanged(nameof(CanExport)); RefreshOverridePreview(); } }
-    public bool DoConvert { get => _doConvert; set { _doConvert = value; OnSelfChanged(); OnPropertyChanged(nameof(CanExport)); OnPropertyChanged(nameof(ShowDecompressOption)); OnPropertyChanged(nameof(CompressedFileNote)); OnPropertyChanged(nameof(ShowExportMaterialsOption)); OnPropertyChanged(nameof(ShowTmmToGltfOption)); OnPropertyChanged(nameof(ShowEmitFbximportOption)); RefreshOverridePreview(); } }
+    public bool DoConvert
+    {
+        get => _doConvert; set
+        {
+            _doConvert = value;
+            OnSelfChanged();
+            OnPropertyChanged(nameof(CanExport));
+            OnPropertyChanged(nameof(ShowDecompressOption));
+            OnPropertyChanged(nameof(CompressedFileNote));
+            OnPropertyChanged(nameof(ShowExportMaterialsOption));
+            OnPropertyChanged(nameof(ShowTmmToGltfOption));
+            OnPropertyChanged(nameof(ShowEmitFbximportOption));
+            OnPropertyChanged(nameof(ShowExportAnimationsOption));
+            RefreshOverridePreview();
+        }
+    }
     public bool DoDecompress { get => _doDecompress; set { _doDecompress = value; OnSelfChanged(); } }
     public bool DoExportMaterials { get => _doExportMaterials; set { _doExportMaterials = value; OnSelfChanged(); } }
-    public bool DoTmmToGltf { get => _doTmmToGltf; set { _doTmmToGltf = value; OnSelfChanged(); OnPropertyChanged(nameof(ShowExportAnimationsOption)); OnPropertyChanged(nameof(ShowEmitFbximportOption)); RefreshOverridePreview(); } }
+    public bool DoTmmToGltf
+    {
+        get => _doTmmToGltf; set
+        {
+            _doTmmToGltf = value; OnSelfChanged();
+            OnPropertyChanged(nameof(ShowExportAnimationsOption));
+            OnPropertyChanged(nameof(ShowEmitFbximportOption));
+            RefreshOverridePreview();
+        }
+    }
     public bool DoExportAnimations { get => _doExportAnimations; set { _doExportAnimations = value; OnSelfChanged(); } }
     public bool DoEmitFbximport { get => _doEmitFbximport; set { _doEmitFbximport = value; OnSelfChanged(); } }
     public bool OpenInEditor { get => _openInEditor; set { _openInEditor = value; OnSelfChanged(); } }

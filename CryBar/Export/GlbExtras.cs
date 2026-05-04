@@ -19,6 +19,8 @@ public sealed class GlbExtras
     public sealed class TmmSection
     {
         public float[] ExtendedBbox { get; set; } = new float[6];
+        // 0 means "unknown / compute on write".
+        public float BoundsRadius { get; set; }
         public float[] MainMatrix { get; set; } = IdentityMatrix4x4();
         public string[] Submodels { get; set; } = ["default"];
         public byte AutoBurnMode { get; set; }
@@ -152,6 +154,7 @@ public sealed class GlbExtras
 
         w.WriteStartObject("tmm");
         WriteFloatArray(w, "extended_bbox", Tmm.ExtendedBbox);
+        if (Tmm.BoundsRadius != 0f) w.WriteNumber("bounds_radius", Tmm.BoundsRadius);
         WriteFloatArray(w, "main_matrix", Tmm.MainMatrix);
         WriteStringArray(w, "submodels", Tmm.Submodels);
         w.WriteNumber("autoburn_mode", Tmm.AutoBurnMode);
@@ -374,6 +377,7 @@ public sealed class GlbExtras
                 tmm.ExtendedBoundingBox.MinX, tmm.ExtendedBoundingBox.MinY, tmm.ExtendedBoundingBox.MinZ,
                 tmm.ExtendedBoundingBox.MaxX, tmm.ExtendedBoundingBox.MaxY, tmm.ExtendedBoundingBox.MaxZ,
             ];
+            extras.Tmm.BoundsRadius = tmm.BoundsRadius;
             extras.Tmm.MainMatrix = (float[])tmm.MainMatrix!.Clone();
             extras.Tmm.Submodels = (string[])tmm.Submodels!.Clone();
             extras.Tmm.AutoBurnMode = tmm.AutoBurnMode;
@@ -510,6 +514,7 @@ public sealed class GlbExtras
     static void ReadTmm(JsonElement el, TmmSection tmm)
     {
         if (el.TryGetProperty("extended_bbox", out var bb)) tmm.ExtendedBbox = ReadFloatArray(bb);
+        if (el.TryGetProperty("bounds_radius", out var br)) tmm.BoundsRadius = br.GetSingle();
         if (el.TryGetProperty("main_matrix", out var mm)) tmm.MainMatrix = ReadFloatArray(mm);
         if (el.TryGetProperty("submodels", out var sm)) tmm.Submodels = ReadStringArray(sm);
         if (el.TryGetProperty("autoburn_mode", out var ab)) tmm.AutoBurnMode = ab.GetByte();

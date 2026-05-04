@@ -117,6 +117,7 @@ public class GlbExtrasTests
             Tmm = new GlbExtras.TmmSection
             {
                 ExtendedBbox = [-2, -3, -4, 5, 6, 7],
+                BoundsRadius = 1.2036f,
                 MainMatrix = [0.0115f, 0, 0, 0,  0, 0.0115f, 0, 0,  0, 0, 0.0115f, 0,  0, 0, 0, 1],
                 Submodels = ["default", "broken"],
                 AutoBurnMode = 1,
@@ -198,6 +199,7 @@ public class GlbExtrasTests
         Assert.NotNull(roundTripped);
 
         Assert.Equal(original.Tmm.ExtendedBbox, roundTripped.Tmm.ExtendedBbox);
+        Assert.Equal(1.2036f, roundTripped.Tmm.BoundsRadius);
         Assert.Equal(original.Tmm.MainMatrix, roundTripped.Tmm.MainMatrix);
         Assert.Equal(original.Tmm.BoneCollisions, roundTripped.Tmm.BoneCollisions);
         Assert.Equal(original.Tmm.Submodels, roundTripped.Tmm.Submodels);
