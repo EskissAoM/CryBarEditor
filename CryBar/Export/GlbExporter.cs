@@ -472,13 +472,13 @@ public static class GlbExporter
     }
 
     /// <summary>
-    /// TMA translations are deltas from bind pose, expressed in the bone's *local* frame
+    /// TMA translations are deltas from bind pose, expressed in the bone's local frame
     /// (the same frame used by the rotation channel). Composing the local-frame delta into
-    /// parent space requires rotating it by bindR before adding bindT — i.e. the standard
+    /// parent space requires rotating it by bindR before adding bindT: i.e. the standard
     /// bind_matrix * delta_matrix decomposition. Skipping the rotation worked for bones with
     /// near-identity bindR but produced visibly wrong motion on bones with large bind
-    /// rotations (e.g. chimera RootPart1_M's 180°-around-(X+Z)/√2 flip — Y delta inverted).
-    /// Composes: final_T = bind_T + bindR · anim_T, then X-negate for RH.
+    /// rotations (e.g. chimera RootPart1_M's 180-deg-around-(X+Z)/sqrt(2) flip - Y delta inverted).
+    /// Composes: final_T = bind_T + bindR * anim_T, then X-negate for RH.
     /// </summary>
     static void WriteComposedTranslations(byte[] buf, int offset,
         Vector3[] translations, Vector3 bindT, Quaternion bindR, int frameCount)

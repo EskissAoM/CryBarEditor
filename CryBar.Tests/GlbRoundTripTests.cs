@@ -305,6 +305,10 @@ public class GlbRoundTripTests
                     Attachments = [new GlbExtras.AttachmentEntry
                     {
                         Name = "att1",
+                        // X is the original Slot 1 (mirrored into att.LocalMatrix above), Y is
+                        // the original Slot 2; matching AdjustmentMatrix marks this as an
+                        // unchanged round-trip so Slot 2 is preserved verbatim from extras.
+                        AdjustmentMatrix = (float[])X.Clone(),
                         LocalMatrix = (float[])Y.Clone(),
                     }],
                 }
@@ -321,6 +325,134 @@ public class GlbRoundTripTests
             Assert.Equal(X[i], att.AdjustmentTransformMatrix[i], 4);
         for (int i = 0; i < 12; i++)
             Assert.Equal(Y[i], att.LocalTransformMatrix[i], 4);
+    }
+
+    [Fact]
+    public void TmmWriter_UserEditedAttachment_WritesSlot1AndSlot2Equal()
+    {
+        // When the glTF node matrix no longer matches the original Slot 1 stored in extras
+        // (artist moved/recreated the Empty in Blender), Slot 2 must be overwritten with the
+        // user's authored transform - the runtime engine reads Slot 2.
+        var X_orig = new float[] {
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+        };
+        var X_user = new float[] {
+            0.5f, -0.866f, 0,    1.25f,
+            0.866f, 0.5f,  0,   -0.75f,
+            0,      0,     1.0f, 2.10f,
+        };
+
+        var attUserNodeMatrix = ToGlbNodeFlat(X_user);
+
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh { Primitives = [new GlbMeshPrimitive
+            {
+                MaterialName = "m",
+                Positions = [0, 0, 0,  1, 0, 0,  1, 1, 0],
+                Normals = [0, 0, 1,   0, 0, 1,   0, 0, 1],
+                Tangents = [1, 0, 0, 1,  1, 0, 0, 1,  1, 0, 0, 1],
+                TexCoords = [0, 0,  1, 0,  1, 1],
+                Indices = [0, 1, 2],
+                JointIndices = [0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0],
+                JointWeights = [1, 0, 0, 0,  1, 0, 0, 0,  1, 0, 0, 0],
+            }] },
+            Bones = [new GlbBone {
+                Name = "root", ParentIndex = -1,
+                LocalMatrix = Identity16Local(),
+                InverseBindMatrix = Identity16Local()
+            }],
+            Attachments = [new GlbAttachment {
+                Name = "att1", Index = 0, ParentBoneIndex = 0,
+                LocalMatrix = attUserNodeMatrix
+            }],
+            Materials = [new GlbMaterial { Name = "m" }],
+            Extras = new GlbExtras
+            {
+                Tmm = new GlbExtras.TmmSection
+                {
+                    // Original Slot 1 = X_orig (identity); user's edit produced X_user, which
+                    // doesn't match X_orig -> writer must treat this as an edit and sync slots.
+                    Attachments = [new GlbExtras.AttachmentEntry
+                    {
+                        Name = "att1",
+                        AdjustmentMatrix = (float[])X_orig.Clone(),
+                        // Original Slot 2 was something arbitrary; whatever it was, it must
+                        // not be preserved when the user edits, otherwise the runtime engine
+                        // (which reads Slot 2) ignores the artist's intent.
+                        LocalMatrix = new float[] {
+                            7, 0, 0, 99,
+                            0, 7, 0, 99,
+                            0, 0, 7, 99,
+                        },
+                    }],
+                }
+            }
+        };
+
+        var (tmm, _, _) = TmmWriter.Write(model);
+        var parsed = new TmmFile(tmm);
+        Assert.True(parsed.FullyParsed);
+        var att = parsed.Attachments![0];
+
+        // Slot 1 reflects the user's edit
+        for (int i = 0; i < 12; i++)
+            Assert.Equal(X_user[i], att.AdjustmentTransformMatrix[i], 3);
+
+        // Slot 2 must equal Slot 1, not the stale extras.LocalMatrix
+        for (int i = 0; i < 12; i++)
+            Assert.Equal(att.AdjustmentTransformMatrix[i], att.LocalTransformMatrix[i], 4);
+    }
+
+    [Fact]
+    public void TmmWriter_NewAttachmentNoExtras_WritesSlot1AndSlot2Equal()
+    {
+        // Brand-new attach point with no matching extras entry: Slot 2 must still adopt the
+        // user's authored transform; falling back to identity would make the runtime engine
+        // render the attachment at the bone's natural orientation.
+        var X_user = new float[] {
+            0,  0, 1, 0.5f,
+            1,  0, 0, 0.0f,
+            0,  1, 0, 1.5f,
+        };
+
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh { Primitives = [new GlbMeshPrimitive
+            {
+                MaterialName = "m",
+                Positions = [0, 0, 0,  1, 0, 0,  1, 1, 0],
+                Normals = [0, 0, 1,   0, 0, 1,   0, 0, 1],
+                Tangents = [1, 0, 0, 1,  1, 0, 0, 1,  1, 0, 0, 1],
+                TexCoords = [0, 0,  1, 0,  1, 1],
+                Indices = [0, 1, 2],
+                JointIndices = [0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0],
+                JointWeights = [1, 0, 0, 0,  1, 0, 0, 0,  1, 0, 0, 0],
+            }] },
+            Bones = [new GlbBone {
+                Name = "root", ParentIndex = -1,
+                LocalMatrix = Identity16Local(),
+                InverseBindMatrix = Identity16Local()
+            }],
+            Attachments = [new GlbAttachment {
+                Name = "brand_new_attach", Index = 0, ParentBoneIndex = 0,
+                LocalMatrix = ToGlbNodeFlat(X_user)
+            }],
+            Materials = [new GlbMaterial { Name = "m" }],
+            // No Extras at all
+        };
+
+        var (tmm, _, _) = TmmWriter.Write(model);
+        var parsed = new TmmFile(tmm);
+        Assert.True(parsed.FullyParsed);
+        var att = parsed.Attachments![0];
+
+        for (int i = 0; i < 12; i++)
+            Assert.Equal(X_user[i], att.AdjustmentTransformMatrix[i], 3);
+        for (int i = 0; i < 12; i++)
+            Assert.Equal(att.AdjustmentTransformMatrix[i], att.LocalTransformMatrix[i], 4);
     }
 
     [Fact]
@@ -920,6 +1052,22 @@ public class GlbRoundTripTests
     // --- Helpers ---
 
     static float[] Identity16Local() => [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+
+    // Mirrors the GlbExporter forward path for an attachment node: lifts a TMM row-major-3x4
+    // matrix to col-major-4x4 (with the [0,0,0,1] homogeneous column) and applies the F*M*F
+    // axis flip via AxisNegateMask {1,2,3,4,8,12}. The result is what TmmWriter consumes as
+    // GlbAttachment.LocalMatrix.
+    static float[] ToGlbNodeFlat(float[] rm3x4)
+    {
+        var f = new float[] {
+            rm3x4[0], rm3x4[4], rm3x4[8],  0,
+            rm3x4[1], rm3x4[5], rm3x4[9],  0,
+            rm3x4[2], rm3x4[6], rm3x4[10], 0,
+            rm3x4[3], rm3x4[7], rm3x4[11], 1,
+        };
+        foreach (var i in new[] { 1, 2, 3, 4, 8, 12 }) f[i] = -f[i];
+        return f;
+    }
 
     // Replicates the core of BuildGlbAnimations in MainWindow.Export.cs:
     // uses DependencyFinder.FindAnimfileForTmmAsync + AnimationDiscovery + fileIndex.Find.

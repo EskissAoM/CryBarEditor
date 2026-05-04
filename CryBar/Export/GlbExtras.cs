@@ -94,6 +94,10 @@ public sealed class GlbExtras
         public required string Name { get; init; }
         public uint TypeFlag { get; set; }
         public float[] LocalMatrix { get; set; } = new float[12];
+        // Original Slot 1 (AdjustmentTransformMatrix) snapshot. Used at re-import time to
+        // detect "user moved/created the Empty in Blender vs unchanged round-trip" so we
+        // can keep both TMM matrix slots in sync with the artist's authored transform.
+        public float[] AdjustmentMatrix { get; set; } = new float[12];
         public uint DummyBoneMode { get; set; }
         public uint DummyBoneTransformMode { get; set; }
         public string ForcedDummyBoneName { get; set; } = "";
@@ -273,6 +277,7 @@ public sealed class GlbExtras
             w.WriteString("name", a.Name);
             w.WriteNumber("type_flag", a.TypeFlag);
             WriteFloatArray(w, "local_matrix", a.LocalMatrix);
+            WriteFloatArray(w, "adjustment_matrix", a.AdjustmentMatrix);
             w.WriteNumber("dummy_bone_mode", a.DummyBoneMode);
             w.WriteNumber("dummy_bone_transform_mode", a.DummyBoneTransformMode);
             w.WriteString("forced_dummy_bone_name", a.ForcedDummyBoneName);
@@ -447,6 +452,7 @@ public sealed class GlbExtras
                     Name = a.Name,
                     TypeFlag = a.TypeFlag,
                     LocalMatrix = (float[])a.LocalTransformMatrix.Clone(),
+                    AdjustmentMatrix = (float[])a.AdjustmentTransformMatrix.Clone(),
                     DummyBoneMode = a.DummyBoneMode,
                     DummyBoneTransformMode = a.DummyBoneTransformMode,
                     ForcedDummyBoneName = a.ForcedDummyBoneName,
@@ -582,6 +588,7 @@ public sealed class GlbExtras
                 var entry = new AttachmentEntry { Name = a.GetProperty("name").GetString() ?? "" };
                 if (a.TryGetProperty("type_flag", out var tf)) entry.TypeFlag = tf.GetUInt32();
                 if (a.TryGetProperty("local_matrix", out var lm)) entry.LocalMatrix = ReadFloatArray(lm);
+                if (a.TryGetProperty("adjustment_matrix", out var am)) entry.AdjustmentMatrix = ReadFloatArray(am);
                 if (a.TryGetProperty("dummy_bone_mode", out var dbm)) entry.DummyBoneMode = dbm.GetUInt32();
                 if (a.TryGetProperty("dummy_bone_transform_mode", out var dbt)) entry.DummyBoneTransformMode = dbt.GetUInt32();
                 if (a.TryGetProperty("forced_dummy_bone_name", out var fdb)) entry.ForcedDummyBoneName = fdb.GetString() ?? "";

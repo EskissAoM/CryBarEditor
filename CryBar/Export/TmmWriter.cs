@@ -555,12 +555,19 @@ public static class TmmWriter
             // (which GlbExporter sourced from the original AdjustmentTransformMatrix). The glTF
             // flat is col-major-4x4 of M_col with F*M*F (axis-flip indices {1,2,3,4,8,12}) applied;
             // we undo the flip and extract rows 0/1/2 to produce TMM's row-major-3x4 layout.
-            WriteAdjustmentMatrixFromGlb(w, att.LocalMatrix);
+            var slot1 = ReconstructAdjustmentMatrixFromGlb(att.LocalMatrix);
+            for (int j = 0; j < 12; j++) w.Write(slot1[j]);
 
-            // Slot 2 (LocalTransformMatrix) is preserved verbatim through GlbExtras as 12 floats
-            // in TMM's native row-major-3x4 layout; pass through untransformed.
-            var localMat = extras?.LocalMatrix ?? IdentityMatrix4x3();
-            for (int j = 0; j < 12; j++) w.Write(j < localMat.Length ? localMat[j] : 0f);
+            // Slot 2 (LocalTransformMatrix) is what the AoM:R runtime uses to place the
+            // attachment relative to its parent bone, so it must reflect Blender Empty edits.
+            // Detect "unchanged round-trip" by comparing slot1 against the snapshot stored in
+            // extras.AdjustmentMatrix: match -> preserve original Slot 2 verbatim so vanilla
+            // TMMs with naturally differing slots round-trip exactly; otherwise the artist
+            // moved/created the Empty, so write Slot 2 = Slot 1.
+            bool roundTripUnchanged =
+                extras != null && Matrix4x3CloseTo(slot1, extras.AdjustmentMatrix);
+            var slot2 = roundTripUnchanged ? extras!.LocalMatrix : slot1;
+            for (int j = 0; j < 12; j++) w.Write(slot2[j]);
 
             w.Write(extras?.DummyBoneMode ?? 0u);
             w.Write(extras?.DummyBoneTransformMode ?? 0u);
@@ -576,19 +583,33 @@ public static class TmmWriter
     }
 
     // Inverts the per-flat-index axis flip applied by GlbExporter on attachment node matrices,
-    // then writes the reconstructed TMM row-major-3x4 layout (rows 0/1/2 of M_col).
+    // then returns the reconstructed TMM row-major-3x4 layout (rows 0/1/2 of M_col).
     // Source flat is col-major-4x4 of (F*M_col*F): col-major flat[col*4 + row], so row r of M_col
     // is at flat indices (0*4+r), (1*4+r), (2*4+r), (3*4+r) = r, r+4, r+8, r+12.
-    static void WriteAdjustmentMatrixFromGlb(BinaryWriter w, float[] flat)
+    static float[] ReconstructAdjustmentMatrixFromGlb(float[] flat)
     {
         Span<float> u = stackalloc float[16];
         flat.CopyTo(u);
         u[1] = -u[1]; u[2] = -u[2]; u[3] = -u[3];
         u[4] = -u[4]; u[8] = -u[8]; u[12] = -u[12];
 
+        var result = new float[12];
+        int k = 0;
         for (int row = 0; row < 3; row++)
             for (int col = 0; col < 4; col++)
-                w.Write(u[col * 4 + row]);
+                result[k++] = u[col * 4 + row];
+        return result;
+    }
+
+    // Per-element compare with tolerance loose enough to absorb the float<->float32 trip
+    // through Blender's matrix decomposition + recomposition while still flagging real edits.
+    static bool Matrix4x3CloseTo(float[] a, float[] b)
+    {
+        if (a.Length != 12 || b.Length != 12) return false;
+        const float eps = 1e-4f;
+        for (int i = 0; i < 12; i++)
+            if (MathF.Abs(a[i] - b[i]) > eps) return false;
+        return true;
     }
 
     static void WriteTrailingSections(BinaryWriter w, GlbModel model)
