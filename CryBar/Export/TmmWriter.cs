@@ -301,7 +301,13 @@ public static class TmmWriter
 
         var (bboxMin, bboxMax) = ComputeBbox(model);
         WriteBoundingBoxes(w, model, bboxMin, bboxMax);
-        w.Write(bboxMax.Y);
+
+        // Bounds radius: prefer the original (round-tripped via extras), else compute the
+        // max distance from origin over all vertex positions. Engine uses this for
+        // unit-selection footprint.
+        float radius = model.Extras?.Tmm.BoundsRadius ?? 0f;
+        if (radius <= 0f) radius = ComputeBoundsRadius(model);
+        w.Write(radius);
 
         int meshGroupCount   = model.Mesh.Primitives.Length;
         int materialCount    = model.Materials.Length;
@@ -450,6 +456,23 @@ public static class TmmWriter
         return (new Vector3(-max.X, min.Y, min.Z), new Vector3(-min.X, max.Y, max.Z));
     }
 
+    static float ComputeBoundsRadius(GlbModel model)
+    {
+        float maxSq = 0f;
+        foreach (var prim in model.Mesh.Primitives)
+        {
+            var pos = prim.Positions;
+            for (int i = 0; i < pos.Length; i += 3)
+            {
+                // X is negated on write; magnitude is the same so we don't need to flip here.
+                float x = pos[i], y = pos[i + 1], z = pos[i + 2];
+                float dsq = x * x + y * y + z * z;
+                if (dsq > maxSq) maxSq = dsq;
+            }
+        }
+        return MathF.Sqrt(maxSq);
+    }
+
     static (Vector3 Min, Vector3 Max) ComputeExtendedBbox(GlbModel model, Vector3 bboxMin, Vector3 bboxMax)
     {
         if (model.Extras != null && model.Extras.Tmm.ExtendedBbox.Length == 6)
@@ -470,17 +493,7 @@ public static class TmmWriter
     {
         var bones = model.Bones!;
 
-        // Build world-space matrices by walking up the parent chain.
-        // LocalMatrix is column-major (glTF). Convert to System.Numerics Matrix4x4 for multiplication.
-        var worldMatrices = new Matrix4x4[bones.Length];
-        for (int i = 0; i < bones.Length; i++)
-        {
-            var local = MatrixDecomp.ColMajorToMatrix(bones[i].LocalMatrix);
-            if (bones[i].ParentIndex < 0)
-                worldMatrices[i] = local;
-            else
-                worldMatrices[i] = local * worldMatrices[bones[i].ParentIndex];
-        }
+        var worldMatrices = MatrixDecomp.ComputeBoneWorldMatrices(bones);
 
         var collisions = model.Extras?.Tmm.BoneCollisions ?? [];
         bool hasCollisions = collisions.Length == bones.Length * 4;

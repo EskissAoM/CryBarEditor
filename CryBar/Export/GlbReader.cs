@@ -111,6 +111,12 @@ public static class GlbReader
             var sceneRoot = ComputeSceneRootTransform(root);
             mesh = BakeRootTransformIntoMesh(mesh, sceneRoot);
             bones = BakeRootTransformIntoBones(bones, sceneRoot);
+            // Blender's glTF exporter normalizes bone scales in the InverseBindMatrices, so they
+            // stop being the inverse of the bone world matrices it writes. The engine multiplies
+            // both for skinning, so the asymmetry shows up in-game as stretched limbs even though
+            // Blender renders the rest pose correctly. Recomputing IBM = inverse(world) makes them
+            // consistent again.
+            bones = RecomputeIbmsFromBoneHierarchy(bones);
             var animations = ReadAnimations(root, bin, bones, extras);
             var materials = ReadMaterials(root, bin);
             var attachments = ReadAttachments(root, extras, bones);
@@ -936,7 +942,7 @@ public static class GlbReader
             {
                 Name = bones[i].Name,
                 ParentIndex = bones[i].ParentIndex,
-                LocalMatrix = MatrixToColumnMajor(baked),
+                LocalMatrix = MatrixDecomp.MatrixToColMajor(baked),
                 InverseBindMatrix = bones[i].InverseBindMatrix,
             };
         }
@@ -945,9 +951,45 @@ public static class GlbReader
 
 
 
-    static float[] MatrixToColumnMajor(System.Numerics.Matrix4x4 m) =>
-        [m.M11, m.M12, m.M13, m.M14, m.M21, m.M22, m.M23, m.M24,
-         m.M31, m.M32, m.M33, m.M34, m.M41, m.M42, m.M43, m.M44];
+    // Skips the recompute when supplied IBMs already invert the joint world matrices to
+    // within float precision. Avoids per-bone allocation + matrix invert on CryBar's own
+    // round-trips, where Blender isn't in the loop and the IBMs are already correct.
+    static bool IbmsAreConsistent(GlbBone[] bones, System.Numerics.Matrix4x4[] worldMatrices)
+    {
+        const float Tol = 1e-3f;
+        for (int i = 0; i < bones.Length; i++)
+        {
+            var ibm = MatrixDecomp.ColMajorToMatrix(bones[i].InverseBindMatrix);
+            var prod = worldMatrices[i] * ibm;
+            if (MathF.Abs(prod.M11 - 1f) > Tol || MathF.Abs(prod.M22 - 1f) > Tol || MathF.Abs(prod.M33 - 1f) > Tol) return false;
+            if (MathF.Abs(prod.M41) > Tol || MathF.Abs(prod.M42) > Tol || MathF.Abs(prod.M43) > Tol) return false;
+            if (MathF.Abs(prod.M12) > Tol || MathF.Abs(prod.M21) > Tol || MathF.Abs(prod.M13) > Tol) return false;
+        }
+        return true;
+    }
+
+    static GlbBone[]? RecomputeIbmsFromBoneHierarchy(GlbBone[]? bones)
+    {
+        if (bones == null || bones.Length == 0) return bones;
+        var worldMatrices = MatrixDecomp.ComputeBoneWorldMatrices(bones);
+        if (IbmsAreConsistent(bones, worldMatrices)) return bones;
+
+        var result = new GlbBone[bones.Length];
+        for (int i = 0; i < bones.Length; i++)
+        {
+            float[] ibm = System.Numerics.Matrix4x4.Invert(worldMatrices[i], out var invWorld)
+                ? MatrixDecomp.MatrixToColMajor(invWorld)
+                : bones[i].InverseBindMatrix;
+            result[i] = new GlbBone
+            {
+                Name = bones[i].Name,
+                ParentIndex = bones[i].ParentIndex,
+                LocalMatrix = bones[i].LocalMatrix,
+                InverseBindMatrix = ibm,
+            };
+        }
+        return result;
+    }
 
     static (JsonDocument Json, byte[] Bin) ParseContainer(ReadOnlyMemory<byte> glb)
     {
