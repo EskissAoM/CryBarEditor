@@ -386,26 +386,26 @@ public partial class MainWindow : SimpleWindow
         var v = UpdateService.GetCurrentVersion();
         Title = $"{Title} {v.Major}.{v.Minor}.{v.Build}";
 
-        // version check; show CheckForUpdatesWindow when a newer version exists
-        _ = UpdateService.TryGetLatestVersionAsync(_httpClient).ContinueWith(s =>
+        _ = CheckForUpdatesAtStartupAsync();
+    }
+
+    async Task CheckForUpdatesAtStartupAsync()
+    {
+        var info = await UpdateService.TryGetLatestVersionAsync(_httpClient);
+        if (info == null) return;
+        _latestVersion = info.LatestVersion;
+
+        var current = UpdateService.GetCurrentVersion();
+        if (!UpdateService.IsVersionNewer(info.LatestVersion, current)) return;
+
+        if (_lastConfiguration?.LastVersionCheck == info.LatestVersion) return;
+
+        SaveConfiguration();
+
+        await Dispatcher.UIThread.InvokeAsync(async () =>
         {
-            if (!s.IsCompletedSuccessfully || s.Result == null) return;
-            var info = s.Result;
-            _latestVersion = info.LatestVersion;
-
-            var current = UpdateService.GetCurrentVersion();
-            if (!UpdateService.IsVersionNewer(info.LatestVersion, current)) return;
-
-            var lastSeen = _lastConfiguration?.LastVersionCheck;
-            if (lastSeen != null && lastSeen == info.LatestVersion) return;
-
-            SaveConfiguration();    // persists _latestVersion via LastVersionCheck = _latestVersion in SaveConfiguration
-
-            Dispatcher.UIThread.Post(async () =>
-            {
-                var w = new CheckForUpdatesWindow(_httpClient, info, current);
-                await w.ShowDialog(this);
-            });
+            var w = new CheckForUpdatesWindow(_httpClient, info, current);
+            await w.ShowDialog(this);
         });
     }
 

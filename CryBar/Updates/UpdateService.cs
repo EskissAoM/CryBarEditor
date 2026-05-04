@@ -1,6 +1,8 @@
 using System;
+using System.Buffers;
 using System.IO;
 using System.IO.Compression;
+using System.Net;
 using System.Net.Http;
 using System.Reflection;
 using System.Text.RegularExpressions;
@@ -88,10 +90,14 @@ public static partial class UpdateService
     public static void CleanupStaleUpdate(string installDir)
     {
         var updateDir = Path.Combine(installDir, ".update");
-        try { if (Directory.Exists(updateDir)) Directory.Delete(updateDir, recursive: true); } catch { }
+        try { if (Directory.Exists(updateDir)) Directory.Delete(updateDir, recursive: true); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
 
         var batPath = Path.Combine(installDir, "update.bat");
-        try { if (File.Exists(batPath)) File.Delete(batPath); } catch { }
+        try { if (File.Exists(batPath)) File.Delete(batPath); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     /// <summary>
@@ -135,13 +141,8 @@ public static partial class UpdateService
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
-            var proc = System.Diagnostics.Process.Start(psi)
+            _ = System.Diagnostics.Process.Start(psi)
                 ?? throw new InvalidOperationException("Process.Start returned null");
-
-            // Brief check: if cmd died immediately, the script also failed to start.
-            Thread.Sleep(50);
-            if (proc.HasExited && proc.ExitCode != 0)
-                throw new InvalidOperationException($"cmd.exe exited immediately with code {proc.ExitCode}");
         }
         catch (UpdateException) { throw; }
         catch (Exception ex)
@@ -166,71 +167,87 @@ public static partial class UpdateService
         var zipPath = Path.Combine(updateDir, "source.zip");
         var extractDir = Path.Combine(updateDir, "extracted");
 
-        // Fresh .update folder every call.
-        try { if (Directory.Exists(updateDir)) Directory.Delete(updateDir, recursive: true); } catch { }
+        try { if (Directory.Exists(updateDir)) Directory.Delete(updateDir, recursive: true); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
         Directory.CreateDirectory(extractDir);
 
-        // ----- Stage: LocatingAsset (HEAD) -----
         progress.Report(new UpdateProgress(UpdateStage.LocatingAsset, null, "Locating release asset..."));
-        try
-        {
-            using var head = new HttpRequestMessage(HttpMethod.Head, info.AssetUrl);
-            using var headResp = await http.SendAsync(head, HttpCompletionOption.ResponseHeadersRead, ct);
-            if (!headResp.IsSuccessStatusCode)
-                throw new UpdateException(UpdateStage.LocatingAsset,
-                    $"ZIP asset not found at expected URL (HTTP {(int)headResp.StatusCode}): {info.AssetUrl}");
-        }
-        catch (UpdateException) { throw; }
-        catch (OperationCanceledException) { throw; }
-        catch (HttpRequestException ex)
-        {
-            throw new UpdateException(UpdateStage.LocatingAsset, $"Could not reach GitHub: {ex.Message}", ex);
-        }
 
-        // ----- Stage: Downloading -----
-        progress.Report(new UpdateProgress(UpdateStage.Downloading, 0, "Downloading..."));
+        HttpResponseMessage? resp = null;
         try
         {
-            using var resp = await http.GetAsync(info.AssetUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+            try
+            {
+                resp = await http.GetAsync(info.AssetUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+            }
+            catch (HttpRequestException ex)
+            {
+                throw new UpdateException(UpdateStage.LocatingAsset, $"Could not reach GitHub: {ex.Message}", ex);
+            }
+
             if (!resp.IsSuccessStatusCode)
-                throw new UpdateException(UpdateStage.Downloading, $"Download failed (HTTP {(int)resp.StatusCode}).");
+            {
+                var stage = resp.StatusCode == HttpStatusCode.NotFound
+                    ? UpdateStage.LocatingAsset
+                    : UpdateStage.Downloading;
+                var msg = resp.StatusCode == HttpStatusCode.NotFound
+                    ? $"ZIP asset not found at expected URL (HTTP 404): {info.AssetUrl}"
+                    : $"Download failed (HTTP {(int)resp.StatusCode}).";
+                throw new UpdateException(stage, msg);
+            }
+
+            progress.Report(new UpdateProgress(UpdateStage.Downloading, 0, "Downloading..."));
 
             var total = resp.Content.Headers.ContentLength ?? -1L;
-
-            using var src = await resp.Content.ReadAsStreamAsync(ct);
-            using var dst = File.Create(zipPath);
-
-            var buffer = new byte[81920];
-            long read = 0;
-            int n;
-            while ((n = await src.ReadAsync(buffer, ct)) > 0)
+            const int BufferSize = 81920;
+            var buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
+            try
             {
-                await dst.WriteAsync(buffer.AsMemory(0, n), ct);
-                read += n;
-                if (total > 0)
+                using var src = await resp.Content.ReadAsStreamAsync(ct);
+                using var dst = File.Create(zipPath);
+
+                long read = 0;
+                int lastReportedPct = -1;
+                int n;
+                while ((n = await src.ReadAsync(buffer.AsMemory(0, BufferSize), ct)) > 0)
                 {
-                    var pct = (double)read / total;
-                    progress.Report(new UpdateProgress(
-                        UpdateStage.Downloading,
-                        pct,
-                        $"Downloading... {FormatBytes(read)} / {FormatBytes(total)} ({pct * 100:F0}%)"));
+                    await dst.WriteAsync(buffer.AsMemory(0, n), ct);
+                    read += n;
+                    if (total > 0)
+                    {
+                        var pct = (double)read / total;
+                        int pctInt = (int)(pct * 100);
+                        if (pctInt != lastReportedPct)
+                        {
+                            lastReportedPct = pctInt;
+                            progress.Report(new UpdateProgress(
+                                UpdateStage.Downloading,
+                                pct,
+                                $"Downloading... {FormatBytes(read)} / {FormatBytes(total)} ({pctInt}%)"));
+                        }
+                    }
+                    else
+                    {
+                        progress.Report(new UpdateProgress(
+                            UpdateStage.Downloading, null, $"Downloading... {FormatBytes(read)}"));
+                    }
                 }
-                else
-                {
-                    progress.Report(new UpdateProgress(
-                        UpdateStage.Downloading, null, $"Downloading... {FormatBytes(read)}"));
-                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
             }
         }
         catch (UpdateException) { throw; }
         catch (OperationCanceledException) { throw; }
-        catch (HttpRequestException ex)
-        {
-            throw new UpdateException(UpdateStage.Downloading, $"Download failed: {ex.Message}", ex);
-        }
-        catch (Exception ex)
+        catch (IOException ex)
         {
             throw new UpdateException(UpdateStage.Downloading, $"Could not write download to disk: {ex.Message}", ex);
+        }
+        finally
+        {
+            resp?.Dispose();
         }
 
         // ----- Stage: Extracting -----
@@ -238,7 +255,9 @@ public static partial class UpdateService
         try
         {
             ZipFile.ExtractToDirectory(zipPath, extractDir, overwriteFiles: true);
-            try { File.Delete(zipPath); } catch { /* best-effort cleanup; harmless if it stays */ }
+            try { File.Delete(zipPath); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
         catch (Exception ex)
         {

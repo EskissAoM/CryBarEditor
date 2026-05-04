@@ -17,6 +17,10 @@ namespace CryBarEditor.Windows;
 
 public partial class CheckForUpdatesWindow : SimpleWindow
 {
+    static readonly IBrush AccentBlueBrush = new SolidColorBrush(Color.Parse("#5da2e8"));
+    static readonly IBrush UpToDateGreenBrush = new SolidColorBrush(Color.Parse("#78f542"));
+    static readonly IBrush ErrorRedBrush = new SolidColorBrush(Color.Parse("#f55142"));
+
     readonly HttpClient _http;
     readonly Version _current;
     UpdateInfo? _info;
@@ -24,7 +28,7 @@ public partial class CheckForUpdatesWindow : SimpleWindow
 
     enum UiState { Checking, UpToDate, UpdateAvailable, CheckFailed, Downloading, Extracting, LaunchingUpdater, Error }
 
-    public CheckForUpdatesWindow() : this(http: new HttpClient(), prefetched: null, current: new Version(0, 0, 0)) { }
+    public CheckForUpdatesWindow() : this(http: null!, prefetched: null, current: new Version(0, 0, 0)) { }
 
     public CheckForUpdatesWindow(HttpClient http, UpdateInfo? prefetched, Version current)
     {
@@ -60,11 +64,12 @@ public partial class CheckForUpdatesWindow : SimpleWindow
     void OnClosing(object? sender, WindowClosingEventArgs e)
     {
         _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = null;
     }
 
     void SetState(UiState s, string? statusOverride = null)
     {
-        // Reset all flags, then set per-state.
         ShowChecking = false;
         ShowUpToDate = false;
         ShowReleaseLink = false;
@@ -86,23 +91,23 @@ public partial class CheckForUpdatesWindow : SimpleWindow
                 break;
             case UiState.UpToDate:
                 LatestVersionText = $"{_current.Major}.{_current.Minor}.{_current.Build}";
-                LatestVersionBrush = new SolidColorBrush(Color.Parse("#78f542"));
+                LatestVersionBrush = UpToDateGreenBrush;
                 ShowUpToDate = true;
                 break;
             case UiState.UpdateAvailable:
                 LatestVersionText = _info?.LatestVersion ?? "?";
-                LatestVersionBrush = new SolidColorBrush(Color.Parse("#5da2e8"));
+                LatestVersionBrush = AccentBlueBrush;
                 ShowReleaseLink = _info != null;
                 ShowUpdateButton = true;
                 UpdateButtonEnabled = true;
                 break;
             case UiState.CheckFailed:
                 LatestVersionText = "Could not check for updates.";
-                LatestVersionBrush = new SolidColorBrush(Color.Parse("#f55142"));
+                LatestVersionBrush = ErrorRedBrush;
                 break;
             case UiState.Downloading:
                 LatestVersionText = _info?.LatestVersion ?? "?";
-                LatestVersionBrush = new SolidColorBrush(Color.Parse("#5da2e8"));
+                LatestVersionBrush = AccentBlueBrush;
                 ShowReleaseLink = _info != null;
                 ShowProgressRegion = true;
                 ProgressIndeterminate = false;
@@ -111,7 +116,7 @@ public partial class CheckForUpdatesWindow : SimpleWindow
             case UiState.Extracting:
             case UiState.LaunchingUpdater:
                 LatestVersionText = _info?.LatestVersion ?? "?";
-                LatestVersionBrush = new SolidColorBrush(Color.Parse("#5da2e8"));
+                LatestVersionBrush = AccentBlueBrush;
                 ShowReleaseLink = _info != null;
                 ShowProgressRegion = true;
                 ProgressIndeterminate = true;
@@ -119,14 +124,14 @@ public partial class CheckForUpdatesWindow : SimpleWindow
                 break;
             case UiState.Error:
                 LatestVersionText = _info?.LatestVersion ?? "?";
-                LatestVersionBrush = new SolidColorBrush(Color.Parse("#5da2e8"));
+                LatestVersionBrush = AccentBlueBrush;
                 ShowReleaseLink = _info != null;
                 ShowUpdateButton = true;
                 UpdateButtonEnabled = true;     // re-enable so user can retry
                 ShowProgressRegion = true;
                 ProgressIndeterminate = false;
                 ProgressValue = 0;
-                StatusBrush = new SolidColorBrush(Color.Parse("#f55142"));
+                StatusBrush = ErrorRedBrush;
                 break;
         }
         RaiseAll();
@@ -180,6 +185,7 @@ public partial class CheckForUpdatesWindow : SimpleWindow
     {
         if (_info == null) return;
 
+        _cts?.Dispose();
         _cts = new CancellationTokenSource();
         SetState(UiState.Downloading, "Preparing...");
 
