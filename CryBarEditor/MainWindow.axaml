@@ -173,6 +173,9 @@
 				</MenuItem>
 				<MenuItem Header="Search" Click="MenuItem_Search" />
 				<MenuItem Header="Settings" Click="MenuItem_Settings" />
+				<MenuItem Header="Help">
+					<MenuItem Header="Check for Updates" Click="MenuItem_CheckForUpdates" />
+				</MenuItem>
 			</Menu>
 		</StackPanel>
 		<Border Padding="10">

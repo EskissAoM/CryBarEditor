@@ -6,6 +6,7 @@ using AvaloniaEdit.Folding;
 using AvaloniaEdit.TextMate;
 using CryBar.Bar;
 using CryBar.Indexing;
+using CryBar.Updates;
 using CryBar.Utilities;
 using CryBarEditor.Classes;
 using CryBarEditor.Windows;
@@ -332,6 +333,9 @@ public partial class MainWindow : SimpleWindow
 
     public MainWindow()
     {
+        // Remove leftover update artifacts from a previous update cycle
+        UpdateService.CleanupStaleUpdate(AppContext.BaseDirectory);
+
         // Needed to work when AOT compiled
         NativeLibrary.SetDllImportResolver(typeof(FMOD.Studio.STUDIO_VERSION).Assembly,
             (library_name, assembly, search_path) =>
@@ -379,80 +383,31 @@ public partial class MainWindow : SimpleWindow
         PointerWheelChanged += ScrollChanged;
 
         // append version to window title
-        var v = GetCurrentVersion();
+        var v = UpdateService.GetCurrentVersion();
         Title = $"{Title} {v.Major}.{v.Minor}.{v.Build}";
 
-        // check for newer version
-        _ = TryGetLatestVersion().ContinueWith(s =>
+        // version check; show CheckForUpdatesWindow when a newer version exists
+        _ = UpdateService.TryGetLatestVersionAsync(_httpClient).ContinueWith(s =>
         {
-            if (!s.IsCompletedSuccessfully || s.Result.version == null) return;
-            _latestVersion = s.Result.version;
+            if (!s.IsCompletedSuccessfully || s.Result == null) return;
+            var info = s.Result;
+            _latestVersion = info.LatestVersion;
 
-            if (IsVersionNewer(s.Result.version))
+            var current = UpdateService.GetCurrentVersion();
+            if (!UpdateService.IsVersionNewer(info.LatestVersion, current)) return;
+
+            var lastSeen = _lastConfiguration?.LastVersionCheck;
+            if (lastSeen != null && lastSeen == info.LatestVersion) return;
+
+            SaveConfiguration();    // persists _latestVersion via LastVersionCheck = _latestVersion in SaveConfiguration
+
+            Dispatcher.UIThread.Post(async () =>
             {
-                // only show if we haven't shown yet for this version
-                var last_version_checked = _lastConfiguration?.LastVersionCheck;
-                var should_show = last_version_checked == null || s.Result.version != last_version_checked;
-                if (should_show)
-                {
-                    SaveConfiguration();
-
-                    Dispatcher.Post(async () =>
-                    {
-                        var prompt = new Prompt(PromptType.Information, "Version " + s.Result.version, "New version is available for download:") { LinkUrl = s.Result.link };
-                        await prompt.ShowDialog(this);
-                    });
-                }
-            }
+                var w = new CheckForUpdatesWindow(_httpClient, info, current);
+                await w.ShowDialog(this);
+            });
         });
     }
-
-    #region Version
-    [GeneratedRegex(@"href=""(?<link>[^""]+tag/(?<version>\d+\.\d+\.\d+))""")]
-    public static partial Regex ReleasesVersionRgx();
-    public async Task<(string? link, string? version)> TryGetLatestVersion()
-    {
-        const string ReleasesLink = @"https://github.com/CryShana/CryBarEditor/releases";
-        try
-        {
-            var response = await _httpClient.GetAsync(ReleasesLink);
-            response.EnsureSuccessStatusCode();
-
-            var content = await response.Content.ReadAsStringAsync();
-            var matches = ReleasesVersionRgx().Matches(content);
-
-            // first version is valid
-            foreach (Match match in matches)
-            {
-                var link = "https://github.com" + match.Groups["link"].Value;
-                var version = match.Groups["version"].Value;
-                return (link, version);
-            }
-        }
-        catch { }
-
-        return default;
-    }
-
-    public Version GetCurrentVersion() => System.Reflection.Assembly.GetExecutingAssembly().GetName().Version!;
-    [GeneratedRegex(@"(?<major>\d+)\.(?<minor>\d+)\.(?<build>\d+)")]
-    public static partial Regex VersionRgx();
-    public bool IsVersionNewer(string version)
-    {
-        var match = VersionRgx().Match(version);
-        if (!match.Success) return false;
-
-        var major = int.Parse(match.Groups["major"].Value);
-        var minor = int.Parse(match.Groups["minor"].Value);
-        var build = int.Parse(match.Groups["build"].Value);
-
-        var v = GetCurrentVersion();
-
-        return major > v.Major ||
-            (major == v.Major && minor > v.Minor) ||
-            (major == v.Major && minor == v.Minor && build > v.Build);
-    }
-    #endregion
 
     #region UI events
     void ScrollChanged(object? sender, Avalonia.Input.PointerWheelEventArgs e)
@@ -768,6 +723,12 @@ public partial class MainWindow : SimpleWindow
             SaveConfiguration();
             OnPropertyChanged(nameof(CanOpenInEditor));
         }
+    }
+
+    void MenuItem_CheckForUpdates(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var w = new CheckForUpdatesWindow(_httpClient, prefetched: null, current: UpdateService.GetCurrentVersion());
+        _ = w.ShowDialog(this);
     }
 
     const string EDITOR_FILE_PLACEHOLDER = "{file}";
