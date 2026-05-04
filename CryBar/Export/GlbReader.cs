@@ -203,8 +203,10 @@ public static class GlbReader
             if (!nx.TryGetProperty("crybar", out var cb)) continue;
             if (!cb.TryGetProperty("node_type", out var nt) || nt.GetString() != GlbExtras.NodeTypeAttachment) continue;
 
-            if (!cb.TryGetProperty("index", out var attIdxProp)) continue;
-            int attIdx = attIdxProp.GetInt32();
+            // Older exports / hand-edited GLBs may omit `index`; fall back to encounter order
+            // so the attachment is still recognized. Order matches node discovery, which is
+            // typically the order the user authored.
+            int attIdx = cb.TryGetProperty("index", out var attIdxProp) ? attIdxProp.GetInt32() : attachments.Count;
             string name = SuffixRegex.Replace(
                 node.TryGetProperty("name", out var nm) ? nm.GetString() ?? "" : "", "");
             float[] local = ReadNodeTransform(node);
