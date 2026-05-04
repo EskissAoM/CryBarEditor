@@ -1,6 +1,8 @@
 ﻿using Avalonia.Controls;
 using Avalonia.Interactivity;
 
+using CryBarEditor.Windows;
+
 using System.ComponentModel;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -61,4 +63,7 @@ public abstract class SimpleWindow : Window, INotifyPropertyChanged
             }
         }
     }
+
+    protected async void TipsClick(object? sender, RoutedEventArgs e)
+        => await new BlenderTipsDialog().ShowDialog(this);
 }

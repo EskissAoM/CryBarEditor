@@ -126,16 +126,16 @@ public static class GlbReader
     }
 
     /// <summary>
-    /// Recovers per-node CryBar metadata in a single pass: <c>main_matrix</c> from any node's
-    /// extras (the exporter stamps it on the mesh node, but Blender migrates Object custom
-    /// properties to the Armature wrapper on round-trip), and <c>impact_point</c> positions from
-    /// tagged empty nodes (survives Blender, unlike root-extras). Both fall through unchanged
-    /// when nothing is found, preserving any data parsed from root extras earlier.
+    /// Recovers per-node CryBar metadata: the full <c>tmm</c> block from any node's
+    /// <c>extras.crybar.tmm</c> (Blender strips asset-root extras but preserves Object custom
+    /// properties), legacy <c>main_matrix</c>-only tags, and impact-point translations from tagged
+    /// empties. Asset-root extras wins when both are present.
     /// </summary>
     static GlbExtras? MergeNodeTaggedExtras(GlbExtras? assetExtras, JsonElement root)
     {
         if (!root.TryGetProperty("nodes", out var nodes)) return assetExtras;
 
+        GlbExtras? nodeRecovered = null;
         float[]? mainMatrix = null;
         var impactPoints = new List<(int Index, float[] Pos)>();
 
@@ -143,6 +143,10 @@ public static class GlbReader
         {
             if (!node.TryGetProperty("extras", out var nx)) continue;
             if (!nx.TryGetProperty("crybar", out var cb)) continue;
+
+            // Skip the Read when asset-root extras is going to win anyway.
+            if (assetExtras is null && nodeRecovered is null && cb.TryGetProperty("tmm", out _))
+                nodeRecovered = GlbExtras.Read(nx);
 
             if (mainMatrix is null && cb.TryGetProperty("main_matrix", out var mm))
             {
@@ -165,9 +169,11 @@ public static class GlbReader
             }
         }
 
-        if (mainMatrix is null && impactPoints.Count == 0) return assetExtras;
+        var result = assetExtras ?? nodeRecovered;
+        if (result == null && (mainMatrix != null || impactPoints.Count > 0))
+            result = new GlbExtras();
+        if (result == null) return null;
 
-        var result = assetExtras ?? new GlbExtras();
         if (mainMatrix is not null) result.Tmm.MainMatrix = mainMatrix;
         if (impactPoints.Count > 0)
         {
@@ -834,53 +840,34 @@ public static class GlbReader
 
     static System.Numerics.Matrix4x4 ComputeSceneRootTransform(JsonElement root)
     {
-        if (!root.TryGetProperty("scene", out var sceneIdx)) return System.Numerics.Matrix4x4.Identity;
-        if (!root.TryGetProperty("scenes", out var scenes))
-            throw new GlbParseException("GLB JSON has no 'scenes' array.");
-        var scene = scenes[sceneIdx.GetInt32()];
-        if (!scene.TryGetProperty("nodes", out var sceneNodes) || sceneNodes.GetArrayLength() != 1)
-            return System.Numerics.Matrix4x4.Identity;
-
         if (!root.TryGetProperty("nodes", out var nodes))
             throw new GlbParseException("GLB JSON has no 'nodes' array.");
-        int nodeIdx = sceneNodes[0].GetInt32();
 
-        // Walk down: root scene node may carry a transform (Blender typically applies a 90deg X rotation here).
-        // We bake transforms accumulated from scene root down to the mesh node.
-        var accum = System.Numerics.Matrix4x4.Identity;
-        var visited = new HashSet<int>();
-        int current = nodeIdx;
-        while (true)
+        int meshNodeIdx = -1;
+        for (int i = 0; i < nodes.GetArrayLength(); i++)
         {
-            if (!visited.Add(current)) break; // safety
-            var node = nodes[current];
-            var local = System.Numerics.Matrix4x4.Identity;
+            if (nodes[i].TryGetProperty("mesh", out _)) { meshNodeIdx = i; break; }
+        }
+        if (meshNodeIdx < 0) return System.Numerics.Matrix4x4.Identity;
 
-            if (node.TryGetProperty("matrix", out var mEl))
-            {
-                float[] mf = new float[16];
-                int i = 0;
-                foreach (var v in mEl.EnumerateArray()) mf[i++] = v.GetSingle();
-                local = new System.Numerics.Matrix4x4(
-                    mf[0], mf[1], mf[2], mf[3],
-                    mf[4], mf[5], mf[6], mf[7],
-                    mf[8], mf[9], mf[10], mf[11],
-                    mf[12], mf[13], mf[14], mf[15]);
-            }
-            else
-            {
-                var t = ReadVec3(node, "translation", System.Numerics.Vector3.Zero);
-                var r = ReadQuat(node, "rotation", System.Numerics.Quaternion.Identity);
-                var s = ReadVec3(node, "scale", System.Numerics.Vector3.One);
-                local = System.Numerics.Matrix4x4.CreateScale(s)
-                      * System.Numerics.Matrix4x4.CreateFromQuaternion(r)
-                      * System.Numerics.Matrix4x4.CreateTranslation(t);
-            }
-            accum = local * accum;
+        var childToParent = new Dictionary<int, int>();
+        for (int n = 0; n < nodes.GetArrayLength(); n++)
+        {
+            if (!nodes[n].TryGetProperty("children", out var children)) continue;
+            foreach (var c in children.EnumerateArray())
+                childToParent[c.GetInt32()] = n;
+        }
 
-            if (node.TryGetProperty("mesh", out _)) break;
-            if (!node.TryGetProperty("children", out var children) || children.GetArrayLength() == 0) break;
-            current = children[0].GetInt32();
+        // System.Numerics is row-vector convention (world = local * parent_world), so we
+        // accumulate bottom-up by right-multiplying each ancestor's local matrix.
+        var accum = MatrixDecomp.ColMajorToMatrix(ReadNodeTransform(nodes[meshNodeIdx]));
+        int current = meshNodeIdx;
+        var visited = new HashSet<int> { current };
+        while (childToParent.TryGetValue(current, out int parent))
+        {
+            if (!visited.Add(parent)) break;
+            accum = accum * MatrixDecomp.ColMajorToMatrix(ReadNodeTransform(nodes[parent]));
+            current = parent;
         }
         return accum;
     }

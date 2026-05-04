@@ -175,6 +175,7 @@
 				<MenuItem Header="Settings" Click="MenuItem_Settings" />
 				<MenuItem Header="Help">
 					<MenuItem Header="Check for Updates" Click="MenuItem_CheckForUpdates" />
+					<MenuItem Header="Blender Export Tips" Click="TipsClick" />
 				</MenuItem>
 			</Menu>
 		</StackPanel>

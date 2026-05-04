@@ -180,6 +180,7 @@ public class GlbRoundTripTests
             Materials = [new GlbMaterial { Name = "body" }],
             Extras = new GlbExtras
             {
+                HasFullTmmBlock = true,
                 Tmm = new GlbExtras.TmmSection
                 {
                     AutoBurnMode = 3,

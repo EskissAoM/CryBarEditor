@@ -357,11 +357,13 @@ public static class TmmWriter
         foreach (var section in model.Extras?.Tmm.LossySections ?? [])
             warnings.Add($"Source had {section} data; dropped on re-import (v1 limitation)");
 
-        // No extras.crybar => all extras-derived fields were defaulted; surface that
-        // to the UI since the missing metadata visibly affects in-game behavior.
-        if (model.Extras == null)
+        // Partial extras (HasFullTmmBlock=false) means only main_matrix / impact_points
+        // were recovered from node tags; bbox/auto_attach are still defaulted.
+        if (model.Extras == null || !model.Extras.HasFullTmmBlock)
         {
-            warnings.Add("No main_matrix in source GLB; defaulted to identity. Model may appear at wrong absolute scale in-game (relative bone motion correct).");
+            var mainMat = model.Extras?.Tmm.MainMatrix;
+            if (mainMat is not { Length: 16 } || MatrixDecomp.ColMajorToMatrix(mainMat).IsIdentity)
+                warnings.Add("No main_matrix in source GLB; defaulted to identity. Model may appear at wrong absolute scale in-game (relative bone motion correct).");
             if (model.Bones is { Length: > 0 })
             {
                 warnings.Add("No extended_bbox in source GLB; using bbox * 3 heuristic. Animation may visibly clip near edges of unit footprint for asymmetric models.");

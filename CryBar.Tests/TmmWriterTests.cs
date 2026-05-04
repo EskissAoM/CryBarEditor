@@ -446,6 +446,7 @@ public class TmmWriterTests
             Materials = [new GlbMaterial { Name = "m" }],
             Extras = new GlbExtras
             {
+                HasFullTmmBlock = true,
                 Tmm = new GlbExtras.TmmSection
                 {
                     MainMatrix = [1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1],

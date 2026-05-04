@@ -73,9 +73,15 @@ public partial class GlbConvertWindow : SimpleWindow
         try
         {
             var bytes = await File.ReadAllBytesAsync(_glbPath);
-            _model = GlbReader.Parse(bytes.AsMemory());
-            SummaryDisplay = BuildSummary(_model);
-            PopulatePlannedRows();
+            // Parse + inspect are synchronous and CPU-bound; offload so the window stays responsive.
+            var (model, summary, inspection) = await Task.Run(() =>
+            {
+                var m = GlbReader.Parse(bytes.AsMemory());
+                return (m, BuildSummary(m), GlbConverter.Inspect(m, _glbBaseName));
+            });
+            _model = model;
+            SummaryDisplay = summary;
+            PopulatePlannedRowsFrom(inspection);
             CanConvert = true;
         }
         catch (Exception ex)
@@ -88,11 +94,9 @@ public partial class GlbConvertWindow : SimpleWindow
         OnPropertyChanged(nameof(CanConvertAndNotBusy));
     }
 
-    void PopulatePlannedRows()
+    void PopulatePlannedRowsFrom(GlbConverter.InspectionResult inspection)
     {
         PlannedRows.Clear();
-        if (_model == null) return;
-        var inspection = GlbConverter.Inspect(_model, _glbBaseName);
         foreach (var p in inspection.PlannedFiles)
         {
             PlannedRows.Add(new PlannedRow
@@ -319,12 +323,6 @@ public partial class GlbConvertWindow : SimpleWindow
     }
 
     void CancelClick(object? sender, RoutedEventArgs e) => Close();
-
-    async void TipsClick(object? sender, RoutedEventArgs e)
-    {
-        var dialog = new BlenderTipsDialog();
-        await dialog.ShowDialog(this);
-    }
 }
 
 public sealed class PlannedRow : INotifyPropertyChanged

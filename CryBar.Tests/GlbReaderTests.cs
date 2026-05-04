@@ -411,7 +411,8 @@ public class GlbReaderTests
     /// <summary>
     /// Mutates a CryBar-exported GLB into the layout Blender produces on round-trip:
     /// an "Armature" node becomes the scene root with the original mesh node as its child,
-    /// and the mesh node's extras.crybar.main_matrix is migrated to the Armature wrapper.
+    /// and the mesh node's extras.crybar object is migrated to the Armature wrapper as a unit
+    /// (Blender treats Object custom properties as opaque blobs).
     /// </summary>
     static byte[] SimulateBlenderArmatureWrapping(byte[] glb)
     {
@@ -422,19 +423,15 @@ public class GlbReaderTests
         var nodes = (JsonArray)node["nodes"]!;
         var meshNode = (JsonObject)nodes[0]!;
 
-        // Migrate main_matrix from mesh node's extras to a fresh wrapper.
-        var meshExtras = meshNode["extras"]?["crybar"]?["main_matrix"];
-        Assert.NotNull(meshExtras); // sanity: exporter must have stamped it
+        var meshCrybar = meshNode["extras"]?["crybar"];
+        Assert.NotNull(meshCrybar); // sanity: exporter must have stamped it
         var wrapper = new JsonObject
         {
             ["name"] = "Armature",
             ["children"] = new JsonArray(0), // mesh stays at index 0
             ["extras"] = new JsonObject
             {
-                ["crybar"] = new JsonObject
-                {
-                    ["main_matrix"] = meshExtras.DeepClone(),
-                },
+                ["crybar"] = meshCrybar.DeepClone(),
             },
         };
         meshNode.Remove("extras");

@@ -614,7 +614,7 @@ public static class GlbExporter
             w.WriteEndArray();
         }
         if (extras != null)
-            GlbExtras.WriteMeshNodeRedundancy(w, extras.Tmm.MainMatrix);
+            GlbExtras.WriteMeshNodeExtras(w, extras);
         w.WriteEndObject();
 
         // Bone nodes

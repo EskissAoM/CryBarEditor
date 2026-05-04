@@ -97,14 +97,23 @@
 			</CheckBox>
 
 			<!-- TMM to glTF option (only when Convert is checked and TMM files are present) -->
-			<CheckBox DockPanel.Dock="Top" IsChecked="{Binding DoTmmToGltf}" Margin="24,0,0,2"
-					  IsVisible="{Binding ShowTmmToGltfOption}">
-				<StackPanel>
-					<TextBlock Text="TMM &#x2192; glTF instead of OBJ" VerticalAlignment="Center" />
-					<TextBlock Text="Single .glb file with materials, tangents, skeleton data, attachments"
-							   Foreground="Gray" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
-				</StackPanel>
-			</CheckBox>
+			<DockPanel DockPanel.Dock="Top" Margin="24,0,0,2"
+					   IsVisible="{Binding ShowTmmToGltfOption}" LastChildFill="True">
+				<Button DockPanel.Dock="Right" Click="TipsClick"
+						Background="Transparent" BorderThickness="0" Padding="6,2"
+						ToolTip.Tip="Blender export &amp; tagging tips"
+						VerticalAlignment="Top" Cursor="Hand"
+						IsVisible="{Binding DoTmmToGltf}">
+					<micons:MaterialIcon Kind="InformationOutline" Width="18" Height="18" Foreground="#77c1e0" />
+				</Button>
+				<CheckBox IsChecked="{Binding DoTmmToGltf}">
+					<StackPanel>
+						<TextBlock Text="TMM &#x2192; glTF instead of OBJ" VerticalAlignment="Center" />
+						<TextBlock Text="Single .glb file with materials, tangents, skeleton data, attachments"
+								   Foreground="Gray" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
+					</StackPanel>
+				</CheckBox>
+			</DockPanel>
 
 			<!-- Export animations option (only when glTF export is enabled) -->
 			<CheckBox DockPanel.Dock="Top" IsChecked="{Binding DoExportAnimations}" Margin="36,0,0,2"

@@ -611,14 +611,17 @@ public class GlbExporterTests
     }
 
     [Fact]
-    public void ExportGlb_WithExtras_MeshNodeHasMainMatrixRedundancy()
+    public void ExportGlb_WithExtras_MeshNodeHasFullTmmRedundancy()
     {
         var (tmm, dataFile) = CreateMinimalModel();
         var extras = new GlbExtras
         {
             Tmm = new GlbExtras.TmmSection
             {
-                MainMatrix = [0.0115f, 0, 0, 0,  0, 0.0115f, 0, 0,  0, 0, 0.0115f, 0,  0, 0, 0, 1]
+                MainMatrix = [0.0115f, 0, 0, 0,  0, 0.0115f, 0, 0,  0, 0, 0.0115f, 0,  0, 0, 0, 1],
+                ExtendedBbox = [-2, -2, -2, 2, 2, 2],
+                BoundsRadius = 1.5f,
+                AutoBurnMode = 1,
             }
         };
 
@@ -627,14 +630,22 @@ public class GlbExporterTests
 
         // Node 0 is the mesh node by convention
         var node0 = json.GetProperty("nodes")[0];
-        var nodeExtras = node0.GetProperty("extras").GetProperty("crybar");
-        var mm = nodeExtras.GetProperty("main_matrix");
+        var nodeTmm = node0.GetProperty("extras").GetProperty("crybar").GetProperty("tmm");
 
+        var mm = nodeTmm.GetProperty("main_matrix");
         Assert.Equal(16, mm.GetArrayLength());
         Assert.Equal(0.0115f, mm[0].GetSingle());
         Assert.Equal(0.0115f, mm[5].GetSingle());
         Assert.Equal(0.0115f, mm[10].GetSingle());
         Assert.Equal(1.0f, mm[15].GetSingle());
+
+        var bbox = nodeTmm.GetProperty("extended_bbox");
+        Assert.Equal(6, bbox.GetArrayLength());
+        Assert.Equal(-2f, bbox[0].GetSingle());
+        Assert.Equal(2f, bbox[3].GetSingle());
+
+        Assert.Equal(1.5f, nodeTmm.GetProperty("bounds_radius").GetSingle());
+        Assert.Equal((byte)1, nodeTmm.GetProperty("autoburn_mode").GetByte());
     }
 
     [Fact]
