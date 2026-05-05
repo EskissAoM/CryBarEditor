@@ -38,6 +38,29 @@ public partial class ScenarioFile
             AppendAttr(sb, "version", root.GetAttribute("version"));
             AppendAttr(sb, "unk", root.GetAttribute("unk"));
             sb.AppendLine();
+
+            // Emit Script elements as @CryBar:script + @CryBar:scriptline lines
+            var scriptNodes = doc.GetElementsByTagName("Script");
+            for (int i = 0; i < scriptNodes.Count; i++)
+            {
+                var scr = (XmlElement)scriptNodes[i]!;
+                var lineNodes = new List<string>();
+                foreach (XmlNode lc in scr.ChildNodes)
+                    if (lc is XmlElement le && le.Name == "Line")
+                        lineNodes.Add(le.InnerText);
+                sb.Append("// @CryBar:script");
+                AppendAttr(sb, "name", scr.GetAttribute("name"));
+                if (scr.HasAttribute("hasBody"))
+                    AppendAttr(sb, "hasBody", scr.GetAttribute("hasBody"));
+                if (lineNodes.Count > 0)
+                    sb.Append($" linecount=\"{lineNodes.Count}\"");
+                sb.AppendLine();
+                foreach (var line in lineNodes)
+                {
+                    sb.Append("// @CryBar:scriptline ");
+                    sb.AppendLine(Q(line));
+                }
+            }
             sb.AppendLine();
         }
 
@@ -217,6 +240,7 @@ public partial class ScenarioFile
             AppendAttr(sb, "type", type);
         AppendAttr(sb, "cmd", cond.GetAttribute("cmd"));
         AppendOptionalAttr(sb, "trail", cond.GetAttribute("trail"));
+        AppendOptionalAttr(sb, "argTrails", cond.GetAttribute("argTrails"));
         sb.AppendLine();
 
         EmitArgMetadata(sb, cond);
@@ -236,6 +260,7 @@ public partial class ScenarioFile
             AppendAttr(sb, "type", type);
         AppendAttr(sb, "cmd", effect.GetAttribute("cmd"));
         AppendOptionalAttr(sb, "trail", effect.GetAttribute("trail"));
+        AppendOptionalAttr(sb, "argTrails", effect.GetAttribute("argTrails"));
         sb.AppendLine();
 
         EmitArgMetadata(sb, effect);
@@ -319,26 +344,39 @@ public partial class ScenarioFile
             if (elem.HasAttribute("flag"))
                 AppendAttr(sb, "flag", elem.GetAttribute("flag"));
 
-            // Check for <V> children (used by vt=4, 22, 42, 43, 50)
+            // Check for <V> and <Proto> children (used by vt=4, 22, 42, 43, 50)
             var vChildren = new List<string>();
+            var protoChildren = new List<XmlElement>();
             foreach (XmlNode argChild in elem.ChildNodes)
             {
-                if (argChild is XmlElement ve && ve.Name == "V")
-                    vChildren.Add(ve.InnerText);
+                if (argChild is XmlElement ve)
+                {
+                    if (ve.Name == "V") vChildren.Add(ve.InnerText);
+                    else if (ve.Name == "Proto") protoChildren.Add(ve);
+                }
             }
 
-            if (vChildren.Count > 0)
+            if (vChildren.Count > 0 || protoChildren.Count > 0)
             {
-                // Mark that this arg uses V children (value will follow as @CryBar:v lines)
-                sb.Append(" vcount=\"");
-                sb.Append(vChildren.Count);
-                sb.Append('"');
+                // Mark that this arg uses V/Proto children
+                if (vChildren.Count > 0)
+                    sb.Append($" vcount=\"{vChildren.Count}\"");
+                if (protoChildren.Count > 0)
+                    sb.Append($" pcount=\"{protoChildren.Count}\"");
                 sb.AppendLine();
-                // Emit each V child as a separate line
                 foreach (var v in vChildren)
                 {
                     sb.Append("// @CryBar:v ");
                     sb.AppendLine(Q(v));
+                }
+                foreach (var p in protoChildren)
+                {
+                    sb.Append("// @CryBar:proto");
+                    AppendAttr(sb, "id", p.GetAttribute("id"));
+                    if (p.HasAttribute("magic"))
+                        AppendAttr(sb, "magic", p.GetAttribute("magic"));
+                    sb.Append($" name={Q(p.InnerText)}");
+                    sb.AppendLine();
                 }
             }
             else if (!elem.IsEmpty)

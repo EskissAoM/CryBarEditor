@@ -54,6 +54,12 @@ public partial class ScenarioFile
         /// Each entry is a dict with id, name, indexes.
         /// </summary>
         public List<Dictionary<string, string>>? Groups;
+
+        /// <summary>
+        /// @CryBar:script entries (top-level Script elements). Each entry has
+        /// the script attributes plus an optional list of body lines.
+        /// </summary>
+        public List<(Dictionary<string, string> attrs, List<string>? lines)>? Scripts;
     }
 
     /// <summary>
@@ -110,6 +116,28 @@ public partial class ScenarioFile
         var trigUnk = fileMeta.TriggersAttrs?.GetValueOrDefault("unk") ?? "2,172,1";
         writer.WriteAttributeString("version", trigVersion);
         writer.WriteAttributeString("unk", trigUnk);
+
+        // Write Script elements (preserved from @CryBar:script metadata)
+        if (fileMeta.Scripts != null)
+        {
+            foreach (var (scrAttrs, scrLines) in fileMeta.Scripts)
+            {
+                writer.WriteStartElement("Script");
+                writer.WriteAttributeString("name", scrAttrs.GetValueOrDefault("name", ""));
+                if (scrAttrs.TryGetValue("hasBody", out var hb))
+                    writer.WriteAttributeString("hasBody", hb);
+                if (scrLines != null)
+                {
+                    foreach (var l in scrLines)
+                    {
+                        writer.WriteStartElement("Line");
+                        writer.WriteString(l);
+                        writer.WriteEndElement();
+                    }
+                }
+                writer.WriteEndElement();
+            }
+        }
 
         for (int i = 0; i < triggers.Count; i++)
         {
@@ -322,6 +350,7 @@ public partial class ScenarioFile
                         writer.WriteAttributeString("type", condType);
                     writer.WriteAttributeString("cmd", condAttrs.GetValueOrDefault("cmd", "true"));
                     WriteOptionalAttr(writer, "trail", condAttrs.GetValueOrDefault("trail"));
+                    WriteOptionalAttr(writer, "argTrails", condAttrs.GetValueOrDefault("argTrails"));
 
                     // Write <Arg> children
                     foreach (var arg in args)
@@ -361,6 +390,7 @@ public partial class ScenarioFile
                         writer.WriteAttributeString("type", effectType);
                     writer.WriteAttributeString("cmd", effectAttrs.GetValueOrDefault("cmd", "true"));
                     WriteOptionalAttr(writer, "trail", effectAttrs.GetValueOrDefault("trail"));
+                    WriteOptionalAttr(writer, "argTrails", effectAttrs.GetValueOrDefault("argTrails"));
 
                     // Write <Arg> children
                     foreach (var arg in args)
@@ -414,10 +444,10 @@ public partial class ScenarioFile
     /// Collects @CryBar:arg, @CryBar:v, and @CryBar:extra metadata lines.
     /// Returns args with V values; extras are added to the provided list.
     /// </summary>
-    static List<(Dictionary<string, string> attrs, List<string>? vValues)> CollectArgAndExtraMetadata(
+    static List<(Dictionary<string, string> attrs, List<string>? vValues, List<Dictionary<string, string>>? protoValues)> CollectArgAndExtraMetadata(
         List<string> bodyLines, ref int i, List<ParsedExtra> extras)
     {
-        var args = new List<(Dictionary<string, string> attrs, List<string>? vValues)>();
+        var args = new List<(Dictionary<string, string> attrs, List<string>? vValues, List<Dictionary<string, string>>? protoValues)>();
 
         while (i < bodyLines.Count)
         {
@@ -449,7 +479,26 @@ public partial class ScenarioFile
                     }
                 }
 
-                args.Add((argAttrs, vValues));
+                // Check for pcount - if present, collect subsequent @CryBar:proto lines
+                List<Dictionary<string, string>>? protoValues = null;
+                if (argAttrs.TryGetValue("pcount", out var pcountStr) && int.TryParse(pcountStr, out var pcount))
+                {
+                    protoValues = new List<Dictionary<string, string>>(pcount);
+                    for (int p = 0; p < pcount; p++)
+                    {
+                        if (i < bodyLines.Count)
+                        {
+                            var pMatch = CryBarCommentRegex().Match(bodyLines[i]);
+                            if (pMatch.Success && pMatch.Groups[1].Value == "proto")
+                            {
+                                protoValues.Add(ParseCryBarAttrs(pMatch.Groups[2].Value));
+                                i++;
+                            }
+                        }
+                    }
+                }
+
+                args.Add((argAttrs, vValues, protoValues));
             }
             else if (subType == "extra")
             {
@@ -511,9 +560,9 @@ public partial class ScenarioFile
     /// <summary>
     /// Writes an &lt;Arg&gt; element from parsed @CryBar:arg attributes and optional V children.
     /// </summary>
-    static void WriteArgElement(XmlWriter writer, (Dictionary<string, string> attrs, List<string>? vValues) argData)
+    static void WriteArgElement(XmlWriter writer, (Dictionary<string, string> attrs, List<string>? vValues, List<Dictionary<string, string>>? protoValues) argData)
     {
-        var (argAttrs, vValues) = argData;
+        var (argAttrs, vValues, protoValues) = argData;
 
         writer.WriteStartElement("Arg");
 
@@ -533,14 +582,30 @@ public partial class ScenarioFile
         if (argAttrs.ContainsKey("flag"))
             writer.WriteAttributeString("flag", argAttrs["flag"]);
 
-        if (vValues != null)
+        if (vValues != null || protoValues != null)
         {
             // Write V children
-            foreach (var v in vValues)
+            if (vValues != null)
             {
-                writer.WriteStartElement("V");
-                writer.WriteString(v);
-                writer.WriteEndElement();
+                foreach (var v in vValues)
+                {
+                    writer.WriteStartElement("V");
+                    writer.WriteString(v);
+                    writer.WriteEndElement();
+                }
+            }
+            // Write Proto children
+            if (protoValues != null)
+            {
+                foreach (var p in protoValues)
+                {
+                    writer.WriteStartElement("Proto");
+                    writer.WriteAttributeString("id", p.GetValueOrDefault("id", "0"));
+                    if (p.ContainsKey("magic"))
+                        writer.WriteAttributeString("magic", p["magic"]);
+                    writer.WriteString(p.GetValueOrDefault("name", ""));
+                    writer.WriteEndElement();
+                }
             }
         }
         else if (argAttrs.ContainsKey("value"))
@@ -745,6 +810,30 @@ public partial class ScenarioFile
                                 fileMeta.Groups ??= [];
                                 fileMeta.Groups.Add(ParseCryBarAttrs(commentBody));
                                 break;
+                            case "script":
+                            {
+                                var scrAttrs = ParseCryBarAttrs(commentBody);
+                                List<string>? scrLines = null;
+                                if (scrAttrs.TryGetValue("linecount", out var lcStr) && int.TryParse(lcStr, out var lc))
+                                {
+                                    scrLines = new List<string>(lc);
+                                    for (int li = 0; li < lc; li++)
+                                    {
+                                        if (i + 1 < lines.Length)
+                                        {
+                                            var slMatch = CryBarCommentRegex().Match(lines[i + 1].TrimEnd('\r').Trim());
+                                            if (slMatch.Success && slMatch.Groups[1].Value == "scriptline")
+                                            {
+                                                scrLines.Add(UnquoteValue(slMatch.Groups[2].Value));
+                                                i++;
+                                            }
+                                        }
+                                    }
+                                }
+                                fileMeta.Scripts ??= [];
+                                fileMeta.Scripts.Add((scrAttrs, scrLines));
+                                break;
+                            }
                             default:
                                 // Unknown @CryBar comment type outside rules - treat as regular line
                                 if (triggers.Count > 0)

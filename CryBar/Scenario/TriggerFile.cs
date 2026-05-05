@@ -38,7 +38,7 @@ public class TriggerFile
 
         var sectionData = data.Slice(6, (int)size).ToArray();
 
-        if (!ScenarioFile.CanParseTr(sectionData, out _)) return false;
+        if (!ScenarioFile.CanParseTr(sectionData, out ScenarioFile.TrFormat _)) return false;
 
         Section = new ScenarioSection("TR", sectionData);
         return true;
@@ -66,30 +66,32 @@ public class TriggerFile
         using var reader = XmlReader.Create(new StringReader(xml), readerSettings);
         reader.MoveToContent();
 
-        var section = ScenarioFile.ReadTrXml(reader, includePadding: false);
+        var section = ScenarioFile.ReadTrXml(reader, hasScenarioPrefix: false);
         return new TriggerFile(section);
     }
 
     /// <summary>
     /// Creates a standalone .trg file from a scenario's TR section by stripping
-    /// the zero1/zero2 header fields directly in binary (no XML roundtrip).
+    /// the scenario-only header (scriptCount + scripts/zero2) directly in binary.
     /// </summary>
     public static TriggerFile FromScenarioSection(ScenarioSection trSection)
     {
-        if (!ScenarioFile.CanParseTr(trSection.Data, out var headerSize))
+        if (!ScenarioFile.CanParseTr(trSection.Data, out ScenarioFile.TrFormat format))
             throw new InvalidOperationException("Invalid TR section data");
 
-        if (headerSize == 16)
+        if (!format.IsScenario)
         {
             // Already in standalone format
             return new TriggerFile(new ScenarioSection("TR", trSection.Data));
         }
 
-        // Strip zero1/zero2 (bytes 4..12) from the 24-byte scenario header
+        // Standalone format: version + unk0 + unk1 + unk2 + (rest of body)
+        // Drop everything between version and unk0 (script list or legacy zero2).
         var src = trSection.Data;
-        var dst = new byte[src.Length - 8];
+        int prefixSkip = format.BodyStart - 16;
+        var dst = new byte[src.Length - prefixSkip];
         src.AsSpan(0, 4).CopyTo(dst); // version
-        src.AsSpan(12).CopyTo(dst.AsSpan(4)); // unk0,unk1,unk2 + triggers + groups
+        src.AsSpan(format.BodyStart - 12).CopyTo(dst.AsSpan(4)); // unk0,unk1,unk2 + triggerCount + body
         return new TriggerFile(new ScenarioSection("TR", dst));
     }
 
