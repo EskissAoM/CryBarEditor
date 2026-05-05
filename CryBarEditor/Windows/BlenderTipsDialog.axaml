@@ -25,7 +25,7 @@
 			<!-- Title -->
 			<StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="0,0,0,10">
 				<micons:MaterialIcon Kind="InformationOutline" Width="22" Height="22" Foreground="#77c1e0" VerticalAlignment="Center" />
-				<TextBlock Text="Blender export &amp; tagging tips" FontWeight="Bold" FontSize="16" VerticalAlignment="Center" />
+				<TextBlock Text="Blender export &amp; tagging tips" FontWeight="Bold" FontSize="18" VerticalAlignment="Center" />
 			</StackPanel>
 
 			<!-- Scrollable body -->
@@ -34,34 +34,34 @@
 
 					<!-- Section 1: Export checklist with required/optional badges. Labels match Blender 4.x glTF export UI. -->
 					<StackPanel Spacing="4">
-						<TextBlock Text="Export checklist" FontWeight="Bold" FontSize="14" />
-						<TextBlock Foreground="#888" FontSize="11" Text="File → Export → glTF 2.0 (.glb/.gltf)" />
+						<TextBlock Text="Export checklist" FontWeight="Bold" FontSize="16" />
+						<TextBlock Foreground="#888" FontSize="12" Text="File → Export → glTF 2.0 (.glb/.gltf)" />
 
 						<Border BorderBrush="#333" BorderThickness="1" Margin="0,6,0,0">
 							<Grid ColumnDefinitions="86,250,*" RowDefinitions="Auto,Auto,Auto,Auto">
 								<!-- Header row -->
 								<Border Grid.Row="0" Grid.Column="0" Background="#1c1c1c" Padding="8,5">
-									<TextBlock Text="Status" FontWeight="Bold" FontSize="12" Foreground="#d9d9d9" />
+									<TextBlock Text="Status" FontWeight="Bold" FontSize="13" Foreground="#d9d9d9" />
 								</Border>
 								<Border Grid.Row="0" Grid.Column="1" Background="#1c1c1c" Padding="8,5">
-									<TextBlock Text="Setting" FontWeight="Bold" FontSize="12" Foreground="#d9d9d9" />
+									<TextBlock Text="Setting" FontWeight="Bold" FontSize="13" Foreground="#d9d9d9" />
 								</Border>
 								<Border Grid.Row="0" Grid.Column="2" Background="#1c1c1c" Padding="8,5">
-									<TextBlock Text="Why" FontWeight="Bold" FontSize="12" Foreground="#d9d9d9" />
+									<TextBlock Text="Why" FontWeight="Bold" FontSize="13" Foreground="#d9d9d9" />
 								</Border>
 
 								<!-- Required: Custom Properties ON -->
 								<Border Grid.Row="1" Grid.Column="0" Padding="8,7" BorderBrush="#222" BorderThickness="0,1,0,0">
 									<Border Background="#3a1212" BorderBrush="#f55142" BorderThickness="1"
 											CornerRadius="3" Padding="5,1" HorizontalAlignment="Left" VerticalAlignment="Top">
-										<TextBlock Text="REQUIRED" Foreground="#f5b0a0" FontSize="10" FontWeight="Bold" />
+										<TextBlock Text="REQUIRED" Foreground="#f5b0a0" FontSize="11" FontWeight="Bold" />
 									</Border>
 								</Border>
 								<Border Grid.Row="1" Grid.Column="1" Padding="8,7" BorderBrush="#222" BorderThickness="0,1,0,0">
-									<TextBlock Text="Include → Custom Properties = ON" Foreground="#cfd8e8" FontSize="12" FontWeight="Bold" />
+									<TextBlock Text="Include → Custom Properties = ON" Foreground="#cfd8e8" FontSize="13" FontWeight="Bold" />
 								</Border>
 								<Border Grid.Row="1" Grid.Column="2" Padding="8,7" BorderBrush="#222" BorderThickness="0,1,0,0">
-									<TextBlock Foreground="#b0b0b0" FontSize="11" TextWrapping="Wrap"
+									<TextBlock Foreground="#b0b0b0" FontSize="12" TextWrapping="Wrap"
 									           Text="Without it, Blender drops every CryBar tag at export. Applies to both fresh GLBs and round-trips." />
 								</Border>
 
@@ -69,17 +69,17 @@
 								<Border Grid.Row="2" Grid.Column="0" Padding="8,7" BorderBrush="#222" BorderThickness="0,1,0,0">
 									<Border Background="#1c1c1c" BorderBrush="#666" BorderThickness="1"
 											CornerRadius="3" Padding="5,1" HorizontalAlignment="Left" VerticalAlignment="Top">
-										<TextBlock Text="OPTIONAL" Foreground="#a0a0a0" FontSize="10" FontWeight="Bold" />
+										<TextBlock Text="OPTIONAL" Foreground="#a0a0a0" FontSize="11" FontWeight="Bold" />
 									</Border>
 								</Border>
 								<Border Grid.Row="2" Grid.Column="1" Padding="8,7" BorderBrush="#222" BorderThickness="0,1,0,0">
 									<StackPanel>
-										<TextBlock Text="Animation → Always Sample" Foreground="#cfd8e8" FontSize="12" FontWeight="Bold" />
-										<TextBlock Text="OFF recommended" Foreground="#a0d8a0" FontSize="11" />
+										<TextBlock Text="Animation → Always Sample" Foreground="#cfd8e8" FontSize="13" FontWeight="Bold" />
+										<TextBlock Text="OFF recommended" Foreground="#a0d8a0" FontSize="12" />
 									</StackPanel>
 								</Border>
 								<Border Grid.Row="2" Grid.Column="2" Padding="8,7" BorderBrush="#222" BorderThickness="0,1,0,0">
-									<TextBlock Foreground="#b0b0b0" FontSize="11" TextWrapping="Wrap"
+									<TextBlock Foreground="#b0b0b0" FontSize="12" TextWrapping="Wrap"
 									           Text="OFF preserves original keyframes; ON re-samples at scene FPS (slight drift). Either works." />
 								</Border>
 
@@ -87,14 +87,14 @@
 								<Border Grid.Row="3" Grid.Column="0" Padding="8,7" BorderBrush="#222" BorderThickness="0,1,0,0">
 									<Border Background="#1c1c1c" BorderBrush="#666" BorderThickness="1"
 											CornerRadius="3" Padding="5,1" HorizontalAlignment="Left" VerticalAlignment="Top">
-										<TextBlock Text="OPTIONAL" Foreground="#a0a0a0" FontSize="10" FontWeight="Bold" />
+										<TextBlock Text="OPTIONAL" Foreground="#a0a0a0" FontSize="11" FontWeight="Bold" />
 									</Border>
 								</Border>
 								<Border Grid.Row="3" Grid.Column="1" Padding="8,7" BorderBrush="#222" BorderThickness="0,1,0,0">
-									<TextBlock Text="Mesh → Tangents" Foreground="#cfd8e8" FontSize="12" FontWeight="Bold" />
+									<TextBlock Text="Mesh → Tangents" Foreground="#cfd8e8" FontSize="13" FontWeight="Bold" />
 								</Border>
 								<Border Grid.Row="3" Grid.Column="2" Padding="8,7" BorderBrush="#222" BorderThickness="0,1,0,0">
-									<TextBlock Foreground="#b0b0b0" FontSize="11" TextWrapping="Wrap"
+									<TextBlock Foreground="#b0b0b0" FontSize="12" TextWrapping="Wrap"
 									           Text="OFF: CryBar recomputes via MikkTSpace (identical result, smaller file)." />
 								</Border>
 							</Grid>
@@ -107,72 +107,72 @@
 					<!-- Section 2: Recognized tags table - all OPTIONAL -->
 					<StackPanel Spacing="6">
 						<StackPanel Orientation="Horizontal" Spacing="6">
-							<TextBlock Text="Tags you can author" FontWeight="Bold" FontSize="14" VerticalAlignment="Center" />
+							<TextBlock Text="Tags you can author" FontWeight="Bold" FontSize="16" VerticalAlignment="Center" />
 							<Border Background="#1c1c1c" BorderBrush="#666" BorderThickness="1"
 									CornerRadius="3" Padding="5,1" VerticalAlignment="Center">
-								<TextBlock Text="ALL OPTIONAL" Foreground="#a0a0a0" FontSize="10" FontWeight="Bold" />
+								<TextBlock Text="ALL OPTIONAL" Foreground="#a0a0a0" FontSize="11" FontWeight="Bold" />
 							</Border>
 						</StackPanel>
-						<TextBlock Foreground="#b0b0b0" FontSize="11" TextWrapping="Wrap"
+						<TextBlock Foreground="#b0b0b0" FontSize="12" TextWrapping="Wrap"
 						           Text="Author these to drive the GLB → TMM conversion: name attachments, place impact points, set bounds and other TMM fields. All use Custom Property name 'crybar' on the relevant Object." />
-						<TextBlock Foreground="#888" FontSize="11" TextWrapping="Wrap"
+						<TextBlock Foreground="#888" FontSize="12" TextWrapping="Wrap"
 						           Text="If you started from an existing TMM, CryBar already auto-stamped these onto the mesh node at export - so a Blender round-trip preserves everything without any manual work. You only need to author them when building a GLB from scratch or overriding an auto-stamped value." />
 
 						<Border BorderBrush="#333" BorderThickness="1" Margin="0,4,0,0">
 							<Grid ColumnDefinitions="260,140,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
 								<!-- Header row -->
 								<Border Grid.Row="0" Grid.Column="0" Background="#1c1c1c" Padding="8,5">
-									<TextBlock Text="Property name &amp; value" FontWeight="Bold" FontSize="12" Foreground="#d9d9d9" />
+									<TextBlock Text="Property name &amp; value" FontWeight="Bold" FontSize="13" Foreground="#d9d9d9" />
 								</Border>
 								<Border Grid.Row="0" Grid.Column="1" Background="#1c1c1c" Padding="8,5">
-									<TextBlock Text="Goes on" FontWeight="Bold" FontSize="12" Foreground="#d9d9d9" />
+									<TextBlock Text="Goes on" FontWeight="Bold" FontSize="13" Foreground="#d9d9d9" />
 								</Border>
 								<Border Grid.Row="0" Grid.Column="2" Background="#1c1c1c" Padding="8,5">
-									<TextBlock Text="When you'd want it" FontWeight="Bold" FontSize="12" Foreground="#d9d9d9" />
+									<TextBlock Text="When you'd want it" FontWeight="Bold" FontSize="13" Foreground="#d9d9d9" />
 								</Border>
 
 								<!-- Attachment row -->
 								<Border Grid.Row="1" Grid.Column="0" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
-									<SelectableTextBlock Text='crybar = {"node_type":"attachment"}' FontFamily="Consolas" FontSize="11" Foreground="#cfd8e8" />
+									<SelectableTextBlock Text='crybar = {"node_type":"attachment"}' FontFamily="Consolas" FontSize="12" Foreground="#cfd8e8" />
 								</Border>
 								<Border Grid.Row="1" Grid.Column="1" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
-									<TextBlock Text="Empty" FontSize="11" Foreground="#b0b0b0" />
+									<TextBlock Text="Empty" FontSize="12" Foreground="#b0b0b0" />
 								</Border>
 								<Border Grid.Row="1" Grid.Column="2" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
-									<TextBlock Text="Adding a new VFX hookup (e.g. vfx_attack) to a custom-rigged model. The Empty's name becomes the attachment name; its parent bone becomes the attachment's parent." FontSize="11" TextWrapping="Wrap" Foreground="#b0b0b0" />
+									<TextBlock Text="Adding a new VFX hookup (e.g. vfx_attack) to a custom-rigged model. The Empty's name becomes the attachment name; its parent bone becomes the attachment's parent." FontSize="12" TextWrapping="Wrap" Foreground="#b0b0b0" />
 								</Border>
 
 								<!-- Impact point row -->
 								<Border Grid.Row="2" Grid.Column="0" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
-									<SelectableTextBlock Text='crybar = {"node_type":"impact_point"}' FontFamily="Consolas" FontSize="11" Foreground="#cfd8e8" />
+									<SelectableTextBlock Text='crybar = {"node_type":"impact_point"}' FontFamily="Consolas" FontSize="12" Foreground="#cfd8e8" />
 								</Border>
 								<Border Grid.Row="2" Grid.Column="1" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
-									<TextBlock Text="Empty" FontSize="11" Foreground="#b0b0b0" />
+									<TextBlock Text="Empty" FontSize="12" Foreground="#b0b0b0" />
 								</Border>
 								<Border Grid.Row="2" Grid.Column="2" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
-									<TextBlock Text="Adding a new corpse / weapon-hit position. The Empty's translation becomes the impact-point coordinates." FontSize="11" TextWrapping="Wrap" Foreground="#b0b0b0" />
+									<TextBlock Text="Adding a new corpse / weapon-hit position. The Empty's translation becomes the impact-point coordinates." FontSize="12" TextWrapping="Wrap" Foreground="#b0b0b0" />
 								</Border>
 
 								<!-- Main matrix legacy row -->
 								<Border Grid.Row="3" Grid.Column="0" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
-									<SelectableTextBlock Text='crybar = {"main_matrix":[16 floats]}' FontFamily="Consolas" FontSize="11" Foreground="#cfd8e8" />
+									<SelectableTextBlock Text='crybar = {"main_matrix":[16 floats]}' FontFamily="Consolas" FontSize="12" Foreground="#cfd8e8" />
 								</Border>
 								<Border Grid.Row="3" Grid.Column="1" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
-									<TextBlock Text="Armature / Mesh" FontSize="11" Foreground="#b0b0b0" />
+									<TextBlock Text="Armature / Mesh" FontSize="12" Foreground="#b0b0b0" />
 								</Border>
 								<Border Grid.Row="3" Grid.Column="2" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
-									<TextBlock Text="Overriding the model's MainMatrix (row-major 4x4 - typical use is uniform scale). Shorthand for tmm.main_matrix below; either form works." FontSize="11" TextWrapping="Wrap" Foreground="#b0b0b0" />
+									<TextBlock Text="Overriding the model's MainMatrix (row-major 4x4 - typical use is uniform scale). Shorthand for tmm.main_matrix below; either form works." FontSize="12" TextWrapping="Wrap" Foreground="#b0b0b0" />
 								</Border>
 
 								<!-- TMM overrides row -->
 								<Border Grid.Row="4" Grid.Column="0" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
-									<SelectableTextBlock Text='crybar = {"tmm": {"extended_bbox":[6 floats], "bounds_radius":1.07, "submodels":["default"], ...}}' FontFamily="Consolas" FontSize="11" Foreground="#cfd8e8" TextWrapping="Wrap" />
+									<SelectableTextBlock Text='crybar = {"tmm": {"extended_bbox":[6 floats], "bounds_radius":1.07, "submodels":["default"], ...}}' FontFamily="Consolas" FontSize="12" Foreground="#cfd8e8" TextWrapping="Wrap" />
 								</Border>
 								<Border Grid.Row="4" Grid.Column="1" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
-									<TextBlock Text="Armature / Mesh" FontSize="11" Foreground="#b0b0b0" />
+									<TextBlock Text="Armature / Mesh" FontSize="12" Foreground="#b0b0b0" />
 								</Border>
 								<Border Grid.Row="4" Grid.Column="2" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
-									<TextBlock Text="Overriding any TMM-level field. Recognized keys: main_matrix, extended_bbox, bounds_radius, submodels, autoburn_mode, raytracing, terrain_emb, modified_bones, bone_collisions, auto_attach, attachments, lossy_sections. Only include the keys you want to override - the rest stay at the auto-stamped values." FontSize="11" TextWrapping="Wrap" Foreground="#b0b0b0" />
+									<TextBlock Text="Overriding any TMM-level field. Recognized keys: main_matrix, extended_bbox, bounds_radius, submodels, autoburn_mode, raytracing, terrain_emb, modified_bones, bone_collisions, auto_attach, attachments, lossy_sections. Only include the keys you want to override - the rest stay at the auto-stamped values." FontSize="12" TextWrapping="Wrap" Foreground="#b0b0b0" />
 								</Border>
 							</Grid>
 						</Border>
@@ -183,21 +183,40 @@
 
 					<!-- Section 3: How to add tags in Blender -->
 					<StackPanel Spacing="6">
-						<TextBlock Text="How to add a tag in Blender" FontWeight="Bold" FontSize="14" />
+						<TextBlock Text="How to add a tag in Blender" FontWeight="Bold" FontSize="16" />
 						<StackPanel Margin="0,2,0,0" Spacing="2">
-							<TextBlock Foreground="#b0b0b0" TextWrapping="Wrap" FontSize="12" Text="1. In the 3D viewport, select the Empty object (or the Armature / Mesh, depending on which tag you're adding)." />
-							<TextBlock Foreground="#b0b0b0" TextWrapping="Wrap" FontSize="12" Text="2. Properties Editor → Object Properties tab → scroll to the Custom Properties panel." />
-							<TextBlock Foreground="#b0b0b0" TextWrapping="Wrap" FontSize="12" Text="3. Click New, then click the gear/edit icon next to the property:" />
-							<TextBlock Foreground="#b0b0b0" TextWrapping="Wrap" FontSize="12" Margin="14,0,0,0" Text="• Property name:  crybar" />
-							<TextBlock Foreground="#b0b0b0" TextWrapping="Wrap" FontSize="12" Margin="14,0,0,0" Text="• Type: Python" />
-							<TextBlock Foreground="#b0b0b0" TextWrapping="Wrap" FontSize="12" Margin="14,0,0,0" Text="• Value: paste the value from the table above" />
-							<TextBlock Foreground="#b0b0b0" TextWrapping="Wrap" FontSize="12" Margin="0,4,0,0" Text="4. Make sure 'Include → Custom Properties' is enabled in the GLB export options (see checklist above)." />
+							<TextBlock Foreground="#b0b0b0" TextWrapping="Wrap" FontSize="13" Text="1. In the 3D viewport, select the Empty object (or the Armature / Mesh, depending on which tag you're adding)." />
+							<TextBlock Foreground="#b0b0b0" TextWrapping="Wrap" FontSize="13" Text="2. Properties Editor → Object Properties tab → scroll to the Custom Properties panel." />
+							<TextBlock Foreground="#b0b0b0" TextWrapping="Wrap" FontSize="13" Text="3. Click New, then click the gear/edit icon next to the property:" />
+							<TextBlock Foreground="#b0b0b0" TextWrapping="Wrap" FontSize="13" Margin="14,0,0,0" Text="• Property name:  crybar" />
+							<TextBlock Foreground="#b0b0b0" TextWrapping="Wrap" FontSize="13" Margin="14,0,0,0" Text="• Type: Python" />
+							<TextBlock Foreground="#b0b0b0" TextWrapping="Wrap" FontSize="13" Margin="14,0,0,0" Text="• Value: paste the value from the table above" />
+							<TextBlock Foreground="#b0b0b0" TextWrapping="Wrap" FontSize="13" Margin="0,4,0,0" Text="4. Make sure 'Include → Custom Properties' is enabled in the GLB export options (see checklist above)." />
 						</StackPanel>
 
-						<TextBlock Foreground="#888" TextWrapping="Wrap" FontSize="11" Margin="0,6,0,0">
+						<TextBlock Foreground="#888" TextWrapping="Wrap" FontSize="12" Margin="0,6,0,0">
 							<Run Text="Or via the Scripting tab:  " />
 							<Run FontFamily="Consolas" Foreground="#cfd8e8" Text='bpy.context.object["crybar"] = {"node_type": "attachment"}' />
 						</TextBlock>
+					</StackPanel>
+
+					<!-- Separator -->
+					<Border BorderBrush="#333" BorderThickness="0,1,0,0" />
+
+					<!-- Section 4: Attachment Empty orientation -->
+					<StackPanel Spacing="6">
+						<TextBlock Text="Attachment Empty orientation" FontWeight="Bold" FontSize="16" />
+						<TextBlock Foreground="#b0b0b0" FontSize="13" TextWrapping="Wrap"
+						           Text="The Empty's rotation drives how the engine orients whatever mesh (sword, shield, vfx) gets attached at runtime. +Y in Blender becomes the 'forward' axis the engine uses." />
+						<TextBlock Foreground="#b0b0b0" FontSize="13" TextWrapping="Wrap"
+						           Text="The correct rotation depends on the attached mesh's natural pose, which varies per asset:" />
+						<StackPanel Margin="14,0,0,0" Spacing="2">
+							<TextBlock Foreground="#b0b0b0" FontSize="13" TextWrapping="Wrap" Text="- Most weapons assume +Y points along the blade, away from the grip." />
+							<TextBlock Foreground="#b0b0b0" FontSize="13" TextWrapping="Wrap" Text="- Most shields assume +Y points outward, away from the body." />
+							<TextBlock Foreground="#b0b0b0" FontSize="13" TextWrapping="Wrap" Text="- Asset-specific quirks exist: e.g. Melagius' shield is modeled standing on its rim with the flat back on +Y, so a unit using it needs the Empty's +Y rotated to point into the arm toward the hip." />
+						</StackPanel>
+						<TextBlock Foreground="#888" FontSize="12" TextWrapping="Wrap" Margin="0,2,0,0"
+						           Text="If the attached object renders rotated wrong in-game, rotate the Empty in Blender until +Y points where that mesh's 'forward' actually is. There is no single rule - it depends on how the artist authored the attached asset." />
 					</StackPanel>
 
 				</StackPanel>
