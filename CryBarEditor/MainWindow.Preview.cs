@@ -6,6 +6,7 @@ using AvaloniaEdit.Document;
 using AvaloniaEdit.Folding;
 using CryBar;
 using CryBar.Bar;
+using CryBar.Export;
 using CryBar.Scenario;
 using CryBar.TMM;
 using CryBar.Utilities;
@@ -39,9 +40,15 @@ public partial class MainWindow
 
     readonly Dictionary<string, bool> _textureAvailability = new();
     CancellationTokenSource? _textureLoadCts;
-    string? _currentTextureTmm;
     string? _currentTmmFileName;
     bool _useTextured3D; // Per-session preference; not persisted.
+
+    // The resolver is stateless apart from a single-entry parse cache it owns.
+    // One instance per editor session avoids re-allocating per probe + per load.
+    TmmMaterialResolver? _materialResolver;
+    TmmMaterialResolver? GetMaterialResolver() =>
+        _fileIndex == null ? null
+        : _materialResolver ??= new TmmMaterialResolver(_fileIndex, ReadFromIndexEntryPooledAsync);
 
     #region Preview dispatchers
     public async Task Preview(RootFileEntry? entry)
@@ -704,7 +711,8 @@ public partial class MainWindow
 
     async Task ProbeTextureAvailabilityAsync(string tmmFileName, CancellationToken token)
     {
-        if (_fileIndex == null) { UpdateTexturedToggleVisibility(false); return; }
+        var resolver = GetMaterialResolver();
+        if (resolver == null) { UpdateTexturedToggleVisibility(false); return; }
         if (_textureAvailability.TryGetValue(tmmFileName, out bool cached))
         {
             UpdateTexturedToggleVisibility(cached);
@@ -713,7 +721,6 @@ public partial class MainWindow
             return;
         }
 
-        var resolver = new TmmMaterialResolver(_fileIndex, ReadFromIndexEntryPooledAsync);
         bool has = await resolver.HasAtLeastBaseColorAsync(tmmFileName, token);
         if (token.IsCancellationRequested) return;
 
@@ -741,17 +748,16 @@ public partial class MainWindow
 
     async Task EnsureTexturesLoadedAsync(string tmmFileName, CancellationToken token)
     {
-        if (_fileIndex == null) return;
+        var resolver = GetMaterialResolver();
+        if (resolver == null) return;
 
         var cache = EnsureTextureCache();
         if (cache.TryGet(tmmFileName, out var existing) && existing != null)
         {
             _glPreview?.SetActiveTextures(existing);
-            _currentTextureTmm = tmmFileName;
             return;
         }
 
-        var resolver = new TmmMaterialResolver(_fileIndex, ReadFromIndexEntryPooledAsync);
         var resolved = await resolver.ResolveAsync(tmmFileName, token);
         if (resolved == null || token.IsCancellationRequested) return;
 
@@ -778,9 +784,8 @@ public partial class MainWindow
             foreach (var (texName, texPath) in mat.Textures)
             {
                 if (!resolved.Value.Textures.TryGetValue(texPath, out var info)) continue;
-                var lower = texName.ToLowerInvariant();
-                bool isBase = lower == "basecolor" || lower == "diffuse";
-                bool isNormal = lower == "normals" || lower == "normal";
+                bool isBase = MaterialExporter.IsBaseColorRole(texName);
+                bool isNormal = !isBase && MaterialExporter.IsNormalRole(texName);
                 if (!isBase && !isNormal) continue;
 
                 var ddtBytes = info.DdtData;
@@ -857,7 +862,6 @@ public partial class MainWindow
             var set = new PreviewTextureSet { OwnedHandles = owned, MeshGroupBindings = bindings };
             cache.Add(tmmFileName, set);
             _glPreview.SetActiveTextures(set);
-            _currentTextureTmm = tmmFileName;
         });
     }
 
@@ -873,25 +877,20 @@ public partial class MainWindow
         }
 
         // ImageSharp splits buffers above ~22 MB into multiple chunks (large building textures hit this).
-        // Copy into a contiguous rented buffer for the GL upload.
-        int totalPixels = img.Width * img.Height;
-        var pool = System.Buffers.ArrayPool<byte>.Shared;
-        var rented = pool.Rent(totalPixels * 4);
-        try
+        // Allocate the texture once and stream chunks via glTexSubImage2D - no host-side contiguous copy
+        // (which for 8K RGBA is a 256 MB LOH allocation that ArrayPool can't actually pool).
+        int tex = _glPreview!.CreateEmptyTexture(gl, img.Width, img.Height);
+        int yOffset = 0;
+        foreach (var chunk in group)
         {
-            int byteOffset = 0;
-            foreach (var chunk in group)
-            {
-                var src = MemoryMarshal.AsBytes(chunk.Span);
-                src.CopyTo(rented.AsSpan(byteOffset));
-                byteOffset += src.Length;
-            }
-            return _glPreview!.UploadTexture(gl, img.Width, img.Height, rented.AsSpan(0, totalPixels * 4));
+            int chunkRows = chunk.Length / img.Width; // ImageSharp splits on row boundaries
+            if (chunkRows == 0) continue;
+            var byteSpan = MemoryMarshal.AsBytes(chunk.Span);
+            _glPreview.UploadTextureRows(gl, yOffset, img.Width, chunkRows, byteSpan);
+            yOffset += chunkRows;
         }
-        finally
-        {
-            pool.Return(rented);
-        }
+        _glPreview.FinalizeTexture(gl);
+        return tex;
     }
 
     void TexturedToggle_Toggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)

@@ -2427,11 +2427,8 @@ public class IntegrationTests
             {
                 if (pngCache.TryGetValue(texPath2, out var png) && png != null)
                 {
-                    switch (texName.ToLowerInvariant())
-                    {
-                        case "basecolor": case "diffuse": baseColor = png; break;
-                        case "normals": case "normal": normal = png; break;
-                    }
+                    if (MaterialExporter.IsBaseColorRole(texName)) baseColor = png;
+                    else if (MaterialExporter.IsNormalRole(texName)) normal = png;
                 }
             }
             glbMats.Add(new GlbExporter.GlbMaterial { Name = pm.Name, BaseColorPng = baseColor, NormalMapPng = normal });

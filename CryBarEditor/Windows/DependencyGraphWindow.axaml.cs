@@ -2141,13 +2141,14 @@ public partial class DependencyGraphWindow : SimpleWindow
         }
 
         var verts = mesh.Vertices;
-        int vertCount = verts.Length / 8;
+        const int stride = PreviewMeshData.VertexStrideFloats;
+        int vertCount = verts.Length / stride;
 
         // Project all vertices to screen space
         var screen = new (float x, float y, float z, bool visible)[vertCount];
         for (int i = 0; i < vertCount; i++)
         {
-            int off = i * 8;
+            int off = i * stride;
             var worldPos = new Vector4(verts[off], verts[off + 1], verts[off + 2], 1f);
             var clip = Vector4.Transform(worldPos, mvp);
 
@@ -2179,7 +2180,7 @@ public partial class DependencyGraphWindow : SimpleWindow
                 if (!v0 || !v1 || !v2) continue;
 
                 // Face normal from first vertex normal (flat shading approximation)
-                int off0 = (int)i0 * 8;
+                int off0 = (int)i0 * stride;
                 var faceNormal = Vector3.Normalize(new Vector3(
                     verts[off0 + 3], verts[off0 + 4], verts[off0 + 5]));
                 float diffuse = Math.Max(Vector3.Dot(faceNormal, lightDir), 0f);

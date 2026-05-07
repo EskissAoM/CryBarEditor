@@ -81,20 +81,18 @@ public static class MaterialExporter
                 var resolved = resolvedTextures.GetValueOrDefault(texPath);
                 if (resolved == null) continue;
 
-                switch (texName.ToLowerInvariant())
+                if (IsBaseColorRole(texName))
                 {
-                    case "basecolor":
-                    case "diffuse":
-                        sb.AppendLine($"map_Kd {resolved}");
-                        break;
-                    case "normals":
-                    case "normal":
-                        sb.AppendLine($"norm {resolved}");
-                        sb.AppendLine($"map_Bump {resolved}");
-                        break;
-                    default:
-                        sb.AppendLine($"# {texName}: {resolved}");
-                        break;
+                    sb.AppendLine($"map_Kd {resolved}");
+                }
+                else if (IsNormalRole(texName))
+                {
+                    sb.AppendLine($"norm {resolved}");
+                    sb.AppendLine($"map_Bump {resolved}");
+                }
+                else
+                {
+                    sb.AppendLine($"# {texName}: {resolved}");
                 }
             }
 
@@ -114,4 +112,14 @@ public static class MaterialExporter
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
+
+    /// <summary>True if the texture role name maps to glTF's pbrMetallicRoughness.baseColorTexture.</summary>
+    public static bool IsBaseColorRole(string textureName) =>
+        textureName.Equals("BaseColor", StringComparison.OrdinalIgnoreCase) ||
+        textureName.Equals("Diffuse",   StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True if the texture role name maps to glTF's normalTexture.</summary>
+    public static bool IsNormalRole(string textureName) =>
+        textureName.Equals("Normals", StringComparison.OrdinalIgnoreCase) ||
+        textureName.Equals("Normal",  StringComparison.OrdinalIgnoreCase);
 }

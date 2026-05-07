@@ -24,6 +24,11 @@ public sealed class TmmMaterialResolver
     readonly FileIndex _fileIndex;
     readonly ReadEntryAsync _readEntry;
 
+    // Single-entry parse cache: probe-then-load is the dominant access pattern, so caching
+    // the most recent (tmmFileName -> materials) avoids parsing the same XMB twice.
+    string? _cachedMaterialsTmm;
+    List<MaterialInfo>? _cachedMaterials;
+
     public TmmMaterialResolver(FileIndex fileIndex, ReadEntryAsync readEntry)
     {
         _fileIndex = fileIndex;
@@ -32,58 +37,46 @@ public sealed class TmmMaterialResolver
 
     /// <summary>
     /// Resolves the .material XML for a TMM and returns the parsed submaterials plus
-    /// the raw decompressed DDT bytes for every referenced texture.
+    /// the raw decompressed DDT bytes for textures glTF can use (basecolor and normal map).
+    /// Other texture roles are skipped to avoid wasted decompression and heap copies.
     /// Returns null if the material file can't be found or parsed.
     /// </summary>
     public async ValueTask<ResolvedTextures?> ResolveAsync(string tmmFileName, CancellationToken token = default)
     {
         try
         {
-            var tmmName = Path.GetFileNameWithoutExtension(tmmFileName);
-            var materialName = tmmName + ".material";
+            var materials = await GetParsedMaterialsAsync(tmmFileName, token);
+            if (materials == null) return null;
 
-            var materialEntries = _fileIndex.Find(materialName + ".XMB");
-            if (materialEntries.Count == 0)
-                materialEntries = _fileIndex.Find(materialName);
-            if (materialEntries.Count == 0) return null;
-
-            var matEntry = materialEntries[0];
-            using var matData = await _readEntry(matEntry);
-            if (matData == null) return null;
-
-            using var matBytes = BarCompression.EnsureDecompressedPooled(matData, out _);
-
-            string? xmlText;
-            if (matEntry.FileName.EndsWith(".XMB", StringComparison.OrdinalIgnoreCase))
-                xmlText = ConversionHelper.ConvertXmbToXmlText(matBytes.Span);
-            else
-                xmlText = Encoding.UTF8.GetString(matBytes.Span);
-
-            if (xmlText == null) return null;
-
-            var materials = MaterialExporter.ParseMaterialXml(xmlText);
-            var texturePaths = MaterialExporter.GetAllTexturePaths(materials);
             var textures = new Dictionary<string, (string FileName, byte[] DdtData)>();
 
-            foreach (var texPath in texturePaths)
+            foreach (var mat in materials)
             {
-                token.ThrowIfCancellationRequested();
-                var texFileName = Path.GetFileName(texPath.Replace('\\', '/'));
+                foreach (var (texName, texPath) in mat.Textures)
+                {
+                    if (!MaterialExporter.IsBaseColorRole(texName) && !MaterialExporter.IsNormalRole(texName))
+                        continue;
+                    if (textures.ContainsKey(texPath)) continue;
 
-                var texEntries = _fileIndex.Find(texFileName + ".ddt");
-                if (texEntries.Count == 0)
-                    texEntries = _fileIndex.Find(texFileName);
-                if (texEntries.Count == 0) continue;
+                    token.ThrowIfCancellationRequested();
+                    var texFileName = Path.GetFileName(texPath.Replace('\\', '/'));
 
-                using var texData = await _readEntry(texEntries[0]);
-                if (texData == null) continue;
+                    var texEntries = _fileIndex.Find(texFileName + ".ddt");
+                    if (texEntries.Count == 0)
+                        texEntries = _fileIndex.Find(texFileName);
+                    if (texEntries.Count == 0) continue;
 
-                using var decompressedTex = BarCompression.EnsureDecompressedPooled(texData, out _);
-                textures[texPath] = (texFileName, decompressedTex.Span.ToArray());
+                    using var texData = await _readEntry(texEntries[0]);
+                    if (texData == null) continue;
+
+                    using var decompressedTex = BarCompression.EnsureDecompressedPooled(texData, out _);
+                    textures[texPath] = (texFileName, decompressedTex.Span.ToArray());
+                }
             }
 
             return new ResolvedTextures { Materials = materials, Textures = textures };
         }
+        catch (OperationCanceledException) { throw; }
         catch
         {
             return null;
@@ -98,15 +91,14 @@ public sealed class TmmMaterialResolver
     {
         try
         {
-            var materials = await ParseMaterialsOnlyAsync(tmmFileName, token);
+            var materials = await GetParsedMaterialsAsync(tmmFileName, token);
             if (materials == null) return false;
 
             foreach (var mat in materials)
             {
                 foreach (var (texName, texPath) in mat.Textures)
                 {
-                    var lower = texName.ToLowerInvariant();
-                    if (lower != "basecolor" && lower != "diffuse") continue;
+                    if (!MaterialExporter.IsBaseColorRole(texName)) continue;
                     var texFileName = Path.GetFileName(texPath.Replace('\\', '/'));
                     if (_fileIndex.Find(texFileName + ".ddt").Count > 0 ||
                         _fileIndex.Find(texFileName).Count > 0)
@@ -115,14 +107,18 @@ public sealed class TmmMaterialResolver
             }
             return false;
         }
+        catch (OperationCanceledException) { throw; }
         catch
         {
             return false;
         }
     }
 
-    async ValueTask<List<MaterialInfo>?> ParseMaterialsOnlyAsync(string tmmFileName, CancellationToken token)
+    async ValueTask<List<MaterialInfo>?> GetParsedMaterialsAsync(string tmmFileName, CancellationToken token)
     {
+        if (_cachedMaterialsTmm == tmmFileName && _cachedMaterials != null)
+            return _cachedMaterials;
+
         var tmmName = Path.GetFileNameWithoutExtension(tmmFileName);
         var materialName = tmmName + ".material";
 
@@ -142,6 +138,11 @@ public sealed class TmmMaterialResolver
             ? ConversionHelper.ConvertXmbToXmlText(matBytes.Span)
             : Encoding.UTF8.GetString(matBytes.Span);
 
-        return xmlText == null ? null : MaterialExporter.ParseMaterialXml(xmlText);
+        if (xmlText == null) return null;
+
+        var parsed = MaterialExporter.ParseMaterialXml(xmlText);
+        _cachedMaterialsTmm = tmmFileName;
+        _cachedMaterials = parsed;
+        return parsed;
     }
 }

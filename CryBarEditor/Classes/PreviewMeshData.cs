@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using CryBar.Export;
 using CryBar.TMM;
 
 namespace CryBarEditor.Classes;
@@ -11,6 +12,12 @@ namespace CryBarEditor.Classes;
 /// </summary>
 public class PreviewMeshData
 {
+    public const int VertexStrideFloats = 12;
+    public const int VertexStrideBytes = VertexStrideFloats * sizeof(float);
+    public const int VertexNormalByteOffset = 3 * sizeof(float);
+    public const int VertexUvByteOffset = 6 * sizeof(float);
+    public const int VertexTangentByteOffset = 8 * sizeof(float);
+
     public required float[] Vertices { get; init; }
     public required uint[] Indices { get; init; }
     public required (int Offset, int Count)[] DrawGroups { get; init; }
@@ -51,8 +58,7 @@ public static class MeshDataBuilder
         int vertexCount = srcVerts.Length;
         int indexCount = srcIndices.Length;
 
-        // Interleaved: pos(3) + normal(3) + uv(2) + tangent(4) = 12 floats per vertex
-        const int stride = 12;
+        const int stride = PreviewMeshData.VertexStrideFloats;
         var vertices = new float[vertexCount * stride];
 
         float minX = float.MaxValue, minY = float.MaxValue, minZ = float.MaxValue;
@@ -86,7 +92,9 @@ public static class MeshDataBuilder
             vertices[off + 8]  = tx;
             vertices[off + 9]  = ty;
             vertices[off + 10] = tz;
-            vertices[off + 11] = sign;
+            // X-negation similarity transform flips the TBN determinant, so the bitangent sign inverts.
+            // Mirrors GlbExporter.WriteNormalsAndTangents so normal-mapped lighting matches.
+            vertices[off + 11] = -sign;
 
             if (px < minX) minX = px;
             if (py < minY) minY = py;
@@ -165,7 +173,6 @@ public static class MeshDataBuilder
             //   [r0c0 r0c1 r0c2 r0c3] -> row 0: axisX, then translation x
             //   [r1c0 r1c1 r1c2 r1c3] -> row 1: axisY, then translation y
             //   [r2c0 r2c1 r2c2 r2c3] -> row 2: axisZ, then translation z
-            // Verify against existing TMM read code if interpretation is wrong.
             var m = att.LocalTransformMatrix;
             var localAxisX = new Vector3(m[0], m[4], m[8]);
             var localAxisY = new Vector3(m[1], m[5], m[9]);
@@ -183,14 +190,7 @@ public static class MeshDataBuilder
             {
                 var bone = bones[att.ParentBoneId];
                 if (bone.WorldSpaceMatrix is { Length: 16 } wm)
-                {
-                    var boneWorld = new Matrix4x4(
-                        wm[0],  wm[1],  wm[2],  wm[3],
-                        wm[4],  wm[5],  wm[6],  wm[7],
-                        wm[8],  wm[9],  wm[10], wm[11],
-                        wm[12], wm[13], wm[14], wm[15]);
-                    world = local * boneWorld;
-                }
+                    world = local * MatrixDecomp.ColMajorToMatrix(wm);
             }
 
             // Apply X-negation similarity transform: F * M * F (F = diag(-1,1,1,1))

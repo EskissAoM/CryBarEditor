@@ -15,6 +15,27 @@ namespace CryBarEditor.Controls;
 
 public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
 {
+    // GL constants Avalonia's GlConsts doesn't expose; named here so call sites are searchable.
+    const int GL_LINES                    = 0x0001;
+    const int GL_LESS                     = 0x0201;
+    const int GL_GREATER                  = 0x0204;
+    const int GL_BLEND                    = 0x0BE2;
+    const int GL_SRC_ALPHA                = 0x0302;
+    const int GL_ONE_MINUS_SRC_ALPHA      = 0x0303;
+    const int GL_UNSIGNED_BYTE            = 0x1401;
+    const int GL_UNSIGNED_INT             = 0x1405;
+    const int GL_FLOAT_TYPE               = 0x1406;
+    const int GL_DEPTH_COMPONENT          = 0x1902;
+    const int GL_LINEAR                   = 0x2601;
+    const int GL_LINEAR_MIPMAP_LINEAR     = 0x2703;
+    const int GL_TEXTURE_MAG_FILTER       = 0x2800;
+    const int GL_TEXTURE_MIN_FILTER       = 0x2801;
+    const int GL_TEXTURE_WRAP_S           = 0x2802;
+    const int GL_TEXTURE_WRAP_T           = 0x2803;
+    const int GL_REPEAT                   = 0x2901;
+    const int GL_TEXTURE0                 = 0x84C0;
+    const int GL_TEXTURE1                 = 0x84C1;
+    const int GL_DYNAMIC_DRAW             = 0x88E8;
     // OpenGlControlBase has no background, so implement ICustomHitTest for pointer events
     bool ICustomHitTest.HitTest(Point point) => Bounds.Contains(point);
 
@@ -70,10 +91,13 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         (4, "Z", 0, 0, 1),
     };
 
-    // Markers GL resources
+    // Markers GL resources. Buffer layout: pos(3) + color(3) per vertex; uploaded once per mesh.
     int _markersProgram;
     int _markersVao, _markersVbo;
-    int _uMarkersMvp, _uMarkersColor, _uMarkersAlpha;
+    int _uMarkersMvp, _uMarkersAlpha;
+    int _markersAttachVertexCount; // number of vertices for attachment markers (drawn first)
+    int _markersImpactVertexCount; // number of vertices for impact-point markers
+    bool _markersDirty;
 
     bool _showMarkers = true;
     public bool ShowMarkers
@@ -147,16 +171,48 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         int tex = gl.GenTexture();
         gl.BindTexture(GL_TEXTURE_2D, tex);
         fixed (byte* p = rgba)
-            gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, 0x1401 /* GL_UNSIGNED_BYTE */, (IntPtr)p);
-        // Filtering / wrap
-        gl.TexParameteri(GL_TEXTURE_2D, 0x2801 /* GL_TEXTURE_MIN_FILTER */, 0x2703 /* GL_LINEAR_MIPMAP_LINEAR */);
-        gl.TexParameteri(GL_TEXTURE_2D, 0x2800 /* GL_TEXTURE_MAG_FILTER */, 0x2601 /* GL_LINEAR */);
-        gl.TexParameteri(GL_TEXTURE_2D, 0x2802 /* GL_TEXTURE_WRAP_S */, 0x2901 /* GL_REPEAT */);
-        gl.TexParameteri(GL_TEXTURE_2D, 0x2803 /* GL_TEXTURE_WRAP_T */, 0x2901 /* GL_REPEAT */);
-        if (_glGenerateMipmap != null)
-            _glGenerateMipmap(GL_TEXTURE_2D);
+            gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, (IntPtr)p);
+        SetTextureSamplerStateAndMipmap(gl);
         gl.BindTexture(GL_TEXTURE_2D, 0);
         return tex;
+    }
+
+    /// <summary>
+    /// Allocates a fresh RGBA8 GL texture sized [width x height] without uploading pixels.
+    /// Use UploadTextureRows to write horizontal strips, then BindTexture(0) to release.
+    /// Allows chunked uploads that avoid host-side contiguous-buffer copies.
+    /// </summary>
+    public int CreateEmptyTexture(GlInterface gl, int width, int height)
+    {
+        int tex = gl.GenTexture();
+        gl.BindTexture(GL_TEXTURE_2D, tex);
+        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, IntPtr.Zero);
+        return tex;
+    }
+
+    /// <summary>Writes a horizontal strip of RGBA8 pixels to the currently bound texture.</summary>
+    public unsafe void UploadTextureRows(GlInterface gl, int yOffset, int width, int rowCount, ReadOnlySpan<byte> rgba)
+    {
+        if (_glTexSubImage2D == null) return; // Should never happen on a valid GL 3+ context.
+        fixed (byte* p = rgba)
+            _glTexSubImage2D((uint)GL_TEXTURE_2D, 0, 0, yOffset, width, rowCount, (uint)GL_RGBA, (uint)GL_UNSIGNED_BYTE, p);
+    }
+
+    /// <summary>Applies sampler state and generates mipmaps for the currently bound 2D texture.</summary>
+    public void FinalizeTexture(GlInterface gl)
+    {
+        SetTextureSamplerStateAndMipmap(gl);
+        gl.BindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    unsafe void SetTextureSamplerStateAndMipmap(GlInterface gl)
+    {
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        if (_glGenerateMipmap != null)
+            _glGenerateMipmap(GL_TEXTURE_2D);
     }
 
     /// <summary>Convenience for hosts: callback they can invoke on the GL thread to delete a handle.</summary>
@@ -184,6 +240,8 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     unsafe delegate* unmanaged<uint, uint, void> _glBlendFunc;
     // Function pointer for glReadPixels (not exposed by Avalonia's GlInterface)
     unsafe delegate* unmanaged<int, int, int, int, uint, uint, void*, void> _glReadPixels;
+    // Function pointer for glTexSubImage2D (not exposed by Avalonia's GlInterface)
+    unsafe delegate* unmanaged<uint, int, int, int, int, int, uint, uint, void*, void> _glTexSubImage2D;
 
     // Mouse tracking
     Point _lastPointerPos;
@@ -257,15 +315,20 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
 
     const string MarkersVertexShaderBody = """
         layout(location = 0) in vec3 aPos;
+        layout(location = 1) in vec3 aColor;
         uniform mat4 uMVP;
-        void main() { gl_Position = uMVP * vec4(aPos, 1.0); }
+        out vec3 vColor;
+        void main() {
+            gl_Position = uMVP * vec4(aPos, 1.0);
+            vColor = aColor;
+        }
         """;
 
     const string MarkersFragmentShaderBody = """
-        uniform vec3 uColor;
+        in vec3 vColor;
         uniform float uAlpha;
         out vec4 FragColor;
-        void main() { FragColor = vec4(uColor, uAlpha); }
+        void main() { FragColor = vec4(vColor, uAlpha); }
         """;
 
     const string GridVertexShaderBody = """
@@ -301,6 +364,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     public void LoadMesh(PreviewMeshData meshData, bool resetCamera = false)
     {
         _meshDirty = true;
+        _markersDirty = true;
         if (_meshData == null || resetCamera)
             _camera.FitToSphere(meshData.CenterX, meshData.CenterY, meshData.CenterZ, meshData.Radius);
         _meshData = meshData;
@@ -311,6 +375,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     {
         _meshData = null;
         _meshDirty = true;
+        _markersDirty = true;
         RequestNextFrameRendering();
     }
 
@@ -335,6 +400,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         _glGenerateMipmap = (delegate* unmanaged<int, void>)gl.GetProcAddress("glGenerateMipmap");
         _glBlendFunc = (delegate* unmanaged<uint, uint, void>)gl.GetProcAddress("glBlendFunc");
         _glReadPixels = (delegate* unmanaged<int, int, int, int, uint, uint, void*, void>)gl.GetProcAddress("glReadPixels");
+        _glTexSubImage2D = (delegate* unmanaged<uint, int, int, int, int, int, uint, uint, void*, void>)gl.GetProcAddress("glTexSubImage2D");
 
         _program = CreateProgram(gl, vsPreamble + VertexShaderBody, fsPreamble + FragmentShaderBody);
         _uMvp = gl.GetUniformLocationString(_program, "uMVP");
@@ -356,17 +422,18 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.BindBuffer(GL_ARRAY_BUFFER, _vbo);
         gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, _ebo);
 
-        // layout 0 = pos (3 floats), offset 0, stride 48
-        gl.VertexAttribPointer(0, 3, GL_FLOAT, 0, 48, IntPtr.Zero);
+        const int stride = PreviewMeshData.VertexStrideBytes;
+        // layout 0 = pos (3 floats)
+        gl.VertexAttribPointer(0, 3, GL_FLOAT, 0, stride, IntPtr.Zero);
         gl.EnableVertexAttribArray(0);
-        // layout 1 = normal (3 floats), offset 12, stride 48
-        gl.VertexAttribPointer(1, 3, GL_FLOAT, 0, 48, new IntPtr(12));
+        // layout 1 = normal (3 floats)
+        gl.VertexAttribPointer(1, 3, GL_FLOAT, 0, stride, new IntPtr(PreviewMeshData.VertexNormalByteOffset));
         gl.EnableVertexAttribArray(1);
-        // layout 2 = uv (2 floats), offset 24, stride 48
-        gl.VertexAttribPointer(2, 2, GL_FLOAT, 0, 48, new IntPtr(24));
+        // layout 2 = uv (2 floats)
+        gl.VertexAttribPointer(2, 2, GL_FLOAT, 0, stride, new IntPtr(PreviewMeshData.VertexUvByteOffset));
         gl.EnableVertexAttribArray(2);
-        // layout 3 = tangent (4 floats), offset 32, stride 48 - solid shader ignores it
-        gl.VertexAttribPointer(3, 4, GL_FLOAT, 0, 48, new IntPtr(32));
+        // layout 3 = tangent (4 floats) - solid shader ignores it
+        gl.VertexAttribPointer(3, 4, GL_FLOAT, 0, stride, new IntPtr(PreviewMeshData.VertexTangentByteOffset));
         gl.EnableVertexAttribArray(3);
 
         gl.BindVertexArray(0);
@@ -458,15 +525,17 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
             vsPreamble + MarkersVertexShaderBody,
             fsPreamble + MarkersFragmentShaderBody);
         _uMarkersMvp   = gl.GetUniformLocationString(_markersProgram, "uMVP");
-        _uMarkersColor = gl.GetUniformLocationString(_markersProgram, "uColor");
         _uMarkersAlpha = gl.GetUniformLocationString(_markersProgram, "uAlpha");
 
+        // Vertex layout: pos.xyz | color.rgb (6 floats per vertex, 24 bytes stride)
         _markersVao = gl.GenVertexArray();
         gl.BindVertexArray(_markersVao);
         _markersVbo = gl.GenBuffer();
         gl.BindBuffer(GL_ARRAY_BUFFER, _markersVbo);
-        gl.VertexAttribPointer(0, 3, GL_FLOAT, 0, 12, IntPtr.Zero);
+        gl.VertexAttribPointer(0, 3, GL_FLOAT, 0, 24, IntPtr.Zero);
         gl.EnableVertexAttribArray(0);
+        gl.VertexAttribPointer(1, 3, GL_FLOAT, 0, 24, new IntPtr(12));
+        gl.EnableVertexAttribArray(1);
         gl.BindVertexArray(0);
     }
 
@@ -498,8 +567,17 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.DeleteVertexArray(_gizmoVao);
         gl.DeleteProgram(_gizmoProgram);
 
+        // Free any owned texture handles. The host's LRU cache holds the same handles, but
+        // they're invalid once the GL context is gone - DeinitGl normalizes that ownership.
+        if (_activeTextures != null)
+        {
+            _activeTextures.DisposeGl(h => gl.DeleteTexture(h));
+            _activeTextures = null;
+        }
+
         _glInitialized = false;
         _meshDirty = true; // force re-upload when reattached
+        _markersDirty = true;
     }
 
     protected override unsafe void OnOpenGlRender(GlInterface gl, int fb)
@@ -575,46 +653,38 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         }
         else
         {
-            gl.UseProgram(_program);
-            var mvpCopy = mvp;
-            gl.UniformMatrix4fv(_uMvp, 1, false, &mvpCopy.M11);
-            if (_glUniform3f != null)
-            {
-                _glUniform3f(_uLightDir, lightDir.X, lightDir.Y, lightDir.Z);
-                _glUniform3f(_uColor, 0.75f, 0.75f, 0.75f);
-            }
+            BindSolidProgram(gl, mvp, lightDir);
         }
 
         // Draw all mesh groups; in textured mode, fall back to solid for groups
         // that have no basecolor binding so the geometry never silently disappears.
+        // Track current program so we only re-bind solid uniforms once per fallback run.
+        bool solidProgramActive = !textured;
         for (int g = 0; g < mesh.DrawGroups.Length; g++)
         {
             var (offset, count) = mesh.DrawGroups[g];
-            bool drawnTextured = false;
 
             if (textured && _activeTextures!.MeshGroupBindings.TryGetValue(g, out var binding) && binding.BaseColor.HasValue)
             {
-                gl.ActiveTexture(0x84C0 /* GL_TEXTURE0 */);
-                gl.BindTexture(GL_TEXTURE_2D, binding.BaseColor.Value);
-                gl.ActiveTexture(0x84C1 /* GL_TEXTURE1 */);
-                gl.BindTexture(GL_TEXTURE_2D, binding.Normal ?? binding.BaseColor.Value);
-                gl.DrawElements(GL_TRIANGLES, count, 0x1405 /* GL_UNSIGNED_INT */, (IntPtr)(offset * sizeof(uint)));
-                drawnTextured = true;
-            }
-
-            if (!drawnTextured)
-            {
-                // Group has no basecolor (or textured mode is off) - render with solid shader.
-                gl.UseProgram(_program);
-                var mvpCopy = mvp;
-                gl.UniformMatrix4fv(_uMvp, 1, false, &mvpCopy.M11);
-                if (_glUniform3f != null)
+                if (solidProgramActive)
                 {
-                    _glUniform3f(_uLightDir, lightDir.X, lightDir.Y, lightDir.Z);
-                    _glUniform3f(_uColor, 0.75f, 0.75f, 0.75f);
+                    gl.UseProgram(_texturedProgram);
+                    solidProgramActive = false;
                 }
-                gl.DrawElements(GL_TRIANGLES, count, 0x1405 /* GL_UNSIGNED_INT */, (IntPtr)(offset * sizeof(uint)));
-                if (textured) gl.UseProgram(_texturedProgram); // restore for next group
+                gl.ActiveTexture(GL_TEXTURE0);
+                gl.BindTexture(GL_TEXTURE_2D, binding.BaseColor.Value);
+                gl.ActiveTexture(GL_TEXTURE1);
+                gl.BindTexture(GL_TEXTURE_2D, binding.Normal ?? binding.BaseColor.Value);
+                gl.DrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, (IntPtr)(offset * sizeof(uint)));
+            }
+            else
+            {
+                if (!solidProgramActive)
+                {
+                    BindSolidProgram(gl, mvp, lightDir);
+                    solidProgramActive = true;
+                }
+                gl.DrawElements(GL_TRIANGLES, count, GL_UNSIGNED_INT, (IntPtr)(offset * sizeof(uint)));
             }
         }
 
@@ -626,6 +696,18 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         ProjectAndEmitMarkers(mvp, scaling, w, h);
         DrawGizmo(gl, w, h, scaling);
         ProjectAndEmitGizmoLabels(scaling, w, h);
+    }
+
+    unsafe void BindSolidProgram(GlInterface gl, in Matrix4x4 mvp, Vector3 lightDir)
+    {
+        gl.UseProgram(_program);
+        var mvpCopy = mvp;
+        gl.UniformMatrix4fv(_uMvp, 1, false, &mvpCopy.M11);
+        if (_glUniform3f != null)
+        {
+            _glUniform3f(_uLightDir, lightDir.X, lightDir.Y, lightDir.Z);
+            _glUniform3f(_uColor, 0.75f, 0.75f, 0.75f);
+        }
     }
 
     unsafe void DrawGroundGrid(GlInterface gl, in Matrix4x4 mvp)
@@ -645,10 +727,88 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.DepthMask(1);
 
         gl.BindVertexArray(_gridVao);
-        gl.DrawArrays(0x0001 /* GL_LINES */, 0, _gridVertexCount);
+        gl.DrawArrays(GL_LINES, 0, _gridVertexCount);
         gl.BindVertexArray(0);
 
         gl.UseProgram(0);
+    }
+
+    // Per-vertex attachment-axis colors: red/green/blue at 6 vertices per marker.
+    static readonly (float r, float g, float b)[] _attachmentSegmentColors =
+    {
+        (1.0f, 0.20f, 0.20f), (0.20f, 1.0f, 0.20f), (0.30f, 0.50f, 1.0f),
+    };
+    static readonly (float r, float g, float b)[] _impactSegmentColors =
+    {
+        (0.7f, 0.4f, 0.4f), (0.4f, 0.7f, 0.4f), (0.4f, 0.5f, 0.7f),
+    };
+
+    unsafe void EnsureMarkersUploaded(GlInterface gl)
+    {
+        if (!_markersDirty) return;
+        _markersDirty = false;
+
+        var mesh = _meshData;
+        if (mesh == null)
+        {
+            _markersAttachVertexCount = 0;
+            _markersImpactVertexCount = 0;
+            return;
+        }
+
+        float markerSize = MathF.Max(mesh.Radius * 0.04f, 0.05f);
+        float impactSize = markerSize * 0.5f;
+
+        int attachVertices = mesh.Attachments.Length * 6; // 3 segments * 2 verts
+        int impactVertices = mesh.ImpactPoints.Length * 6;
+        _markersAttachVertexCount = attachVertices;
+        _markersImpactVertexCount = impactVertices;
+        if (attachVertices + impactVertices == 0) return;
+
+        // 6 floats per vertex: pos.xyz + color.rgb
+        const int floatsPerVertex = 6;
+        int totalFloats = (attachVertices + impactVertices) * floatsPerVertex;
+        var heap = System.Buffers.ArrayPool<float>.Shared.Rent(totalFloats);
+        try
+        {
+            var verts = heap.AsSpan(0, totalFloats);
+            int vi = 0;
+
+            for (int i = 0; i < mesh.Attachments.Length; i++)
+            {
+                var m = mesh.Attachments[i];
+                var p = m.Position;
+                WriteSegment(verts, ref vi, p, p + m.AxisX * markerSize, _attachmentSegmentColors[0]);
+                WriteSegment(verts, ref vi, p, p + m.AxisY * markerSize, _attachmentSegmentColors[1]);
+                WriteSegment(verts, ref vi, p, p + m.AxisZ * markerSize, _attachmentSegmentColors[2]);
+            }
+            for (int i = 0; i < mesh.ImpactPoints.Length; i++)
+            {
+                var m = mesh.ImpactPoints[i];
+                var p = m.Position;
+                WriteSegment(verts, ref vi, p, p + m.AxisX * impactSize, _impactSegmentColors[0]);
+                WriteSegment(verts, ref vi, p, p + m.AxisY * impactSize, _impactSegmentColors[1]);
+                WriteSegment(verts, ref vi, p, p + m.AxisZ * impactSize, _impactSegmentColors[2]);
+            }
+
+            gl.BindVertexArray(_markersVao);
+            gl.BindBuffer(GL_ARRAY_BUFFER, _markersVbo);
+            fixed (float* p = verts)
+                gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(totalFloats * sizeof(float)), (IntPtr)p, GL_STATIC_DRAW);
+            gl.BindVertexArray(0);
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<float>.Shared.Return(heap);
+        }
+    }
+
+    static void WriteSegment(Span<float> verts, ref int vi, Vector3 a, Vector3 b, (float r, float g, float b) c)
+    {
+        verts[vi++] = a.X; verts[vi++] = a.Y; verts[vi++] = a.Z;
+        verts[vi++] = c.r; verts[vi++] = c.g; verts[vi++] = c.b;
+        verts[vi++] = b.X; verts[vi++] = b.Y; verts[vi++] = b.Z;
+        verts[vi++] = c.r; verts[vi++] = c.g; verts[vi++] = c.b;
     }
 
     unsafe void DrawMarkers(GlInterface gl, in Matrix4x4 mvp)
@@ -658,112 +818,43 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         if (mesh.Attachments.Length == 0 && mesh.ImpactPoints.Length == 0) return;
         if (!_showMarkers) return;
 
-        float markerSize = MathF.Max(mesh.Radius * 0.04f, 0.05f);
-        float impactSize = markerSize * 0.5f;
-
-        // Build vertex list: 6 vertices per attachment (3 segments) + 6 per impact (3 stub axes).
-        int totalLines = mesh.Attachments.Length * 3 + mesh.ImpactPoints.Length * 3;
-        int totalFloats = totalLines * 2 * 3;
-
-        Span<float> verts = stackalloc float[Math.Min(totalFloats, 4096)];
-        float[]? heap = null;
-        if (totalFloats > verts.Length)
-        {
-            heap = System.Buffers.ArrayPool<float>.Shared.Rent(totalFloats);
-            verts = heap.AsSpan(0, totalFloats);
-        }
-
-        int vi = 0;
-        // Inline segment writes; cannot use a local function because Span captures aren't allowed.
-        int attLineCount = mesh.Attachments.Length * 3;
-        foreach (var m in mesh.Attachments)
-        {
-            var p = m.Position;
-            var ex = p + m.AxisX * markerSize;
-            var ey = p + m.AxisY * markerSize;
-            var ez = p + m.AxisZ * markerSize;
-            verts[vi++] = p.X; verts[vi++] = p.Y; verts[vi++] = p.Z;
-            verts[vi++] = ex.X; verts[vi++] = ex.Y; verts[vi++] = ex.Z;
-            verts[vi++] = p.X; verts[vi++] = p.Y; verts[vi++] = p.Z;
-            verts[vi++] = ey.X; verts[vi++] = ey.Y; verts[vi++] = ey.Z;
-            verts[vi++] = p.X; verts[vi++] = p.Y; verts[vi++] = p.Z;
-            verts[vi++] = ez.X; verts[vi++] = ez.Y; verts[vi++] = ez.Z;
-        }
-        foreach (var m in mesh.ImpactPoints)
-        {
-            var p = m.Position;
-            var ex = p + m.AxisX * impactSize;
-            var ey = p + m.AxisY * impactSize;
-            var ez = p + m.AxisZ * impactSize;
-            verts[vi++] = p.X; verts[vi++] = p.Y; verts[vi++] = p.Z;
-            verts[vi++] = ex.X; verts[vi++] = ex.Y; verts[vi++] = ex.Z;
-            verts[vi++] = p.X; verts[vi++] = p.Y; verts[vi++] = p.Z;
-            verts[vi++] = ey.X; verts[vi++] = ey.Y; verts[vi++] = ey.Z;
-            verts[vi++] = p.X; verts[vi++] = p.Y; verts[vi++] = p.Z;
-            verts[vi++] = ez.X; verts[vi++] = ez.Y; verts[vi++] = ez.Z;
-        }
-
-        gl.BindVertexArray(_markersVao);
-        gl.BindBuffer(GL_ARRAY_BUFFER, _markersVbo);
-        fixed (float* p = verts)
-            gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(totalFloats * sizeof(float)), (IntPtr)p, 0x88E8 /* GL_DYNAMIC_DRAW */);
+        EnsureMarkersUploaded(gl);
+        if (_markersAttachVertexCount + _markersImpactVertexCount == 0) return;
 
         gl.UseProgram(_markersProgram);
         var mvpCopy = mvp;
         gl.UniformMatrix4fv(_uMarkersMvp, 1, false, &mvpCopy.M11);
 
+        gl.BindVertexArray(_markersVao);
         if (_glLineWidth != null) _glLineWidth(2.0f);
 
         // Two-pass: visible parts first (depth LESS, alpha 1.0), then occluded parts (depth GREATER, alpha 0.7) with blending.
         gl.Enable(GL_DEPTH_TEST);
         gl.DepthMask(0);
 
-        DrawMarkersPass(gl, mesh, attLineCount, alpha: 1.0f, depthFunc: 0x0201 /* GL_LESS */, blend: false);
-        DrawMarkersPass(gl, mesh, attLineCount, alpha: 0.7f, depthFunc: 0x0204 /* GL_GREATER */, blend: true);
+        int totalVerts = _markersAttachVertexCount + _markersImpactVertexCount;
+
+        // Pass 1: visible
+        gl.DepthFunc(GL_LESS);
+        gl.Disable(GL_BLEND);
+        gl.Uniform1f(_uMarkersAlpha, 1.0f);
+        gl.DrawArrays(GL_LINES, 0, totalVerts);
+
+        // Pass 2: occluded
+        gl.DepthFunc(GL_GREATER);
+        gl.Enable(GL_BLEND);
+        if (_glBlendFunc != null) _glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        gl.Uniform1f(_uMarkersAlpha, 0.7f);
+        gl.DrawArrays(GL_LINES, 0, totalVerts);
 
         // Restore default state.
-        gl.DepthFunc(0x0201 /* GL_LESS */);
+        gl.DepthFunc(GL_LESS);
         if (_glLineWidth != null) _glLineWidth(1.0f);
         gl.DepthMask(1);
         gl.Disable(GL_DEPTH_TEST);
-        gl.Disable(0x0BE2 /* GL_BLEND */);
+        gl.Disable(GL_BLEND);
         gl.BindVertexArray(0);
         gl.UseProgram(0);
-
-        if (heap != null) System.Buffers.ArrayPool<float>.Shared.Return(heap);
-    }
-
-    unsafe void DrawMarkersPass(GlInterface gl, PreviewMeshData mesh, int attLineCount, float alpha, int depthFunc, bool blend)
-    {
-        gl.DepthFunc(depthFunc);
-        if (blend)
-        {
-            gl.Enable(0x0BE2 /* GL_BLEND */);
-            if (_glBlendFunc != null) _glBlendFunc(0x0302 /* GL_SRC_ALPHA */, 0x0303 /* GL_ONE_MINUS_SRC_ALPHA */);
-        }
-        else
-        {
-            gl.Disable(0x0BE2 /* GL_BLEND */);
-        }
-
-        gl.Uniform1f(_uMarkersAlpha, alpha);
-        if (_glUniform3f == null) return;
-
-        for (int i = 0; i < mesh.Attachments.Length; i++)
-        {
-            int baseV = i * 6;
-            _glUniform3f(_uMarkersColor, 1.0f, 0.20f, 0.20f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 0, 2);
-            _glUniform3f(_uMarkersColor, 0.20f, 1.0f, 0.20f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 2, 2);
-            _glUniform3f(_uMarkersColor, 0.30f, 0.50f, 1.0f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 4, 2);
-        }
-        int impactBase = attLineCount * 2;
-        for (int i = 0; i < mesh.ImpactPoints.Length; i++)
-        {
-            int baseV = impactBase + i * 6;
-            _glUniform3f(_uMarkersColor, 0.7f, 0.4f, 0.4f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 0, 2);
-            _glUniform3f(_uMarkersColor, 0.4f, 0.7f, 0.4f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 2, 2);
-            _glUniform3f(_uMarkersColor, 0.4f, 0.5f, 0.7f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 4, 2);
-        }
     }
 
     void ProjectAndEmitGizmoLabels(double scaling, int viewportW, int viewportH)
@@ -855,13 +946,17 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         }
 
         // Pass 2: depth-buffer readback per inside marker to determine occlusion.
-        if (_glReadPixels != null)
+        // Skip while the camera is moving (drag/anim) - glReadPixels stalls the GPU pipeline,
+        // and stale Occluded values during a drag are imperceptible. The frame after movement
+        // stops re-runs through here naturally because RequestNextFrameRendering is fired.
+        bool cameraMoving = _leftDragging || _rightDragging || _animActive;
+        if (_glReadPixels != null && !cameraMoving)
         {
             for (int i = 0; i < markerIdx && i < _markerLabelBuffer.Count; i++)
             {
                 if (markerPx[i] < 0) continue;
                 float depth = 0;
-                _glReadPixels(markerPx[i], markerPy[i], 1, 1, 0x1902 /* GL_DEPTH_COMPONENT */, 0x1406 /* GL_FLOAT */, &depth);
+                _glReadPixels(markerPx[i], markerPy[i], 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT_TYPE, &depth);
                 // If the depth buffer at this pixel is closer than the marker, the marker is behind something.
                 bool occluded = depth + 0.0001f < markerDepths[i];
                 var existing = _markerLabelBuffer[i];
@@ -922,7 +1017,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
                     c.b = MathF.Min(1.0f, c.b * 1.3f);
                 }
                 _glUniform3f(_uGizmoColor, c.r, c.g, c.b);
-                gl.DrawArrays(0x0001 /* GL_LINES */, i * 2, 2);
+                gl.DrawArrays(GL_LINES, i * 2, 2);
             }
         }
         if (_glLineWidth != null) _glLineWidth(1.0f);
@@ -930,6 +1025,14 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.BindVertexArray(0);
         gl.UseProgram(0);
     }
+
+    // Six gizmo axis end points in local space; stored once because HitTestGizmo runs on every pointer move.
+    static readonly (float x, float y, float z)[] _gizmoAxisEnds =
+    {
+        ( 1, 0, 0), (-1, 0, 0),
+        ( 0, 1, 0), ( 0,-1, 0),
+        ( 0, 0, 1), ( 0, 0,-1),
+    };
 
     int HitTestGizmo(Point screenPos)
     {
@@ -948,12 +1051,6 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         // Project the six axis end points into the gizmo's local screen space.
         // Local space: x right, y up, origin at gizmo center.
         var rot = GetCameraViewRotation();
-        var axisLocal = new (float x, float y, float z)[]
-        {
-            ( 1, 0, 0), (-1, 0, 0),
-            ( 0, 1, 0), ( 0,-1, 0),
-            ( 0, 0, 1), ( 0, 0,-1),
-        };
 
         double cx = left + size * 0.5;
         double cy = top  + size * 0.5;
@@ -964,7 +1061,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
 
         for (int i = 0; i < 6; i++)
         {
-            var a = axisLocal[i];
+            var a = _gizmoAxisEnds[i];
             // (rot * a) using the 3x3 rotation: row-vector * row-major matrix
             float vx = a.x * rot.M11 + a.y * rot.M21 + a.z * rot.M31;
             float vy = a.x * rot.M12 + a.y * rot.M22 + a.z * rot.M32;
