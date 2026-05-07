@@ -46,6 +46,8 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     unsafe delegate* unmanaged<int, float, float, float, void> _glUniform3f;
     // Function pointer for glUniformMatrix3fv (not exposed by Avalonia's GlInterface)
     unsafe delegate* unmanaged<int, int, byte, float*, void> _glUniformMatrix3fv;
+    // Function pointer for glLineWidth (not exposed by Avalonia's GlInterface)
+    unsafe delegate* unmanaged<float, void> _glLineWidth;
 
     // Mouse tracking
     Point _lastPointerPos;
@@ -126,6 +128,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         // Get proc address for glUniform3f (not in Avalonia's GlInterface)
         _glUniform3f = (delegate* unmanaged<int, float, float, float, void>)gl.GetProcAddress("glUniform3f");
         _glUniformMatrix3fv = (delegate* unmanaged<int, int, byte, float*, void>)gl.GetProcAddress("glUniformMatrix3fv");
+        _glLineWidth = (delegate* unmanaged<float, void>)gl.GetProcAddress("glLineWidth");
 
         _program = CreateProgram(gl, vsPreamble + VertexShaderBody, fsPreamble + FragmentShaderBody);
         _uMvp = gl.GetUniformLocationString(_program, "uMVP");
@@ -336,6 +339,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
             (0.30f, 0.50f, 1.0f), (0.15f, 0.25f, 0.5f),
         };
 
+        if (_glLineWidth != null) _glLineWidth(2.0f);
         if (_glUniform3f != null)
         {
             for (int i = 0; i < 6; i++)
@@ -351,9 +355,96 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
                 gl.DrawArrays(0x0001 /* GL_LINES */, i * 2, 2);
             }
         }
+        if (_glLineWidth != null) _glLineWidth(1.0f);
 
         gl.BindVertexArray(0);
         gl.UseProgram(0);
+    }
+
+    int HitTestGizmo(Point screenPos)
+    {
+        double w = Bounds.Width;
+        double h = Bounds.Height;
+        if (w <= 0 || h <= 0) return -1;
+
+        double margin = GizmoMarginPx;
+        double size   = GizmoSizePx;
+        // Gizmo occupies a square in the top-right. In Avalonia coords, top-left is (0,0).
+        double left = w - size - margin;
+        double top  = margin;
+        if (screenPos.X < left || screenPos.X > left + size) return -1;
+        if (screenPos.Y < top  || screenPos.Y > top  + size) return -1;
+
+        // Project the six axis end points into the gizmo's local screen space.
+        // Local space: x right, y up, origin at gizmo center.
+        var rot = GetCameraViewRotation();
+        var axisLocal = new (float x, float y, float z)[]
+        {
+            ( 1, 0, 0), (-1, 0, 0),
+            ( 0, 1, 0), ( 0,-1, 0),
+            ( 0, 0, 1), ( 0, 0,-1),
+        };
+
+        double cx = left + size * 0.5;
+        double cy = top  + size * 0.5;
+        double r  = size * 0.5 - 4;
+
+        int best = -1;
+        double bestDistSq = 18 * 18; // 18 px hit radius - widened so axis lines are easier to click
+
+        for (int i = 0; i < 6; i++)
+        {
+            var a = axisLocal[i];
+            // (rot * a) using the 3x3 rotation: row-vector * row-major matrix
+            float vx = a.x * rot.M11 + a.y * rot.M21 + a.z * rot.M31;
+            float vy = a.x * rot.M12 + a.y * rot.M22 + a.z * rot.M32;
+            // Clip y is flipped to screen y in Avalonia.
+            double sx = cx + vx * r;
+            double sy = cy - vy * r;
+            double dx = screenPos.X - sx;
+            double dy = screenPos.Y - sy;
+            double d2 = dx * dx + dy * dy;
+            if (d2 < bestDistSq)
+            {
+                bestDistSq = d2;
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    static (float Azimuth, float Elevation) GetGizmoTarget(int axis) => axis switch
+    {
+        // Azimuth = 0 looks down -Z (camera at +Z). Each axis-end click positions
+        // the camera at that axis end, looking toward the origin.
+        0 => (90f, 0f),    // +X
+        1 => (-90f, 0f),   // -X
+        2 => (0f, 89f),    // +Y (clamped to elevation limit)
+        3 => (0f, -89f),   // -Y
+        4 => (0f, 0f),     // +Z
+        5 => (180f, 0f),   // -Z
+        _ => (0f, 0f)
+    };
+
+    static float ShortestAzimuthDelta(float from, float to)
+    {
+        float d = (to - from) % 360f;
+        if (d > 180f) d -= 360f;
+        if (d < -180f) d += 360f;
+        return d;
+    }
+
+    void StartGizmoTween(int axis)
+    {
+        var (targetAz, targetEl) = GetGizmoTarget(axis);
+        _animStartAz = _camera.Azimuth;
+        _animStartEl = _camera.Elevation;
+        _animEndAz   = _animStartAz + ShortestAzimuthDelta(_animStartAz, targetAz);
+        _animEndEl   = targetEl;
+        if (!_animClock.IsRunning) _animClock.Start();
+        _animStartTimeMs = _animClock.Elapsed.TotalMilliseconds;
+        _animActive = true;
+        RequestNextFrameRendering();
     }
 
     void UpdateGizmoAnimation()
@@ -380,8 +471,21 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         base.OnPointerPressed(e);
-        _lastPointerPos = e.GetPosition(this);
+        var pos = e.GetPosition(this);
         var props = e.GetCurrentPoint(this).Properties;
+
+        if (props.IsLeftButtonPressed)
+        {
+            int axis = HitTestGizmo(pos);
+            if (axis >= 0 && !_animActive)
+            {
+                StartGizmoTween(axis);
+                e.Handled = true;
+                return;
+            }
+        }
+
+        _lastPointerPos = pos;
         if (props.IsLeftButtonPressed) _leftDragging = true;
         if (props.IsRightButtonPressed) _rightDragging = true;
         e.Handled = true;
@@ -400,18 +504,33 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     {
         base.OnPointerMoved(e);
         var pos = e.GetPosition(this);
+
+        if (!_leftDragging && !_rightDragging)
+        {
+            int axis = _animActive ? -1 : HitTestGizmo(pos);
+            if (axis != _hoveredGizmoAxis)
+            {
+                _hoveredGizmoAxis = axis;
+                Cursor = axis >= 0 ? new Cursor(StandardCursorType.Hand) : Cursor.Default;
+                RequestNextFrameRendering();
+            }
+        }
+
         float dx = (float)(pos.X - _lastPointerPos.X);
         float dy = (float)(pos.Y - _lastPointerPos.Y);
         _lastPointerPos = pos;
 
         if (_leftDragging)
         {
+            // Manual drag wins over animation
+            _animActive = false;
             _camera.Rotate(-dx * 0.3f, dy * 0.3f);
             RequestNextFrameRendering();
             e.Handled = true;
         }
         else if (_rightDragging)
         {
+            _animActive = false;
             _camera.Pan(-dx * 0.003f, dy * 0.003f);
             RequestNextFrameRendering();
             e.Handled = true;
