@@ -120,6 +120,8 @@ Otherwise I recommend you check out the official documentation in game's folder.
 ![CryBarEditor_8](https://assets.cryshana.me/zFzSNeCHF0YM.avif)
 ### 3D Preview of TMM models
 ![CryBarEditor_9](https://assets.cryshana.me/LEhijgdvkF2M.avif)
+### 3D Improved Preview
+![CryBarEditor_91](https://assets.cryshana.me/RONuqpRfDLMV.avif)
 ### Advanced export
 ![CryBarEditor_10](https://assets.cryshana.me/9vougwHtzSd9.avif)
 ### XML <-> XS conversion (Lossy)
