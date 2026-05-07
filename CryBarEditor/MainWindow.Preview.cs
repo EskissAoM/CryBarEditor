@@ -6,17 +6,21 @@ using AvaloniaEdit.Document;
 using AvaloniaEdit.Folding;
 using CryBar;
 using CryBar.Bar;
+using CryBar.Export;
 using CryBar.Scenario;
 using CryBar.TMM;
 using CryBar.Utilities;
 using CryBarEditor.Classes;
 using CryBarEditor.Controls;
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Advanced;
+using SixLabors.ImageSharp.PixelFormats;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -26,6 +30,25 @@ namespace CryBarEditor;
 public partial class MainWindow
 {
     CancellationTokenSource? _previewCsc;
+
+    // Capacity 2 keeps GPU memory bounded across rapid TMM switches while still hiding
+    // decode latency for the most recently viewed model and one neighbor. The eviction
+    // callback queues the actual GL handle deletion onto the render thread.
+    LruCache<PreviewTextureSet>? _textureCache;
+    LruCache<PreviewTextureSet> EnsureTextureCache() => _textureCache ??= new LruCache<PreviewTextureSet>(2,
+        set => _glPreview?.QueueGlAction(gl => set.DisposeGl(h => gl.DeleteTexture(h))));
+
+    readonly Dictionary<string, bool> _textureAvailability = new();
+    CancellationTokenSource? _textureLoadCts;
+    string? _currentTmmFileName;
+    bool _useTextured3D; // Per-session preference; not persisted.
+
+    // The resolver is stateless apart from a single-entry parse cache it owns.
+    // One instance per editor session avoids re-allocating per probe + per load.
+    TmmMaterialResolver? _materialResolver;
+    TmmMaterialResolver? GetMaterialResolver() =>
+        _fileIndex == null ? null
+        : _materialResolver ??= new TmmMaterialResolver(_fileIndex, ReadFromIndexEntryPooledAsync);
 
     #region Preview dispatchers
     public async Task Preview(RootFileEntry? entry)
@@ -643,6 +666,8 @@ public partial class MainWindow
     async Task LoadTmm3DPreview(string tmmFileName, Memory<byte> tmmData,
         string? preferredRelativeDir, CancellationToken token)
     {
+        _currentTmmFileName = tmmFileName;
+
         var oldCts = _meshConversionCts;
         _meshConversionCts = CancellationTokenSource.CreateLinkedTokenSource(token);
         var ct = _meshConversionCts.Token;
@@ -674,6 +699,213 @@ public partial class MainWindow
             FlushPendingMesh();
         else
             Update3DStatus(""); // ready, will load when tab is selected
+
+        // Kick off availability probe (and texture load if user prefers textured mode).
+        // Independent of the mesh-conversion CTS - texture work has its own lifetime.
+        var oldTexCts = _textureLoadCts;
+        _textureLoadCts = new CancellationTokenSource();
+        oldTexCts?.Cancel();
+        oldTexCts?.Dispose();
+        _ = ProbeTextureAvailabilityAsync(tmmFileName, _textureLoadCts.Token);
+    }
+
+    async Task ProbeTextureAvailabilityAsync(string tmmFileName, CancellationToken token)
+    {
+        var resolver = GetMaterialResolver();
+        if (resolver == null) { UpdateTexturedToggleVisibility(false); return; }
+        if (_textureAvailability.TryGetValue(tmmFileName, out bool cached))
+        {
+            UpdateTexturedToggleVisibility(cached);
+            if (cached && _useTextured3D)
+                await EnsureTexturesLoadedAsync(tmmFileName, token);
+            return;
+        }
+
+        bool has = await resolver.HasAtLeastBaseColorAsync(tmmFileName, token);
+        if (token.IsCancellationRequested) return;
+
+        _textureAvailability[tmmFileName] = has;
+        UpdateTexturedToggleVisibility(has);
+
+        if (has && _useTextured3D)
+            await EnsureTexturesLoadedAsync(tmmFileName, token);
+    }
+
+    void UpdateTexturedToggleVisibility(bool available)
+    {
+        _texturedToggle.IsVisible = available;
+        if (!available)
+        {
+            // Don't clear _useTextured3D - preserve preference for the next textured-capable TMM.
+            if (_glPreview != null) _glPreview.UseTexturedMode = false;
+        }
+        else
+        {
+            _texturedToggle.IsChecked = _useTextured3D;
+            if (_glPreview != null) _glPreview.UseTexturedMode = _useTextured3D;
+        }
+    }
+
+    async Task EnsureTexturesLoadedAsync(string tmmFileName, CancellationToken token)
+    {
+        var resolver = GetMaterialResolver();
+        if (resolver == null) return;
+
+        var cache = EnsureTextureCache();
+        if (cache.TryGet(tmmFileName, out var existing) && existing != null)
+        {
+            _glPreview?.SetActiveTextures(existing);
+            return;
+        }
+
+        var resolved = await resolver.ResolveAsync(tmmFileName, token);
+        if (resolved == null || token.IsCancellationRequested) return;
+
+        var meshData = _glPreview?.GetMeshData();
+        if (meshData == null) return;
+
+        // .material XML lists submaterials in arbitrary order; mesh groups address materials by
+        // TMM material-index order. Align the parsed list to TMM order via name lookup so
+        // matBaseImages[i] is the texture for the TMM material at index i (what DrawGroupMaterialIndices points into).
+        var matByName = new Dictionary<string, CryBar.Export.MaterialInfo>(StringComparer.OrdinalIgnoreCase);
+        foreach (var m in resolved.Value.Materials) matByName[m.Name] = m;
+
+        var tmmMatNames = meshData.MaterialNames;
+        var matCount = tmmMatNames.Length;
+        var matBaseImages = new Image<Rgba32>?[matCount];
+        var matNormalImages = new Image<Rgba32>?[matCount];
+
+        // Decode all DDTs in parallel - each DDTImage is independent and the BCn decode is CPU-bound.
+        var decodeTasks = new List<Task>();
+        for (int i = 0; i < matCount; i++)
+        {
+            int matIndex = i;
+            if (!matByName.TryGetValue(tmmMatNames[i], out var mat)) continue;
+            foreach (var (texName, texPath) in mat.Textures)
+            {
+                if (!resolved.Value.Textures.TryGetValue(texPath, out var info)) continue;
+                bool isBase = MaterialExporter.IsBaseColorRole(texName);
+                bool isNormal = !isBase && MaterialExporter.IsNormalRole(texName);
+                if (!isBase && !isNormal) continue;
+
+                var ddtBytes = info.DdtData;
+                decodeTasks.Add(Task.Run(async () =>
+                {
+                    var ddt = new DDTImage(ddtBytes);
+                    if (!ddt.ParseHeader()) return;
+                    var img = await ddt.DecodeMipmapToImage(0, token);
+                    if (img == null) return;
+                    if (isBase) matBaseImages[matIndex] = img;
+                    else matNormalImages[matIndex] = img;
+                }, token));
+            }
+        }
+        try { await Task.WhenAll(decodeTasks); }
+        catch (OperationCanceledException) { /* fall through to dispose */ }
+
+        if (token.IsCancellationRequested)
+        {
+            for (int i = 0; i < matCount; i++)
+            {
+                matBaseImages[i]?.Dispose();
+                matNormalImages[i]?.Dispose();
+            }
+            return;
+        }
+
+        // Schedule GPU upload on the next render frame.
+        _glPreview!.QueueGlAction((gl) =>
+        {
+            // Drop the upload if the user has switched TMMs (or cancelled) since we queued.
+            if (token.IsCancellationRequested || _currentTmmFileName != tmmFileName)
+            {
+                for (int i = 0; i < matCount; i++)
+                {
+                    matBaseImages[i]?.Dispose();
+                    matNormalImages[i]?.Dispose();
+                }
+                return;
+            }
+
+            var owned = new List<int>();
+            var perMaterialByIndex = new (int? Base, int? Normal)[matCount];
+
+            for (int i = 0; i < matCount; i++)
+            {
+                int? bh = null, nh = null;
+                if (matBaseImages[i] != null)
+                {
+                    bh = UploadImageRgba(gl, matBaseImages[i]!);
+                    if (bh.HasValue) owned.Add(bh.Value);
+                }
+                if (matNormalImages[i] != null)
+                {
+                    nh = UploadImageRgba(gl, matNormalImages[i]!);
+                    if (nh.HasValue) owned.Add(nh.Value);
+                }
+                perMaterialByIndex[i] = (bh, nh);
+                matBaseImages[i]?.Dispose();
+                matNormalImages[i]?.Dispose();
+            }
+
+            var bindings = new Dictionary<int, (int? BaseColor, int? Normal)>();
+            for (int g = 0; g < meshData.DrawGroups.Length; g++)
+            {
+                uint matIdx = meshData.DrawGroupMaterialIndices.Length > g
+                    ? meshData.DrawGroupMaterialIndices[g] : 0u;
+                if (matIdx >= matCount) continue;
+                var pair = perMaterialByIndex[(int)matIdx];
+                if (pair.Base.HasValue || pair.Normal.HasValue)
+                    bindings[g] = (pair.Base, pair.Normal);
+            }
+
+            var set = new PreviewTextureSet { OwnedHandles = owned, MeshGroupBindings = bindings };
+            cache.Add(tmmFileName, set);
+            _glPreview.SetActiveTextures(set);
+        });
+    }
+
+    int? UploadImageRgba(Avalonia.OpenGL.GlInterface gl, Image<Rgba32> img)
+    {
+        var group = img.GetPixelMemoryGroup();
+        if (group.Count == 0) return null;
+
+        if (group.Count == 1)
+        {
+            var byteSpan = MemoryMarshal.AsBytes(group[0].Span);
+            return _glPreview!.UploadTexture(gl, img.Width, img.Height, byteSpan);
+        }
+
+        // ImageSharp splits buffers above ~22 MB into multiple chunks (large building textures hit this).
+        // Allocate the texture once and stream chunks via glTexSubImage2D - no host-side contiguous copy
+        // (which for 8K RGBA is a 256 MB LOH allocation that ArrayPool can't actually pool).
+        int tex = _glPreview!.CreateEmptyTexture(gl, img.Width, img.Height);
+        int yOffset = 0;
+        foreach (var chunk in group)
+        {
+            int chunkRows = chunk.Length / img.Width; // ImageSharp splits on row boundaries
+            if (chunkRows == 0) continue;
+            var byteSpan = MemoryMarshal.AsBytes(chunk.Span);
+            _glPreview.UploadTextureRows(gl, yOffset, img.Width, chunkRows, byteSpan);
+            yOffset += chunkRows;
+        }
+        _glPreview.FinalizeTexture(gl);
+        return tex;
+    }
+
+    void TexturedToggle_Toggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        _useTextured3D = _texturedToggle.IsChecked == true;
+        if (_glPreview != null) _glPreview.UseTexturedMode = _useTextured3D;
+
+        if (_useTextured3D && _currentTmmFileName != null)
+        {
+            var oldCts = _textureLoadCts;
+            _textureLoadCts = new CancellationTokenSource();
+            oldCts?.Cancel();
+            oldCts?.Dispose();
+            _ = EnsureTexturesLoadedAsync(_currentTmmFileName, _textureLoadCts.Token);
+        }
     }
 
     PreviewMeshData? _pendingMeshData;
@@ -682,7 +914,153 @@ public partial class MainWindow
     {
         if (_glPreview != null) return;
         _glPreview = new GlPreviewControl();
+        _glPreview.GizmoLabelsProjected += OnGizmoLabelsProjected;
+        _glPreview.MarkersProjected += OnMarkersProjected;
+        _glPreview.ShowMarkers = _showMarkersCheckbox.IsChecked == true;
+        _glPreview.ShowGroundGrid = _showGroundGridCheckbox.IsChecked == true;
         _3dViewContainer.Child = _glPreview;
+    }
+
+    List<TextBlock>? _markerLabelPool;
+
+    void EnsureMarkerLabelPool() => _markerLabelPool ??= new List<TextBlock>();
+
+    void ShowMarkers_Toggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        bool enabled = _showMarkersCheckbox.IsChecked == true;
+        if (_glPreview != null) _glPreview.ShowMarkers = enabled;
+
+        SaveConfiguration();
+
+        if (!enabled && _markerLabelPool != null)
+        {
+            foreach (var tb in _markerLabelPool) tb.IsVisible = false;
+        }
+    }
+
+    void ShowGroundGrid_Toggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        bool enabled = _showGroundGridCheckbox.IsChecked == true;
+        if (_glPreview != null) _glPreview.ShowGroundGrid = enabled;
+        SaveConfiguration();
+    }
+
+    void OnMarkersProjected(IReadOnlyList<Controls.GlPreviewControl.MarkerLabel> labels)
+    {
+        EnsureMarkerLabelPool();
+        var pool = _markerLabelPool!;
+        int needed = labels.Count * 2; // outline + foreground per label
+
+        while (pool.Count < needed)
+        {
+            var outline = new TextBlock
+            {
+                FontSize = 11,
+                Foreground = Brushes.Black,
+                IsHitTestVisible = false
+            };
+            var fg = new TextBlock
+            {
+                FontSize = 11,
+                Foreground = Brushes.White,
+                IsHitTestVisible = false
+            };
+            _3dLabelCanvas.Children.Add(outline);
+            _3dLabelCanvas.Children.Add(fg);
+            pool.Add(outline);
+            pool.Add(fg);
+        }
+
+        for (int i = 0; i < labels.Count; i++)
+        {
+            var label = labels[i];
+            var outline = pool[i * 2];
+            var fg = pool[i * 2 + 1];
+            if (label.Visible)
+            {
+                outline.Text = label.Name;
+                fg.Text = label.Name;
+                Canvas.SetLeft(outline, label.X + 1);
+                Canvas.SetTop(outline, label.Y + 1);
+                Canvas.SetLeft(fg, label.X);
+                Canvas.SetTop(fg, label.Y);
+                outline.Opacity = label.Occluded ? 0.5 : 1.0;
+                fg.Opacity = label.Occluded ? 0.7 : 1.0;
+                outline.IsVisible = true;
+                fg.IsVisible = true;
+            }
+            else
+            {
+                outline.IsVisible = false;
+                fg.IsVisible = false;
+            }
+        }
+
+        // Hide any leftover pool entries beyond the current count.
+        for (int i = labels.Count * 2; i < pool.Count; i++)
+            pool[i].IsVisible = false;
+    }
+
+    Border[]? _gizmoLabelBorders;
+
+    static IBrush GetGizmoLabelBrush(int axis, bool hovered)
+    {
+        // Match the gizmo axis palette; positive ends get the saturated colors.
+        (byte r, byte g, byte b) c = axis switch
+        {
+            0 => (255, 51, 51),    // +X
+            2 => (51, 255, 51),    // +Y
+            4 => (77, 128, 255),   // +Z
+            _ => (200, 200, 200)
+        };
+        if (hovered)
+        {
+            c.r = (byte)Math.Min(255, c.r + 40);
+            c.g = (byte)Math.Min(255, c.g + 40);
+            c.b = (byte)Math.Min(255, c.b + 40);
+        }
+        return new SolidColorBrush(Avalonia.Media.Color.FromRgb(c.r, c.g, c.b));
+    }
+
+    void OnGizmoLabelsProjected(IReadOnlyList<Controls.GlPreviewControl.GizmoLabel> labels)
+    {
+        if (_gizmoLabelBorders == null)
+        {
+            _gizmoLabelBorders = new Border[labels.Count];
+            for (int i = 0; i < labels.Count; i++)
+            {
+                var tb = new TextBlock
+                {
+                    Text = labels[i].Letter,
+                    FontSize = 10,
+                    FontWeight = FontWeight.Bold,
+                    Foreground = Brushes.Black,
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                    IsHitTestVisible = false
+                };
+                var border = new Border
+                {
+                    Width = 16,
+                    Height = 16,
+                    CornerRadius = new Avalonia.CornerRadius(8),
+                    Child = tb,
+                    IsHitTestVisible = false
+                };
+                _3dLabelCanvas.Children.Add(border);
+                _gizmoLabelBorders[i] = border;
+            }
+        }
+
+        for (int i = 0; i < labels.Count && i < _gizmoLabelBorders.Length; i++)
+        {
+            var l = labels[i];
+            var b = _gizmoLabelBorders[i];
+            b.Background = GetGizmoLabelBrush(l.Axis, l.Hovered);
+            Canvas.SetLeft(b, l.X - b.Width * 0.5);
+            Canvas.SetTop(b, l.Y - b.Height * 0.5);
+            b.IsVisible = true;
+        }
     }
 
     void LoadMeshIntoScene(PreviewMeshData meshData)
@@ -691,6 +1069,10 @@ public partial class MainWindow
         {
             EnsureGlPreviewInitialized();
             _glPreview!.LoadMesh(meshData);
+            // Clear any previously bound textures so the new mesh doesn't briefly render
+            // with the old TMM's textures while EnsureTexturesLoadedAsync is in flight.
+            // Cache hits in EnsureTexturesLoadedAsync will re-bind immediately.
+            _glPreview.SetActiveTextures(null);
             Update3DStatus("");
         }
         catch (Exception ex)

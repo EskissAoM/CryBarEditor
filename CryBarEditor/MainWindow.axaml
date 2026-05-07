@@ -469,13 +469,31 @@
 								<DockPanel>
 									<StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
 												HorizontalAlignment="Right" Margin="0,4,0,0">
+										<CheckBox x:Name="_showMarkersCheckbox"
+												  Content="Show markers"
+												  IsChecked="True"
+												  IsCheckedChanged="ShowMarkers_Toggled"
+												  Margin="0,0,8,0" />
+										<CheckBox x:Name="_showGroundGridCheckbox"
+												  Content="Show grid"
+												  IsChecked="True"
+												  IsCheckedChanged="ShowGroundGrid_Toggled"
+												  Margin="0,0,8,0" />
+										<ToggleButton x:Name="_texturedToggle"
+													  Content="Textured"
+													  IsVisible="False"
+													  IsCheckedChanged="TexturedToggle_Toggled"
+													  Margin="0,0,8,0" Padding="6,2" />
 										<TextBlock x:Name="_3dStatusText"
 											VerticalAlignment="Center" Margin="0,0,8,0"
 											Foreground="Gray" />
 										<Button Content="Reset Camera"
 											Click="ResetCamera_Click" Padding="6,2" />
 									</StackPanel>
-									<Border x:Name="_3dViewContainer" Background="#0a0a0a" />
+									<Grid>
+										<Border x:Name="_3dViewContainer" Background="#0a0a0a" />
+										<Canvas x:Name="_3dLabelCanvas" IsHitTestVisible="False" />
+									</Grid>
 								</DockPanel>
 							</TabItem>
 						</TabControl>

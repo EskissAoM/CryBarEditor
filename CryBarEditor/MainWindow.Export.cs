@@ -304,19 +304,21 @@ public partial class MainWindow
         string tmmFileName,
         List<(string Material, DDTImage Ddt)>? sourceDdtsOut = null)
     {
-        var resolved = await ResolveTmmMaterialsAsync(tmmFileName);
+        var resolver = GetMaterialResolver();
+        if (resolver == null) return null;
+        var resolved = await resolver.ResolveAsync(tmmFileName);
         if (resolved == null) return null;
 
-        // Only convert textures that glTF actually uses (Masks/Masks2 have no standard PBR slot)
-        // TODO: map Masks channels to metallicRoughnessTexture/occlusionTexture, Masks2 to emissiveTexture
+        // Only convert textures that glTF actually uses (Masks/Masks2 have no standard PBR slot).
+        // TODO: map Masks channels to metallicRoughnessTexture/occlusionTexture, Masks2 to emissiveTexture.
         var textureTasks = new Dictionary<string, Task<byte[]?>>();
         foreach (var mat in resolved.Value.Materials)
         {
             foreach (var (texName, texPath) in mat.Textures)
             {
-                var lower = texName.ToLowerInvariant();
-                if (lower is not "basecolor" and not "diffuse" and not "normals" and not "normal")
-                    continue;
+                bool isBase = MaterialExporter.IsBaseColorRole(texName);
+                bool isNormal = !isBase && MaterialExporter.IsNormalRole(texName);
+                if (!isBase && !isNormal) continue;
 
                 if (!textureTasks.ContainsKey(texPath) &&
                     resolved.Value.Textures.TryGetValue(texPath, out var texInfo))
@@ -328,12 +330,7 @@ public partial class MainWindow
                         var img = new DDTImage(texInfo.DdtData);
                         if (img.ParseHeader())
                         {
-                            var ddtKey = lower switch
-                            {
-                                "basecolor" or "diffuse"  => mat.Name,
-                                "normals"   or "normal"   => $"{mat.Name}_normal",
-                                _                         => $"{mat.Name}_{lower}",
-                            };
+                            var ddtKey = isBase ? mat.Name : $"{mat.Name}_normal";
                             sourceDdtsOut.Add((ddtKey, img));
                         }
                     }
@@ -349,24 +346,11 @@ public partial class MainWindow
             byte[]? baseColorPng = null, normalPng = null;
             foreach (var (texName, texPath) in mat.Textures)
             {
-                if (textureTasks.TryGetValue(texPath, out var task))
-                {
-                    var pngBytes = task.Result;
-                    if (pngBytes != null)
-                    {
-                        switch (texName.ToLowerInvariant())
-                        {
-                            case "basecolor":
-                            case "diffuse":
-                                baseColorPng = pngBytes;
-                                break;
-                            case "normals":
-                            case "normal":
-                                normalPng = pngBytes;
-                                break;
-                        }
-                    }
-                }
+                if (!textureTasks.TryGetValue(texPath, out var task)) continue;
+                var pngBytes = task.Result;
+                if (pngBytes == null) continue;
+                if (MaterialExporter.IsBaseColorRole(texName)) baseColorPng = pngBytes;
+                else if (MaterialExporter.IsNormalRole(texName)) normalPng = pngBytes;
             }
             matList.Add(new GlbExporter.GlbMaterial { Name = mat.Name, BaseColorPng = baseColorPng, NormalMapPng = normalPng });
         }
@@ -380,7 +364,9 @@ public partial class MainWindow
     {
         try
         {
-            var resolved = await ResolveTmmMaterialsAsync(tmmFileName);
+            var resolver = GetMaterialResolver();
+            if (resolver == null) return;
+            var resolved = await resolver.ResolveAsync(tmmFileName);
             if (resolved == null) return;
 
             var exportDir = Path.GetDirectoryName(exportedObjPath)!;
@@ -408,80 +394,6 @@ public partial class MainWindow
             File.WriteAllText(mtlPath, mtlContent);
         }
         catch { /* material export is best-effort */ }
-    }
-
-    /// <summary>
-    /// Resolves materials and textures for a TMM model via FileIndex.
-    /// Returns parsed materials + raw decompressed DDT bytes per texture path.
-    /// </summary>
-    async ValueTask<(List<MaterialInfo> Materials, Dictionary<string, (string FileName, Memory<byte> DdtData)> Textures)?> 
-        ResolveTmmMaterialsAsync(string tmmFileName)
-    {
-        if (_fileIndex == null) 
-            return null;
-
-        try
-        {
-            var tmmName = Path.GetFileNameWithoutExtension(tmmFileName);
-            var materialName = tmmName + ".material";
-
-            // Try .material.XMB first, then .material
-            var materialEntries = _fileIndex.Find(materialName + ".XMB");
-            if (materialEntries.Count == 0)
-                materialEntries = _fileIndex.Find(materialName);
-
-            if (materialEntries.Count == 0) return null;
-
-            var matEntry = materialEntries[0];
-            using var matData = await ReadFromIndexEntryPooledAsync(matEntry);
-            if (matData == null) return null;
-
-            // Convert XMB to XML if needed
-            using var matBytes = BarCompression.EnsureDecompressedPooled(matData, out _);
-
-            string? xmlText;
-            if (matEntry.FileName.EndsWith(".XMB", StringComparison.OrdinalIgnoreCase))
-            {
-                xmlText = ConversionHelper.ConvertXmbToXmlText(matBytes.Span);
-            }
-            else
-            {
-                xmlText = Encoding.UTF8.GetString(matBytes.Span);
-            }
-
-            if (xmlText == null) return null;
-
-            var materials = MaterialExporter.ParseMaterialXml(xmlText);
-            var texturePaths = MaterialExporter.GetAllTexturePaths(materials);
-            var textures = new Dictionary<string, (string FileName, Memory<byte> DdtData)>();
-
-            // Find each texture
-            foreach (var texPath in texturePaths)
-            {
-                var texFileName = Path.GetFileName(texPath.Replace('\\', '/'));
-
-                var texEntries = _fileIndex.Find(texFileName + ".ddt");
-                if (texEntries.Count == 0)
-                    texEntries = _fileIndex.Find(texFileName);
-
-                if (texEntries.Count > 0)
-                {
-                    using var texData = await ReadFromIndexEntryPooledAsync(texEntries[0]);
-                    if (texData != null)
-                    {
-                        using var decompressedTex = BarCompression.EnsureDecompressedPooled(texData, out _);
-                        // Must copy: dictionary outlives the pooled buffer
-                        textures[texPath] = (texFileName, decompressedTex.Span.ToArray());
-                    }
-                }
-            }
-
-            return (materials, textures);
-        }
-        catch
-        {
-            return null;
-        }
     }
 
     /// <summary>

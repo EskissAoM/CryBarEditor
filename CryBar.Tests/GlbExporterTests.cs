@@ -362,6 +362,63 @@ public class GlbExporterTests
     }
 
     [Fact]
+    public void ConvertTmmToGlbBytes_MaterialOrderMismatch_AlignsToTmmOrder()
+    {
+        // TMM stores materials in [matA, matB, matC] order; the .material XML lists submaterials
+        // in any order. Mesh groups index into TMM order, so the GLB must align caller-supplied
+        // materials to TMM order or mesh groups end up bound to the wrong material.
+        uint nv = 9, nt = 9;
+        uint vbl = nv * (uint)TmmVertex.SizeInBytes;
+        var tmmBytes = CreateSyntheticTmm(numMeshGroups: 3, numVertices: nv, numTriangleVerts: nt,
+            materials: ["matA", "matB", "matC"], submodels: ["default"],
+            verticesStart: 0, verticesByteLength: vbl,
+            trianglesStart: vbl, trianglesByteLength: nt * 2);
+        var dataBytes = CreateSyntheticData(numVertices: nv, numTriangleVerts: nt, hasSkinning: false);
+
+        // Caller passes materials in XML order (matB first), with distinguishable PNGs per material.
+        var materials = new List<GlbExporter.GlbMaterial>
+        {
+            new() { Name = "matB", BaseColorPng = [0xB] },
+            new() { Name = "matA", BaseColorPng = [0xA] },
+            new() { Name = "matC", BaseColorPng = [0xC] },
+        };
+
+        var glb = ConversionHelper.ConvertTmmToGlbBytes(tmmBytes, dataBytes, materials);
+        Assert.NotNull(glb);
+
+        var (doc, bin) = GlbReader.ParseContainerForTests(glb!);
+
+        var mats = doc.RootElement.GetProperty("materials");
+        Assert.Equal("matA", mats[0].GetProperty("name").GetString());
+        Assert.Equal("matB", mats[1].GetProperty("name").GetString());
+        Assert.Equal("matC", mats[2].GetProperty("name").GetString());
+
+        // glTF mesh primitive[i] uses TMM mesh group i's MaterialIndex, which CreateSyntheticTmm
+        // assigns sequentially: primitive[0]->material 0 ("matA"), primitive[1]->material 1 ("matB"), etc.
+        var prims = doc.RootElement.GetProperty("meshes")[0].GetProperty("primitives");
+        Assert.Equal(0, prims[0].GetProperty("material").GetInt32());
+        Assert.Equal(1, prims[1].GetProperty("material").GetInt32());
+        Assert.Equal(2, prims[2].GetProperty("material").GetInt32());
+
+        // Each material's baseColorTexture points to a buffer view with the distinct PNG bytes,
+        // so we can verify alignment by checking which PNG ended up at glTF material[0..2].
+        byte[] BaseColorPngForMaterial(int matIdx)
+        {
+            var texIdx = mats[matIdx].GetProperty("pbrMetallicRoughness")
+                .GetProperty("baseColorTexture").GetProperty("index").GetInt32();
+            var imgIdx = doc.RootElement.GetProperty("textures")[texIdx].GetProperty("source").GetInt32();
+            var bvIdx = doc.RootElement.GetProperty("images")[imgIdx].GetProperty("bufferView").GetInt32();
+            var bv = doc.RootElement.GetProperty("bufferViews")[bvIdx];
+            int offset = bv.TryGetProperty("byteOffset", out var off) ? off.GetInt32() : 0;
+            int len = bv.GetProperty("byteLength").GetInt32();
+            return bin.AsSpan(offset, len).ToArray();
+        }
+        Assert.Equal(new byte[] { 0xA }, BaseColorPngForMaterial(0));
+        Assert.Equal(new byte[] { 0xB }, BaseColorPngForMaterial(1));
+        Assert.Equal(new byte[] { 0xC }, BaseColorPngForMaterial(2));
+    }
+
+    [Fact]
     public void GetConvertedExtension_TmmDefault_ReturnsObj()
     {
         Assert.Equal(".obj", ConversionHelper.GetConvertedExtension(".tmm"));

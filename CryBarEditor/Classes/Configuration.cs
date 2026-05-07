@@ -26,6 +26,8 @@ public class Configuration
     public List<QuickAccessEntry>? QuickAccessEntries { get; set; }
     public bool? FilterOnlyOverriddenFiles { get; set; }
     public bool? FilterOnlyOverriddenBarEntries { get; set; }
+    public bool? Show3DMarkers { get; set; }
+    public bool? Show3DGroundGrid { get; set; }
 }
 
 [JsonSourceGenerationOptions(DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]

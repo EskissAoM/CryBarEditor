@@ -97,14 +97,44 @@ public class TbnDecoderTests
     {
         // Test with specific values that can be verified against the Python implementation
         // u16_x = 16384 (0x4000), u16_y = 32767 (0x7FFF), u16_z = 0 (0x0000)
-        // x = U15ToFloat(0x4000) = (16384/32767)*2-1 ≈ 0.0000305
+        // x = U15ToFloat(0x4000) = (16384/32767)*2-1 ~= 0.0000305
         // y = U15ToFloat(0x7FFF) = 1.0
         // z = U15ToFloat(0x0000) = -1.0
-        // w_sq = max(0, 1 - (x²+y²+z²)) = max(0, 1-2) = 0 -> w = 0
+        // w_sq = max(0, 1 - (x^2+y^2+z^2)) = max(0, 1-2) = 0 -> w = 0
         var (x, y, z, w, hand) = TbnDecoder.QuatFromPacked(16384, 32767, 0);
         Assert.Equal(0, hand);
-        // After normalization, x²+y²+z² ≈ 2, so each component is divided by sqrt(2)
+        // After normalization, x^2+y^2+z^2 ~= 2, so each component is divided by sqrt(2)
         float mag = MathF.Sqrt(x * x + y * y + z * z + w * w);
         Assert.InRange(mag, 0.99f, 1.01f);
+    }
+
+    [Fact]
+    public void DecodeTangent_IdentityQuat_ReturnsXAxisWithPositiveSign()
+    {
+        // Identity quaternion: T = (1, 0, 0), handedness = 0 -> sign = +1
+        // Mid u15 (~0) for x,y,z packs the identity with handedness bit clear
+        ushort mid = 16384;
+        var (tx, ty, tz, sign) = TbnDecoder.DecodeTangent(mid, mid, mid);
+        Assert.InRange(tx, 0.99f, 1.01f);
+        Assert.InRange(ty, -0.01f, 0.01f);
+        Assert.InRange(tz, -0.01f, 0.01f);
+        Assert.Equal(1f, sign);
+    }
+
+    [Fact]
+    public void DecodeTangent_HandednessBit_ProducesNegativeSign()
+    {
+        ushort mid = 16384;
+        ushort midWithHand = (ushort)(mid | 0x8000);
+        var (_, _, _, sign) = TbnDecoder.DecodeTangent(midWithHand, mid, mid);
+        Assert.Equal(-1f, sign);
+    }
+
+    [Fact]
+    public void DecodeTangent_ReturnsUnitVector()
+    {
+        var (tx, ty, tz, _) = TbnDecoder.DecodeTangent(10000, 20000, 5000);
+        float mag = MathF.Sqrt(tx * tx + ty * ty + tz * tz);
+        Assert.InRange(mag, 0.95f, 1.05f);
     }
 }

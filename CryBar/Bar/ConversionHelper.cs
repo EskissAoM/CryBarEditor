@@ -194,6 +194,24 @@ public static class ConversionHelper
                 .Select(name => new GlbExporter.GlbMaterial { Name = name })
                 .ToArray();
         }
+        else if (materials != null && tmm.Materials is { Length: > 0 })
+        {
+            // .material XML can list submaterials in any order; mesh groups index materials
+            // by TMM order, so we must align the caller's list to tmm.Materials by name.
+            // Without this, a mesh group with MaterialIndex=0 would receive whichever submaterial
+            // happened to be first in the XML.
+            var byName = new Dictionary<string, GlbExporter.GlbMaterial>(StringComparer.OrdinalIgnoreCase);
+            foreach (var m in materials) byName[m.Name] = m;
+
+            var aligned = new GlbExporter.GlbMaterial[tmm.Materials.Length];
+            for (int i = 0; i < tmm.Materials.Length; i++)
+            {
+                aligned[i] = byName.TryGetValue(tmm.Materials[i], out var m)
+                    ? m
+                    : new GlbExporter.GlbMaterial { Name = tmm.Materials[i] };
+            }
+            materials = aligned;
+        }
 
         var extras = GlbExtras.From(tmm,
             sourceTmas ?? Array.Empty<(string, TmaFile)>(),
