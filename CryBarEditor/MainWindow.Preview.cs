@@ -844,11 +844,33 @@ public partial class MainWindow
     {
         var group = img.GetPixelMemoryGroup();
         if (group.Count == 0) return null;
-        // Multi-chunk images are extremely rare for our texture sizes; punt on them rather
-        // than copying through a temporary buffer.
-        if (group.Count != 1) return null;
-        var byteSpan = MemoryMarshal.AsBytes(group[0].Span);
-        return _glPreview!.UploadTexture(gl, img.Width, img.Height, byteSpan);
+
+        if (group.Count == 1)
+        {
+            var byteSpan = MemoryMarshal.AsBytes(group[0].Span);
+            return _glPreview!.UploadTexture(gl, img.Width, img.Height, byteSpan);
+        }
+
+        // ImageSharp splits buffers above ~22 MB into multiple chunks (large building textures hit this).
+        // Copy into a contiguous rented buffer for the GL upload.
+        int totalPixels = img.Width * img.Height;
+        var pool = System.Buffers.ArrayPool<byte>.Shared;
+        var rented = pool.Rent(totalPixels * 4);
+        try
+        {
+            int byteOffset = 0;
+            foreach (var chunk in group)
+            {
+                var src = MemoryMarshal.AsBytes(chunk.Span);
+                src.CopyTo(rented.AsSpan(byteOffset));
+                byteOffset += src.Length;
+            }
+            return _glPreview!.UploadTexture(gl, img.Width, img.Height, rented.AsSpan(0, totalPixels * 4));
+        }
+        finally
+        {
+            pool.Return(rented);
+        }
     }
 
     void TexturedToggle_Toggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
