@@ -41,6 +41,24 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     const int GizmoSizePx = 96;
     const int GizmoMarginPx = 8;
 
+    // Markers GL resources
+    int _markersProgram;
+    int _markersVao, _markersVbo;
+    int _uMarkersMvp, _uMarkersColor;
+    int _markersVertexCapacity;
+
+    bool _showMarkers = true;
+    public bool ShowMarkers
+    {
+        get => _showMarkers;
+        set
+        {
+            if (_showMarkers == value) return;
+            _showMarkers = value;
+            RequestNextFrameRendering();
+        }
+    }
+
     // Gizmo hover / animation state
     int _hoveredGizmoAxis = -1;
     bool _animActive;
@@ -83,6 +101,18 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
             vec3 col = uColor * (0.25 + 0.75 * diff);
             FragColor = vec4(col, 1.0);
         }
+        """;
+
+    const string MarkersVertexShaderBody = """
+        layout(location = 0) in vec3 aPos;
+        uniform mat4 uMVP;
+        void main() { gl_Position = uMVP * vec4(aPos, 1.0); }
+        """;
+
+    const string MarkersFragmentShaderBody = """
+        uniform vec3 uColor;
+        out vec4 FragColor;
+        void main() { FragColor = vec4(uColor, 1.0); }
         """;
 
     const string GizmoVertexShaderBody = """
@@ -166,6 +196,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
 
         gl.BindVertexArray(0);
 
+        InitMarkersResources(gl, vsPreamble, fsPreamble);
         InitGizmoResources(gl, vsPreamble, fsPreamble);
 
         _glInitialized = true;
@@ -204,6 +235,24 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.BindVertexArray(0);
     }
 
+    void InitMarkersResources(GlInterface gl, string vsPreamble, string fsPreamble)
+    {
+        _markersProgram = CreateProgram(gl,
+            vsPreamble + MarkersVertexShaderBody,
+            fsPreamble + MarkersFragmentShaderBody);
+        _uMarkersMvp   = gl.GetUniformLocationString(_markersProgram, "uMVP");
+        _uMarkersColor = gl.GetUniformLocationString(_markersProgram, "uColor");
+
+        _markersVao = gl.GenVertexArray();
+        gl.BindVertexArray(_markersVao);
+        _markersVbo = gl.GenBuffer();
+        gl.BindBuffer(GL_ARRAY_BUFFER, _markersVbo);
+        gl.VertexAttribPointer(0, 3, GL_FLOAT, 0, 12, IntPtr.Zero);
+        gl.EnableVertexAttribArray(0);
+        gl.BindVertexArray(0);
+        _markersVertexCapacity = 0;
+    }
+
     protected override void OnOpenGlDeinit(GlInterface gl)
     {
         if (!_glInitialized) return;
@@ -217,6 +266,10 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.DeleteBuffer(_ebo);
         gl.DeleteVertexArray(_vao);
         gl.DeleteProgram(_program);
+
+        gl.DeleteBuffer(_markersVbo);
+        gl.DeleteVertexArray(_markersVao);
+        gl.DeleteProgram(_markersProgram);
 
         gl.DeleteBuffer(_gizmoVbo);
         gl.DeleteVertexArray(_gizmoVao);
