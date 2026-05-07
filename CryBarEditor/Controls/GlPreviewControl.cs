@@ -26,6 +26,22 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     int _uMvp, _uLightDir, _uColor;
     bool _glInitialized;
 
+    // Gizmo GL resources
+    int _gizmoProgram;
+    int _gizmoVao, _gizmoVbo;
+    int _gizmoVertexCount;
+    int _uGizmoView, _uGizmoColor;
+    const int GizmoSizePx = 96;
+    const int GizmoMarginPx = 8;
+
+    // Gizmo hover / animation state
+    int _hoveredGizmoAxis = -1;
+    bool _animActive;
+    float _animStartAz, _animStartEl, _animEndAz, _animEndEl;
+    double _animStartTimeMs;
+    const double AnimDurationMs = 200.0;
+    readonly System.Diagnostics.Stopwatch _animClock = new();
+
     // Function pointer for glUniform3f (not exposed by Avalonia's GlInterface)
     unsafe delegate* unmanaged<int, float, float, float, void> _glUniform3f;
 
@@ -55,6 +71,24 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
             float diff = max(dot(normalize(vNormal), uLightDir), 0.0);
             vec3 col = uColor * (0.25 + 0.75 * diff);
             FragColor = vec4(col, 1.0);
+        }
+        """;
+
+    const string GizmoVertexShaderBody = """
+        layout(location = 0) in vec3 aPos;
+        uniform mat3 uViewRot;
+        void main() {
+            vec3 v = uViewRot * aPos;
+            // Orthographic projection into clip space; gizmo viewport is square
+            gl_Position = vec4(v.x, v.y, -v.z * 0.001, 1.0);
+        }
+        """;
+
+    const string GizmoFragmentShaderBody = """
+        uniform vec3 uColor;
+        out vec4 FragColor;
+        void main() {
+            FragColor = vec4(uColor, 1.0);
         }
         """;
 
@@ -119,7 +153,42 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
 
         gl.BindVertexArray(0);
 
+        InitGizmoResources(gl, vsPreamble, fsPreamble);
+
         _glInitialized = true;
+    }
+
+    unsafe void InitGizmoResources(GlInterface gl, string vsPreamble, string fsPreamble)
+    {
+        _gizmoProgram = CreateProgram(gl,
+            vsPreamble + GizmoVertexShaderBody,
+            fsPreamble + GizmoFragmentShaderBody);
+        _uGizmoView  = gl.GetUniformLocationString(_gizmoProgram, "uViewRot");
+        _uGizmoColor = gl.GetUniformLocationString(_gizmoProgram, "uColor");
+
+        // 6 axis lines (origin to +-X/Y/Z), each as 2 vertices = 12 vertices.
+        // Pack as one buffer so a single draw call covers it; we set color uniforms per-pair.
+        var axes = new float[]
+        {
+            0,0,0,  1,0,0,
+            0,0,0, -1,0,0,
+            0,0,0,  0,1,0,
+            0,0,0,  0,-1,0,
+            0,0,0,  0,0,1,
+            0,0,0,  0,0,-1,
+        };
+        _gizmoVertexCount = axes.Length / 3;
+
+        _gizmoVao = gl.GenVertexArray();
+        gl.BindVertexArray(_gizmoVao);
+        _gizmoVbo = gl.GenBuffer();
+        gl.BindBuffer(GL_ARRAY_BUFFER, _gizmoVbo);
+        fixed (float* p = axes)
+            gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(axes.Length * sizeof(float)), (IntPtr)p, GL_STATIC_DRAW);
+
+        gl.VertexAttribPointer(0, 3, GL_FLOAT, 0, 12, IntPtr.Zero);
+        gl.EnableVertexAttribArray(0);
+        gl.BindVertexArray(0);
     }
 
     protected override void OnOpenGlDeinit(GlInterface gl)
@@ -135,6 +204,10 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.DeleteBuffer(_ebo);
         gl.DeleteVertexArray(_vao);
         gl.DeleteProgram(_program);
+
+        gl.DeleteBuffer(_gizmoVbo);
+        gl.DeleteVertexArray(_gizmoVao);
+        gl.DeleteProgram(_gizmoProgram);
 
         _glInitialized = false;
         _meshDirty = true; // force re-upload when reattached
