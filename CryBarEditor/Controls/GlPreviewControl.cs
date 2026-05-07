@@ -27,6 +27,12 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     int _uMvp, _uLightDir, _uColor;
     bool _glInitialized;
 
+    // Textured shader (TBN normal mapping)
+    int _texturedProgram;
+    int _uTexMvp, _uTexLightDir, _uTexBaseSampler, _uTexNormalSampler;
+    bool _useTextured;
+    PreviewTextureSet? _activeTextures;
+
     // Public API: gizmo label projection (consumed by overlay canvas)
     public readonly record struct GizmoLabel(int Axis, string Letter, double X, double Y, bool Hovered);
 
@@ -129,6 +135,47 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         }
         """;
 
+    const string TexturedVertexShaderBody = """
+        layout(location = 0) in vec3 aPos;
+        layout(location = 1) in vec3 aNormal;
+        layout(location = 2) in vec2 aUv;
+        layout(location = 3) in vec4 aTangent;
+        uniform mat4 uMVP;
+        out vec3 vNormal;
+        out vec3 vTangent;
+        out vec3 vBitangent;
+        out vec2 vUv;
+        void main() {
+            gl_Position = uMVP * vec4(aPos, 1.0);
+            vec3 n = normalize(aNormal);
+            vec3 t = normalize(aTangent.xyz);
+            vec3 b = cross(n, t) * aTangent.w;
+            vNormal = n;
+            vTangent = t;
+            vBitangent = b;
+            vUv = aUv;
+        }
+        """;
+
+    const string TexturedFragmentShaderBody = """
+        in vec3 vNormal;
+        in vec3 vTangent;
+        in vec3 vBitangent;
+        in vec2 vUv;
+        uniform vec3 uLightDir;
+        uniform sampler2D uBaseColor;
+        uniform sampler2D uNormalMap;
+        out vec4 FragColor;
+        void main() {
+            vec3 sampledN = texture(uNormalMap, vUv).rgb * 2.0 - 1.0;
+            mat3 tbn = mat3(normalize(vTangent), normalize(vBitangent), normalize(vNormal));
+            vec3 worldN = normalize(tbn * sampledN);
+            float diff = max(dot(worldN, uLightDir), 0.0);
+            vec3 base = texture(uBaseColor, vUv).rgb;
+            FragColor = vec4(base * (0.25 + 0.75 * diff), 1.0);
+        }
+        """;
+
     const string MarkersVertexShaderBody = """
         layout(location = 0) in vec3 aPos;
         uniform mat4 uMVP;
@@ -210,6 +257,12 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         _uMvp = gl.GetUniformLocationString(_program, "uMVP");
         _uLightDir = gl.GetUniformLocationString(_program, "uLightDir");
         _uColor = gl.GetUniformLocationString(_program, "uColor");
+
+        _texturedProgram     = CreateProgram(gl, vsPreamble + TexturedVertexShaderBody, fsPreamble + TexturedFragmentShaderBody);
+        _uTexMvp             = gl.GetUniformLocationString(_texturedProgram, "uMVP");
+        _uTexLightDir        = gl.GetUniformLocationString(_texturedProgram, "uLightDir");
+        _uTexBaseSampler     = gl.GetUniformLocationString(_texturedProgram, "uBaseColor");
+        _uTexNormalSampler   = gl.GetUniformLocationString(_texturedProgram, "uNormalMap");
 
         _vao = gl.GenVertexArray();
         gl.BindVertexArray(_vao);
@@ -355,6 +408,8 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.DeleteBuffer(_markersVbo);
         gl.DeleteVertexArray(_markersVao);
         gl.DeleteProgram(_markersProgram);
+
+        gl.DeleteProgram(_texturedProgram);
 
         gl.DeleteBuffer(_gizmoVbo);
         gl.DeleteVertexArray(_gizmoVao);
