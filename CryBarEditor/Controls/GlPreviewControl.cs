@@ -104,15 +104,18 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.BindBuffer(GL_ARRAY_BUFFER, _vbo);
         gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, _ebo);
 
-        // layout 0 = pos (3 floats), offset 0, stride 32
-        gl.VertexAttribPointer(0, 3, GL_FLOAT, 0, 32, IntPtr.Zero);
+        // layout 0 = pos (3 floats), offset 0, stride 48
+        gl.VertexAttribPointer(0, 3, GL_FLOAT, 0, 48, IntPtr.Zero);
         gl.EnableVertexAttribArray(0);
-        // layout 1 = normal (3 floats), offset 12, stride 32
-        gl.VertexAttribPointer(1, 3, GL_FLOAT, 0, 32, new IntPtr(12));
+        // layout 1 = normal (3 floats), offset 12, stride 48
+        gl.VertexAttribPointer(1, 3, GL_FLOAT, 0, 48, new IntPtr(12));
         gl.EnableVertexAttribArray(1);
-        // layout 2 = uv (2 floats), offset 24, stride 32
-        gl.VertexAttribPointer(2, 2, GL_FLOAT, 0, 32, new IntPtr(24));
+        // layout 2 = uv (2 floats), offset 24, stride 48
+        gl.VertexAttribPointer(2, 2, GL_FLOAT, 0, 48, new IntPtr(24));
         gl.EnableVertexAttribArray(2);
+        // layout 3 = tangent (4 floats), offset 32, stride 48 - solid shader ignores it
+        gl.VertexAttribPointer(3, 4, GL_FLOAT, 0, 48, new IntPtr(32));
+        gl.EnableVertexAttribArray(3);
 
         gl.BindVertexArray(0);
 
