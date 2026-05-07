@@ -44,6 +44,8 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
 
     // Function pointer for glUniform3f (not exposed by Avalonia's GlInterface)
     unsafe delegate* unmanaged<int, float, float, float, void> _glUniform3f;
+    // Function pointer for glUniformMatrix3fv (not exposed by Avalonia's GlInterface)
+    unsafe delegate* unmanaged<int, int, byte, float*, void> _glUniformMatrix3fv;
 
     // Mouse tracking
     Point _lastPointerPos;
@@ -123,6 +125,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
 
         // Get proc address for glUniform3f (not in Avalonia's GlInterface)
         _glUniform3f = (delegate* unmanaged<int, float, float, float, void>)gl.GetProcAddress("glUniform3f");
+        _glUniformMatrix3fv = (delegate* unmanaged<int, int, byte, float*, void>)gl.GetProcAddress("glUniformMatrix3fv");
 
         _program = CreateProgram(gl, vsPreamble + VertexShaderBody, fsPreamble + FragmentShaderBody);
         _uMvp = gl.GetUniformLocationString(_program, "uMVP");
@@ -223,6 +226,9 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         int w = (int)(Bounds.Width * scaling);
         int h = (int)(Bounds.Height * scaling);
         if (w <= 0 || h <= 0) return;
+
+        UpdateGizmoAnimation();
+
         gl.Viewport(0, 0, w, h);
 
         gl.ClearColor(0.04f, 0.04f, 0.04f, 1f);
@@ -280,6 +286,95 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.BindVertexArray(0);
         gl.UseProgram(0);
         gl.Disable(GL_DEPTH_TEST);
+
+        DrawGizmo(gl, w, h, scaling);
+    }
+
+    Matrix4x4 GetCameraViewRotation()
+    {
+        // Strip translation from the view matrix to get pure rotation.
+        var view = _camera.GetViewMatrix();
+        view.M41 = 0; view.M42 = 0; view.M43 = 0;
+        return view;
+    }
+
+    unsafe void DrawGizmo(GlInterface gl, int viewportW, int viewportH, double scaling)
+    {
+        int gizmoSize = (int)(GizmoSizePx * scaling);
+        int margin    = (int)(GizmoMarginPx * scaling);
+        int gx = viewportW - gizmoSize - margin;
+        int gy = viewportH - gizmoSize - margin;
+
+        gl.Viewport(gx, gy, gizmoSize, gizmoSize);
+        gl.Clear(GL_DEPTH_BUFFER_BIT);
+        gl.Disable(GL_DEPTH_TEST);
+
+        gl.UseProgram(_gizmoProgram);
+
+        var rot = GetCameraViewRotation();
+        // Pass the upper 3x3 of the view rotation as a mat3.
+        float[] m3 =
+        {
+            rot.M11, rot.M12, rot.M13,
+            rot.M21, rot.M22, rot.M23,
+            rot.M31, rot.M32, rot.M33
+        };
+        if (_glUniformMatrix3fv != null)
+        {
+            fixed (float* mp = m3)
+                _glUniformMatrix3fv(_uGizmoView, 1, 0, mp);
+        }
+
+        gl.BindVertexArray(_gizmoVao);
+
+        // Six axis colors: +X, -X, +Y, -Y, +Z, -Z
+        // Hovered axis is brightened by 1.3x, clamped per-channel.
+        var colors = new (float r, float g, float b)[]
+        {
+            (1.0f, 0.20f, 0.20f), (0.5f, 0.10f, 0.10f),
+            (0.20f, 1.0f, 0.20f), (0.10f, 0.5f, 0.10f),
+            (0.30f, 0.50f, 1.0f), (0.15f, 0.25f, 0.5f),
+        };
+
+        if (_glUniform3f != null)
+        {
+            for (int i = 0; i < 6; i++)
+            {
+                var c = colors[i];
+                if (i == _hoveredGizmoAxis)
+                {
+                    c.r = MathF.Min(1.0f, c.r * 1.3f);
+                    c.g = MathF.Min(1.0f, c.g * 1.3f);
+                    c.b = MathF.Min(1.0f, c.b * 1.3f);
+                }
+                _glUniform3f(_uGizmoColor, c.r, c.g, c.b);
+                gl.DrawArrays(0x0001 /* GL_LINES */, i * 2, 2);
+            }
+        }
+
+        gl.BindVertexArray(0);
+        gl.UseProgram(0);
+    }
+
+    void UpdateGizmoAnimation()
+    {
+        if (!_animActive) return;
+        double now = _animClock.Elapsed.TotalMilliseconds;
+        double t = (now - _animStartTimeMs) / AnimDurationMs;
+        if (t >= 1.0)
+        {
+            _camera.Azimuth = _animEndAz;
+            _camera.Elevation = _animEndEl;
+            _animActive = false;
+            return;
+        }
+        // Ease in / out (quadratic)
+        float eased = (float)(t < 0.5
+            ? 2.0 * t * t
+            : 1.0 - System.Math.Pow(-2.0 * t + 2.0, 2.0) / 2.0);
+        _camera.Azimuth   = _animStartAz + (_animEndAz - _animStartAz) * eased;
+        _camera.Elevation = _animStartEl + (_animEndEl - _animStartEl) * eased;
+        RequestNextFrameRendering();
     }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
