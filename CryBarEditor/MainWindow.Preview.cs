@@ -682,7 +682,70 @@ public partial class MainWindow
     {
         if (_glPreview != null) return;
         _glPreview = new GlPreviewControl();
+        _glPreview.GizmoLabelsProjected += OnGizmoLabelsProjected;
         _3dViewContainer.Child = _glPreview;
+    }
+
+    Border[]? _gizmoLabelBorders;
+
+    static IBrush GetGizmoLabelBrush(int axis, bool hovered)
+    {
+        // Match the gizmo axis palette; positive ends get the saturated colors.
+        (byte r, byte g, byte b) c = axis switch
+        {
+            0 => (255, 51, 51),    // +X
+            2 => (51, 255, 51),    // +Y
+            4 => (77, 128, 255),   // +Z
+            _ => (200, 200, 200)
+        };
+        if (hovered)
+        {
+            c.r = (byte)Math.Min(255, c.r + 40);
+            c.g = (byte)Math.Min(255, c.g + 40);
+            c.b = (byte)Math.Min(255, c.b + 40);
+        }
+        return new SolidColorBrush(Avalonia.Media.Color.FromRgb(c.r, c.g, c.b));
+    }
+
+    void OnGizmoLabelsProjected(IReadOnlyList<Controls.GlPreviewControl.GizmoLabel> labels)
+    {
+        if (_gizmoLabelBorders == null)
+        {
+            _gizmoLabelBorders = new Border[labels.Count];
+            for (int i = 0; i < labels.Count; i++)
+            {
+                var tb = new TextBlock
+                {
+                    Text = labels[i].Letter,
+                    FontSize = 10,
+                    FontWeight = FontWeight.Bold,
+                    Foreground = Brushes.Black,
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                    IsHitTestVisible = false
+                };
+                var border = new Border
+                {
+                    Width = 16,
+                    Height = 16,
+                    CornerRadius = new Avalonia.CornerRadius(8),
+                    Child = tb,
+                    IsHitTestVisible = false
+                };
+                _3dLabelCanvas.Children.Add(border);
+                _gizmoLabelBorders[i] = border;
+            }
+        }
+
+        for (int i = 0; i < labels.Count && i < _gizmoLabelBorders.Length; i++)
+        {
+            var l = labels[i];
+            var b = _gizmoLabelBorders[i];
+            b.Background = GetGizmoLabelBrush(l.Axis, l.Hovered);
+            Canvas.SetLeft(b, l.X - b.Width * 0.5);
+            Canvas.SetTop(b, l.Y - b.Height * 0.5);
+            b.IsVisible = true;
+        }
     }
 
     void LoadMeshIntoScene(PreviewMeshData meshData)

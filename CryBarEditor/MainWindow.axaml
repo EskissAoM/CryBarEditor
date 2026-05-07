@@ -475,7 +475,10 @@
 										<Button Content="Reset Camera"
 											Click="ResetCamera_Click" Padding="6,2" />
 									</StackPanel>
-									<Border x:Name="_3dViewContainer" Background="#0a0a0a" />
+									<Grid>
+										<Border x:Name="_3dViewContainer" Background="#0a0a0a" />
+										<Canvas x:Name="_3dLabelCanvas" IsHitTestVisible="False" />
+									</Grid>
 								</DockPanel>
 							</TabItem>
 						</TabControl>

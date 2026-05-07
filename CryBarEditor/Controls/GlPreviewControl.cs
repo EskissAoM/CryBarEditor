@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using Avalonia;
 using Avalonia.Controls;
@@ -25,6 +26,12 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     int _vao, _vbo, _ebo;
     int _uMvp, _uLightDir, _uColor;
     bool _glInitialized;
+
+    // Public API: gizmo label projection (consumed by overlay canvas)
+    public readonly record struct GizmoLabel(int Axis, string Letter, double X, double Y, bool Hovered);
+
+    public event Action<IReadOnlyList<GizmoLabel>>? GizmoLabelsProjected;
+    readonly List<GizmoLabel> _gizmoLabelBuffer = new(3);
 
     // Gizmo GL resources
     int _gizmoProgram;
@@ -291,6 +298,41 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.Disable(GL_DEPTH_TEST);
 
         DrawGizmo(gl, w, h, scaling);
+        ProjectAndEmitGizmoLabels(scaling, w, h);
+    }
+
+    void ProjectAndEmitGizmoLabels(double scaling, int viewportW, int viewportH)
+    {
+        if (GizmoLabelsProjected == null) return;
+        _gizmoLabelBuffer.Clear();
+
+        // Logical pixels (Avalonia coords). Mirrors the math in HitTestGizmo.
+        double size   = GizmoSizePx;
+        double margin = GizmoMarginPx;
+        double cx = (viewportW / scaling) - size * 0.5 - margin;
+        double cy = margin + size * 0.5;
+        double r  = size * 0.5 - 4;
+
+        var rot = GetCameraViewRotation();
+
+        // Only +X / +Y / +Z get filled circular letter markers.
+        // Indices match _hoveredGizmoAxis ordering: 0=+X, 2=+Y, 4=+Z.
+        var posAxes = new (int axis, string letter, float ax, float ay, float az)[]
+        {
+            (0, "X", 1, 0, 0),
+            (2, "Y", 0, 1, 0),
+            (4, "Z", 0, 0, 1),
+        };
+        foreach (var (axisIdx, letter, ax, ay, az) in posAxes)
+        {
+            float vx = ax * rot.M11 + ay * rot.M21 + az * rot.M31;
+            float vy = ax * rot.M12 + ay * rot.M22 + az * rot.M32;
+            double sx = cx + vx * r;
+            double sy = cy - vy * r;
+            bool hovered = _hoveredGizmoAxis == axisIdx;
+            _gizmoLabelBuffer.Add(new GizmoLabel(axisIdx, letter, sx, sy, hovered));
+        }
+        GizmoLabelsProjected.Invoke(_gizmoLabelBuffer);
     }
 
     Matrix4x4 GetCameraViewRotation()
