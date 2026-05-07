@@ -758,9 +758,14 @@ public partial class MainWindow
         var meshData = _glPreview?.GetMeshData();
         if (meshData == null) return;
 
-        // Index-keyed: the resolver returns materials in TMM material-index order, which is
-        // what DrawGroupMaterialIndices points into.
-        var matCount = resolved.Value.Materials.Count;
+        // .material XML lists submaterials in arbitrary order; mesh groups address materials by
+        // TMM material-index order. Align the parsed list to TMM order via name lookup so
+        // matBaseImages[i] is the texture for the TMM material at index i (what DrawGroupMaterialIndices points into).
+        var matByName = new Dictionary<string, CryBar.Export.MaterialInfo>(StringComparer.OrdinalIgnoreCase);
+        foreach (var m in resolved.Value.Materials) matByName[m.Name] = m;
+
+        var tmmMatNames = meshData.MaterialNames;
+        var matCount = tmmMatNames.Length;
         var matBaseImages = new Image<Rgba32>?[matCount];
         var matNormalImages = new Image<Rgba32>?[matCount];
 
@@ -769,7 +774,7 @@ public partial class MainWindow
         for (int i = 0; i < matCount; i++)
         {
             int matIndex = i;
-            var mat = resolved.Value.Materials[i];
+            if (!matByName.TryGetValue(tmmMatNames[i], out var mat)) continue;
             foreach (var (texName, texPath) in mat.Textures)
             {
                 if (!resolved.Value.Textures.TryGetValue(texPath, out var info)) continue;
