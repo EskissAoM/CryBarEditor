@@ -54,11 +54,26 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     const int GizmoSizePx = 96;
     const int GizmoMarginPx = 8;
 
+    // Six axis colors for the gizmo: +X, -X, +Y, -Y, +Z, -Z. Hovered axis brightens 1.3x, clamped.
+    static readonly (float r, float g, float b)[] _gizmoAxisColors =
+    {
+        (1.0f, 0.20f, 0.20f), (0.5f, 0.10f, 0.10f),
+        (0.20f, 1.0f, 0.20f), (0.10f, 0.5f, 0.10f),
+        (0.30f, 0.50f, 1.0f), (0.15f, 0.25f, 0.5f),
+    };
+
+    // Positive-axis label specs: (gizmoAxisIndex, letter, ax, ay, az). Indices match _hoveredGizmoAxis.
+    static readonly (int axis, string letter, float ax, float ay, float az)[] _gizmoPositiveAxes =
+    {
+        (0, "X", 1, 0, 0),
+        (2, "Y", 0, 1, 0),
+        (4, "Z", 0, 0, 1),
+    };
+
     // Markers GL resources
     int _markersProgram;
     int _markersVao, _markersVbo;
     int _uMarkersMvp, _uMarkersColor, _uMarkersAlpha;
-    int _markersVertexCapacity;
 
     bool _showMarkers = true;
     public bool ShowMarkers
@@ -453,7 +468,6 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.VertexAttribPointer(0, 3, GL_FLOAT, 0, 12, IntPtr.Zero);
         gl.EnableVertexAttribArray(0);
         gl.BindVertexArray(0);
-        _markersVertexCapacity = 0;
     }
 
     protected override void OnOpenGlDeinit(GlInterface gl)
@@ -766,15 +780,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
 
         var rot = GetCameraViewRotation();
 
-        // Only +X / +Y / +Z get filled circular letter markers.
-        // Indices match _hoveredGizmoAxis ordering: 0=+X, 2=+Y, 4=+Z.
-        var posAxes = new (int axis, string letter, float ax, float ay, float az)[]
-        {
-            (0, "X", 1, 0, 0),
-            (2, "Y", 0, 1, 0),
-            (4, "Z", 0, 0, 1),
-        };
-        foreach (var (axisIdx, letter, ax, ay, az) in posAxes)
+        foreach (var (axisIdx, letter, ax, ay, az) in _gizmoPositiveAxes)
         {
             float vx = ax * rot.M11 + ay * rot.M21 + az * rot.M31;
             float vy = ax * rot.M12 + ay * rot.M22 + az * rot.M32;
@@ -889,7 +895,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
 
         var rot = GetCameraViewRotation();
         // Pass the upper 3x3 of the view rotation as a mat3.
-        float[] m3 =
+        Span<float> m3 = stackalloc float[9]
         {
             rot.M11, rot.M12, rot.M13,
             rot.M21, rot.M22, rot.M23,
@@ -903,21 +909,12 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
 
         gl.BindVertexArray(_gizmoVao);
 
-        // Six axis colors: +X, -X, +Y, -Y, +Z, -Z
-        // Hovered axis is brightened by 1.3x, clamped per-channel.
-        var colors = new (float r, float g, float b)[]
-        {
-            (1.0f, 0.20f, 0.20f), (0.5f, 0.10f, 0.10f),
-            (0.20f, 1.0f, 0.20f), (0.10f, 0.5f, 0.10f),
-            (0.30f, 0.50f, 1.0f), (0.15f, 0.25f, 0.5f),
-        };
-
         if (_glLineWidth != null) _glLineWidth(2.0f);
         if (_glUniform3f != null)
         {
             for (int i = 0; i < 6; i++)
             {
-                var c = colors[i];
+                var c = _gizmoAxisColors[i];
                 if (i == _hoveredGizmoAxis)
                 {
                     c.r = MathF.Min(1.0f, c.r * 1.3f);

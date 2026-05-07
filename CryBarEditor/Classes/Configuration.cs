@@ -28,7 +28,6 @@ public class Configuration
     public bool? FilterOnlyOverriddenBarEntries { get; set; }
     public bool? Show3DMarkers { get; set; }
     public bool? Show3DGroundGrid { get; set; }
-    public bool? Use3DTexturedMode { get; set; }
 }
 
 [JsonSourceGenerationOptions(DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]

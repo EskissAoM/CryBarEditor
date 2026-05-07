@@ -41,6 +41,7 @@ public partial class MainWindow
     CancellationTokenSource? _textureLoadCts;
     string? _currentTextureTmm;
     string? _currentTmmFileName;
+    bool _useTextured3D; // Per-session preference; not persisted.
 
     #region Preview dispatchers
     public async Task Preview(RootFileEntry? entry)
@@ -707,7 +708,7 @@ public partial class MainWindow
         if (_textureAvailability.TryGetValue(tmmFileName, out bool cached))
         {
             UpdateTexturedToggleVisibility(cached);
-            if (cached && _lastConfiguration?.Use3DTexturedMode == true)
+            if (cached && _useTextured3D)
                 await EnsureTexturesLoadedAsync(tmmFileName, token);
             return;
         }
@@ -719,7 +720,7 @@ public partial class MainWindow
         _textureAvailability[tmmFileName] = has;
         UpdateTexturedToggleVisibility(has);
 
-        if (has && _lastConfiguration?.Use3DTexturedMode == true)
+        if (has && _useTextured3D)
             await EnsureTexturesLoadedAsync(tmmFileName, token);
     }
 
@@ -728,14 +729,13 @@ public partial class MainWindow
         _texturedToggle.IsVisible = available;
         if (!available)
         {
-            _texturedToggle.IsChecked = false;
+            // Don't clear _useTextured3D - preserve preference for the next textured-capable TMM.
             if (_glPreview != null) _glPreview.UseTexturedMode = false;
         }
         else
         {
-            bool wantTextured = _lastConfiguration?.Use3DTexturedMode == true;
-            _texturedToggle.IsChecked = wantTextured;
-            if (_glPreview != null) _glPreview.UseTexturedMode = wantTextured;
+            _texturedToggle.IsChecked = _useTextured3D;
+            if (_glPreview != null) _glPreview.UseTexturedMode = _useTextured3D;
         }
     }
 
@@ -758,33 +758,40 @@ public partial class MainWindow
         var meshData = _glPreview?.GetMeshData();
         if (meshData == null) return;
 
-        // Decode textures into per-material-index arrays on the worker thread.
-        // Index-keyed (not name-keyed): the resolver returns materials in TMM material-index
-        // order, which is what DrawGroupMaterialIndices points into. Name lookup is broken
-        // because TMM MaterialNames (e.g. "atlantean\armory") don't match XML submaterial
-        // names (e.g. "base", "damaged"). GPU upload runs later on the GL thread via QueueGlAction.
+        // Index-keyed: the resolver returns materials in TMM material-index order, which is
+        // what DrawGroupMaterialIndices points into.
         var matCount = resolved.Value.Materials.Count;
         var matBaseImages = new Image<Rgba32>?[matCount];
         var matNormalImages = new Image<Rgba32>?[matCount];
 
+        // Decode all DDTs in parallel - each DDTImage is independent and the BCn decode is CPU-bound.
+        var decodeTasks = new List<Task>();
         for (int i = 0; i < matCount; i++)
         {
+            int matIndex = i;
             var mat = resolved.Value.Materials[i];
             foreach (var (texName, texPath) in mat.Textures)
             {
                 if (!resolved.Value.Textures.TryGetValue(texPath, out var info)) continue;
                 var lower = texName.ToLowerInvariant();
-                if (lower != "basecolor" && lower != "diffuse" && lower != "normals" && lower != "normal") continue;
+                bool isBase = lower == "basecolor" || lower == "diffuse";
+                bool isNormal = lower == "normals" || lower == "normal";
+                if (!isBase && !isNormal) continue;
 
-                var ddt = new DDTImage(info.DdtData);
-                if (!ddt.ParseHeader()) continue;
-                var img = await ddt.DecodeMipmapToImage(0, token);
-                if (img == null) continue;
-
-                if (lower == "basecolor" || lower == "diffuse") matBaseImages[i] = img;
-                else matNormalImages[i] = img;
+                var ddtBytes = info.DdtData;
+                decodeTasks.Add(Task.Run(async () =>
+                {
+                    var ddt = new DDTImage(ddtBytes);
+                    if (!ddt.ParseHeader()) return;
+                    var img = await ddt.DecodeMipmapToImage(0, token);
+                    if (img == null) return;
+                    if (isBase) matBaseImages[matIndex] = img;
+                    else matNormalImages[matIndex] = img;
+                }, token));
             }
         }
+        try { await Task.WhenAll(decodeTasks); }
+        catch (OperationCanceledException) { /* fall through to dispose */ }
 
         if (token.IsCancellationRequested)
         {
@@ -799,6 +806,17 @@ public partial class MainWindow
         // Schedule GPU upload on the next render frame.
         _glPreview!.QueueGlAction((gl) =>
         {
+            // Drop the upload if the user has switched TMMs (or cancelled) since we queued.
+            if (token.IsCancellationRequested || _currentTmmFileName != tmmFileName)
+            {
+                for (int i = 0; i < matCount; i++)
+                {
+                    matBaseImages[i]?.Dispose();
+                    matNormalImages[i]?.Dispose();
+                }
+                return;
+            }
+
             var owned = new List<int>();
             var perMaterialByIndex = new (int? Base, int? Normal)[matCount];
 
@@ -832,8 +850,6 @@ public partial class MainWindow
             }
 
             var set = new PreviewTextureSet { OwnedHandles = owned, MeshGroupBindings = bindings };
-            // LruCache eviction callback (set on _textureCache) queues a GL action that
-            // deletes the evicted set's handles next frame.
             cache.Add(tmmFileName, set);
             _glPreview.SetActiveTextures(set);
             _currentTextureTmm = tmmFileName;
@@ -875,11 +891,10 @@ public partial class MainWindow
 
     void TexturedToggle_Toggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        bool on = _texturedToggle.IsChecked == true;
-        SaveConfiguration();
-        if (_glPreview != null) _glPreview.UseTexturedMode = on;
+        _useTextured3D = _texturedToggle.IsChecked == true;
+        if (_glPreview != null) _glPreview.UseTexturedMode = _useTextured3D;
 
-        if (on && _currentTmmFileName != null)
+        if (_useTextured3D && _currentTmmFileName != null)
         {
             var oldCts = _textureLoadCts;
             _textureLoadCts = new CancellationTokenSource();

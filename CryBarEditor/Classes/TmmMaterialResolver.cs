@@ -91,24 +91,57 @@ public sealed class TmmMaterialResolver
     }
 
     /// <summary>
-    /// Cheap availability probe - returns true if at least one referenced texture entry
-    /// exists in the FileIndex without decompressing or parsing the material.
-    /// Use this to decide whether to show a "textured" toggle in the UI.
+    /// Cheap availability probe - parses just the material XML and tests basecolor/diffuse
+    /// texture file presence in the FileIndex without decompressing any DDT bytes.
     /// </summary>
     public async ValueTask<bool> HasAtLeastBaseColorAsync(string tmmFileName, CancellationToken token = default)
     {
-        var resolved = await ResolveAsync(tmmFileName, token);
-        if (resolved == null) return false;
-
-        foreach (var mat in resolved.Value.Materials)
+        try
         {
-            foreach (var (texName, texPath) in mat.Textures)
+            var materials = await ParseMaterialsOnlyAsync(tmmFileName, token);
+            if (materials == null) return false;
+
+            foreach (var mat in materials)
             {
-                var lower = texName.ToLowerInvariant();
-                if ((lower == "basecolor" || lower == "diffuse") && resolved.Value.Textures.ContainsKey(texPath))
-                    return true;
+                foreach (var (texName, texPath) in mat.Textures)
+                {
+                    var lower = texName.ToLowerInvariant();
+                    if (lower != "basecolor" && lower != "diffuse") continue;
+                    var texFileName = Path.GetFileName(texPath.Replace('\\', '/'));
+                    if (_fileIndex.Find(texFileName + ".ddt").Count > 0 ||
+                        _fileIndex.Find(texFileName).Count > 0)
+                        return true;
+                }
             }
+            return false;
         }
-        return false;
+        catch
+        {
+            return false;
+        }
+    }
+
+    async ValueTask<List<MaterialInfo>?> ParseMaterialsOnlyAsync(string tmmFileName, CancellationToken token)
+    {
+        var tmmName = Path.GetFileNameWithoutExtension(tmmFileName);
+        var materialName = tmmName + ".material";
+
+        var materialEntries = _fileIndex.Find(materialName + ".XMB");
+        if (materialEntries.Count == 0)
+            materialEntries = _fileIndex.Find(materialName);
+        if (materialEntries.Count == 0) return null;
+
+        var matEntry = materialEntries[0];
+        using var matData = await _readEntry(matEntry);
+        if (matData == null) return null;
+
+        using var matBytes = BarCompression.EnsureDecompressedPooled(matData, out _);
+        token.ThrowIfCancellationRequested();
+
+        string? xmlText = matEntry.FileName.EndsWith(".XMB", StringComparison.OrdinalIgnoreCase)
+            ? ConversionHelper.ConvertXmbToXmlText(matBytes.Span)
+            : Encoding.UTF8.GetString(matBytes.Span);
+
+        return xmlText == null ? null : MaterialExporter.ParseMaterialXml(xmlText);
     }
 }
