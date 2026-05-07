@@ -78,4 +78,16 @@ public static class TbnDecoder
         var (_, _, normal) = QuatToTbn(qx, qy, qz, qw, hand);
         return normal;
     }
+
+    /// <summary>
+    /// Decodes packed TBN u16 values directly to a game-space tangent vector
+    /// plus the bitangent sign (+1 or -1, based on the handedness bit).
+    /// </summary>
+    public static (float x, float y, float z, float sign) DecodeTangent(ushort u16X, ushort u16Y, ushort u16Z)
+    {
+        var (qx, qy, qz, qw, hand) = QuatFromPacked(u16X, u16Y, u16Z);
+        var (tangent, _, _) = QuatToTbn(qx, qy, qz, qw, hand);
+        float sign = hand == 0 ? 1f : -1f;
+        return (tangent.x, tangent.y, tangent.z, sign);
+    }
 }
