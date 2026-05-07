@@ -12,11 +12,14 @@ using CryBar.Utilities;
 using CryBarEditor.Classes;
 using CryBarEditor.Controls;
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Advanced;
+using SixLabors.ImageSharp.PixelFormats;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -26,6 +29,18 @@ namespace CryBarEditor;
 public partial class MainWindow
 {
     CancellationTokenSource? _previewCsc;
+
+    // Capacity 2 keeps GPU memory bounded across rapid TMM switches while still hiding
+    // decode latency for the most recently viewed model and one neighbor. The eviction
+    // callback queues the actual GL handle deletion onto the render thread.
+    LruCache<PreviewTextureSet>? _textureCache;
+    LruCache<PreviewTextureSet> EnsureTextureCache() => _textureCache ??= new LruCache<PreviewTextureSet>(2,
+        set => _glPreview?.QueueGlAction(gl => set.DisposeGl(h => gl.DeleteTexture(h))));
+
+    readonly Dictionary<string, bool> _textureAvailability = new();
+    CancellationTokenSource? _textureLoadCts;
+    string? _currentTextureTmm;
+    string? _currentTmmFileName;
 
     #region Preview dispatchers
     public async Task Preview(RootFileEntry? entry)
@@ -643,6 +658,8 @@ public partial class MainWindow
     async Task LoadTmm3DPreview(string tmmFileName, Memory<byte> tmmData,
         string? preferredRelativeDir, CancellationToken token)
     {
+        _currentTmmFileName = tmmFileName;
+
         var oldCts = _meshConversionCts;
         _meshConversionCts = CancellationTokenSource.CreateLinkedTokenSource(token);
         var ct = _meshConversionCts.Token;
@@ -674,6 +691,174 @@ public partial class MainWindow
             FlushPendingMesh();
         else
             Update3DStatus(""); // ready, will load when tab is selected
+
+        // Kick off availability probe (and texture load if user prefers textured mode).
+        // Independent of the mesh-conversion CTS - texture work has its own lifetime.
+        var oldTexCts = _textureLoadCts;
+        _textureLoadCts = new CancellationTokenSource();
+        oldTexCts?.Cancel();
+        oldTexCts?.Dispose();
+        _ = ProbeTextureAvailabilityAsync(tmmFileName, _textureLoadCts.Token);
+    }
+
+    async Task ProbeTextureAvailabilityAsync(string tmmFileName, CancellationToken token)
+    {
+        if (_fileIndex == null) { UpdateTexturedToggleVisibility(false); return; }
+        if (_textureAvailability.TryGetValue(tmmFileName, out bool cached))
+        {
+            UpdateTexturedToggleVisibility(cached);
+            if (cached && _lastConfiguration?.Use3DTexturedMode == true)
+                await EnsureTexturesLoadedAsync(tmmFileName, token);
+            return;
+        }
+
+        var resolver = new TmmMaterialResolver(_fileIndex, ReadFromIndexEntryPooledAsync);
+        bool has = await resolver.HasAtLeastBaseColorAsync(tmmFileName, token);
+        if (token.IsCancellationRequested) return;
+
+        _textureAvailability[tmmFileName] = has;
+        UpdateTexturedToggleVisibility(has);
+
+        if (has && _lastConfiguration?.Use3DTexturedMode == true)
+            await EnsureTexturesLoadedAsync(tmmFileName, token);
+    }
+
+    void UpdateTexturedToggleVisibility(bool available)
+    {
+        _texturedToggle.IsVisible = available;
+        if (!available)
+        {
+            _texturedToggle.IsChecked = false;
+            if (_glPreview != null) _glPreview.UseTexturedMode = false;
+        }
+        else
+        {
+            bool wantTextured = _lastConfiguration?.Use3DTexturedMode == true;
+            _texturedToggle.IsChecked = wantTextured;
+            if (_glPreview != null) _glPreview.UseTexturedMode = wantTextured;
+        }
+    }
+
+    async Task EnsureTexturesLoadedAsync(string tmmFileName, CancellationToken token)
+    {
+        if (_fileIndex == null) return;
+
+        var cache = EnsureTextureCache();
+        if (cache.TryGet(tmmFileName, out var existing) && existing != null)
+        {
+            _glPreview?.SetActiveTextures(existing);
+            _currentTextureTmm = tmmFileName;
+            return;
+        }
+
+        var resolver = new TmmMaterialResolver(_fileIndex, ReadFromIndexEntryPooledAsync);
+        var resolved = await resolver.ResolveAsync(tmmFileName, token);
+        if (resolved == null || token.IsCancellationRequested) return;
+
+        var meshData = _glPreview?.GetMeshData();
+        if (meshData == null) return;
+
+        // Map material name -> (basecolor pixels, normal pixels) decoded once on the worker thread.
+        // GPU upload runs later on the GL thread via QueueGlAction.
+        var matLookup = new Dictionary<string, (Image<Rgba32>? basePix, Image<Rgba32>? normPix)>(StringComparer.Ordinal);
+
+        foreach (var mat in resolved.Value.Materials)
+        {
+            Image<Rgba32>? basePix = null;
+            Image<Rgba32>? normPix = null;
+
+            foreach (var (texName, texPath) in mat.Textures)
+            {
+                if (!resolved.Value.Textures.TryGetValue(texPath, out var info)) continue;
+                var lower = texName.ToLowerInvariant();
+                if (lower != "basecolor" && lower != "diffuse" && lower != "normals" && lower != "normal") continue;
+
+                var ddt = new DDTImage(info.DdtData);
+                if (!ddt.ParseHeader()) continue;
+                var img = await ddt.DecodeMipmapToImage(0, token);
+                if (img == null) continue;
+
+                if (lower == "basecolor" || lower == "diffuse") basePix = img;
+                else normPix = img;
+            }
+            matLookup[mat.Name] = (basePix, normPix);
+        }
+
+        if (token.IsCancellationRequested)
+        {
+            foreach (var (_, v) in matLookup) { v.basePix?.Dispose(); v.normPix?.Dispose(); }
+            return;
+        }
+
+        // Schedule GPU upload on the next render frame.
+        _glPreview!.QueueGlAction((gl) =>
+        {
+            var owned = new List<int>();
+            var perMaterial = new Dictionary<string, (int? Base, int? Normal)>(StringComparer.Ordinal);
+
+            foreach (var (matName, (basePix, normPix)) in matLookup)
+            {
+                int? bh = null, nh = null;
+                if (basePix != null)
+                {
+                    bh = UploadImageRgba(gl, basePix);
+                    if (bh.HasValue) owned.Add(bh.Value);
+                }
+                if (normPix != null)
+                {
+                    nh = UploadImageRgba(gl, normPix);
+                    if (nh.HasValue) owned.Add(nh.Value);
+                }
+                perMaterial[matName] = (bh, nh);
+                basePix?.Dispose();
+                normPix?.Dispose();
+            }
+
+            var bindings = new Dictionary<int, (int? BaseColor, int? Normal)>();
+            for (int g = 0; g < meshData.DrawGroups.Length; g++)
+            {
+                uint matIdx = meshData.DrawGroupMaterialIndices.Length > g
+                    ? meshData.DrawGroupMaterialIndices[g] : 0u;
+                if (matIdx >= meshData.MaterialNames.Length) continue;
+                var matName = meshData.MaterialNames[matIdx];
+                if (perMaterial.TryGetValue(matName, out var pair))
+                    bindings[g] = pair;
+            }
+
+            var set = new PreviewTextureSet { OwnedHandles = owned, MeshGroupBindings = bindings };
+            // LruCache eviction callback (set on _textureCache) queues a GL action that
+            // deletes the evicted set's handles next frame.
+            cache.Add(tmmFileName, set);
+            _glPreview.SetActiveTextures(set);
+            _currentTextureTmm = tmmFileName;
+        });
+    }
+
+    int? UploadImageRgba(Avalonia.OpenGL.GlInterface gl, Image<Rgba32> img)
+    {
+        var group = img.GetPixelMemoryGroup();
+        if (group.Count == 0) return null;
+        // Multi-chunk images are extremely rare for our texture sizes; punt on them rather
+        // than copying through a temporary buffer.
+        if (group.Count != 1) return null;
+        var byteSpan = MemoryMarshal.AsBytes(group[0].Span);
+        return _glPreview!.UploadTexture(gl, img.Width, img.Height, byteSpan);
+    }
+
+    void TexturedToggle_Toggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        bool on = _texturedToggle.IsChecked == true;
+        SaveConfiguration();
+        if (_glPreview != null) _glPreview.UseTexturedMode = on;
+
+        if (on && _currentTmmFileName != null)
+        {
+            var oldCts = _textureLoadCts;
+            _textureLoadCts = new CancellationTokenSource();
+            oldCts?.Cancel();
+            oldCts?.Dispose();
+            _ = EnsureTexturesLoadedAsync(_currentTmmFileName, _textureLoadCts.Token);
+        }
     }
 
     PreviewMeshData? _pendingMeshData;

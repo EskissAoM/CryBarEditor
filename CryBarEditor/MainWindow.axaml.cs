@@ -686,6 +686,11 @@ public partial class MainWindow : SimpleWindow
             _lastConfiguration.FilterOnlyOverriddenBarEntries = _filterOnlyOverriddenBarEntries;
             _lastConfiguration.Show3DMarkers = _showMarkersCheckbox.IsChecked == true;
             _lastConfiguration.Show3DGroundGrid = _showGroundGridCheckbox.IsChecked == true;
+            // Only persist the textured toggle when it is visible; otherwise the absence of
+            // textures for the current TMM forced IsChecked=false and we'd clobber the user's
+            // saved preference for any future textured-capable TMM.
+            if (_texturedToggle.IsVisible)
+                _lastConfiguration.Use3DTexturedMode = _texturedToggle.IsChecked == true;
 
             File.WriteAllText(config_path, JsonSerializer.Serialize(_lastConfiguration, CryBarJsonContext.Default.Configuration));
         }

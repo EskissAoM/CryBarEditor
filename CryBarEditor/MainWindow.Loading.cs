@@ -331,6 +331,12 @@ public partial class MainWindow
         ClearSoundCaches();
         _soundsetIndex = null; // will be rebuilt lazily or on demand
         _cachedStringTableContent = null;
+
+        // Texture availability and any cached GL handles depend on the previous index.
+        // LruCache.Clear invokes the eviction callback for each entry, which queues
+        // GL handle deletion on the render thread.
+        _textureAvailability.Clear();
+        _textureCache?.Clear();
     }
 
     internal CachedBarFile? GetOrLoadBar(string barFilePath)

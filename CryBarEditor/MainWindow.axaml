@@ -479,6 +479,11 @@
 												  IsChecked="True"
 												  IsCheckedChanged="ShowGroundGrid_Toggled"
 												  Margin="0,0,8,0" />
+										<ToggleButton x:Name="_texturedToggle"
+													  Content="Textured"
+													  IsVisible="False"
+													  IsCheckedChanged="TexturedToggle_Toggled"
+													  Margin="0,0,8,0" Padding="6,2" />
 										<TextBlock x:Name="_3dStatusText"
 											VerticalAlignment="Center" Margin="0,0,8,0"
 											Foreground="Gray" />

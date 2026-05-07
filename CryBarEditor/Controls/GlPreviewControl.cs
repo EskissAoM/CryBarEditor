@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Numerics;
 using Avalonia;
@@ -106,6 +107,21 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         _activeTextures = textures;
         RequestNextFrameRendering();
     }
+
+    // Queue of actions to run on the GL render thread on the next frame. Drained at the
+    // start of OnOpenGlRender. Used by the host (MainWindow) to upload textures and free
+    // GL handles without owning a GL context itself.
+    readonly ConcurrentQueue<Action<GlInterface>> _glActionQueue = new();
+
+    /// <summary>Schedules an action to run on the GL render thread before the next frame is drawn.</summary>
+    public void QueueGlAction(Action<GlInterface> action)
+    {
+        _glActionQueue.Enqueue(action);
+        RequestNextFrameRendering();
+    }
+
+    /// <summary>Returns the currently loaded mesh, or null if no mesh has been loaded yet.</summary>
+    public PreviewMeshData? GetMeshData() => _meshData;
 
     /// <summary>
     /// Uploads RGBA8 pixels to a fresh GL texture and returns the handle.
@@ -474,6 +490,10 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
 
     protected override unsafe void OnOpenGlRender(GlInterface gl, int fb)
     {
+        // Drain queued GL-thread actions (texture uploads, handle deletions) before doing anything else.
+        while (_glActionQueue.TryDequeue(out var pending))
+            pending(gl);
+
         // Bind Avalonia's framebuffer
         gl.BindFramebuffer(GL_FRAMEBUFFER, fb);
 
