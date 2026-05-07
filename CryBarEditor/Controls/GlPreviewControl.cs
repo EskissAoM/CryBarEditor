@@ -33,6 +33,12 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     public event Action<IReadOnlyList<GizmoLabel>>? GizmoLabelsProjected;
     readonly List<GizmoLabel> _gizmoLabelBuffer = new(3);
 
+    // Public API: marker label projection (consumed by overlay canvas)
+    public readonly record struct MarkerLabel(string Name, double X, double Y, bool Visible);
+
+    public event Action<IReadOnlyList<MarkerLabel>>? MarkersProjected;
+    readonly List<MarkerLabel> _markerLabelBuffer = new();
+
     // Gizmo GL resources
     int _gizmoProgram;
     int _gizmoVao, _gizmoVbo;
@@ -351,6 +357,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.Disable(GL_DEPTH_TEST);
 
         DrawMarkers(gl, mvp);
+        ProjectAndEmitMarkers(mvp, scaling, w, h);
         DrawGizmo(gl, w, h, scaling);
         ProjectAndEmitGizmoLabels(scaling, w, h);
     }
@@ -479,6 +486,45 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
             _gizmoLabelBuffer.Add(new GizmoLabel(axisIdx, letter, sx, sy, hovered));
         }
         GizmoLabelsProjected.Invoke(_gizmoLabelBuffer);
+    }
+
+    void ProjectAndEmitMarkers(in System.Numerics.Matrix4x4 mvp, double scaling, int viewportW, int viewportH)
+    {
+        if (MarkersProjected == null) return;
+        var mesh = _meshData;
+        _markerLabelBuffer.Clear();
+        if (mesh == null || !_showMarkers)
+        {
+            MarkersProjected.Invoke(_markerLabelBuffer);
+            return;
+        }
+
+        // Inline projection; local function cannot capture an `in` parameter.
+        foreach (var m in mesh.Attachments)
+        {
+            var p = new System.Numerics.Vector4(m.Position, 1.0f);
+            var clip = System.Numerics.Vector4.Transform(p, mvp);
+            if (clip.W <= 0) { _markerLabelBuffer.Add(new MarkerLabel(m.Name, 0, 0, false)); continue; }
+            float ndcX = clip.X / clip.W;
+            float ndcY = clip.Y / clip.W;
+            bool inside = ndcX >= -1 && ndcX <= 1 && ndcY >= -1 && ndcY <= 1;
+            double sx = (ndcX * 0.5 + 0.5) * (viewportW / scaling);
+            double sy = (1.0 - (ndcY * 0.5 + 0.5)) * (viewportH / scaling);
+            _markerLabelBuffer.Add(new MarkerLabel(m.Name, sx, sy, inside));
+        }
+        foreach (var m in mesh.ImpactPoints)
+        {
+            var p = new System.Numerics.Vector4(m.Position, 1.0f);
+            var clip = System.Numerics.Vector4.Transform(p, mvp);
+            if (clip.W <= 0) { _markerLabelBuffer.Add(new MarkerLabel(m.Name, 0, 0, false)); continue; }
+            float ndcX = clip.X / clip.W;
+            float ndcY = clip.Y / clip.W;
+            bool inside = ndcX >= -1 && ndcX <= 1 && ndcY >= -1 && ndcY <= 1;
+            double sx = (ndcX * 0.5 + 0.5) * (viewportW / scaling);
+            double sy = (1.0 - (ndcY * 0.5 + 0.5)) * (viewportH / scaling);
+            _markerLabelBuffer.Add(new MarkerLabel(m.Name, sx, sy, inside));
+        }
+        MarkersProjected.Invoke(_markerLabelBuffer);
     }
 
     Matrix4x4 GetCameraViewRotation()
