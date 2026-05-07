@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\CryBar\CryBar.csproj" />
+    <ProjectReference Include="..\CryBarEditor\CryBarEditor.csproj" />
   </ItemGroup>
 
 </Project>
