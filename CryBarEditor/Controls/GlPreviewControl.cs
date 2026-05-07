@@ -89,6 +89,48 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         }
     }
 
+    public bool UseTexturedMode
+    {
+        get => _useTextured;
+        set
+        {
+            if (_useTextured == value) return;
+            _useTextured = value;
+            RequestNextFrameRendering();
+        }
+    }
+
+    /// <summary>Hand a built texture set to the control. Pass null to clear.</summary>
+    public void SetActiveTextures(PreviewTextureSet? textures)
+    {
+        _activeTextures = textures;
+        RequestNextFrameRendering();
+    }
+
+    /// <summary>
+    /// Uploads RGBA8 pixels to a fresh GL texture and returns the handle.
+    /// Must be called on the GL render thread (e.g., from a queued action processed in OnOpenGlRender).
+    /// </summary>
+    public unsafe int UploadTexture(GlInterface gl, int width, int height, ReadOnlySpan<byte> rgba)
+    {
+        int tex = gl.GenTexture();
+        gl.BindTexture(GL_TEXTURE_2D, tex);
+        fixed (byte* p = rgba)
+            gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, 0x1401 /* GL_UNSIGNED_BYTE */, (IntPtr)p);
+        // Filtering / wrap
+        gl.TexParameteri(GL_TEXTURE_2D, 0x2801 /* GL_TEXTURE_MIN_FILTER */, 0x2703 /* GL_LINEAR_MIPMAP_LINEAR */);
+        gl.TexParameteri(GL_TEXTURE_2D, 0x2800 /* GL_TEXTURE_MAG_FILTER */, 0x2601 /* GL_LINEAR */);
+        gl.TexParameteri(GL_TEXTURE_2D, 0x2802 /* GL_TEXTURE_WRAP_S */, 0x2901 /* GL_REPEAT */);
+        gl.TexParameteri(GL_TEXTURE_2D, 0x2803 /* GL_TEXTURE_WRAP_T */, 0x2901 /* GL_REPEAT */);
+        if (_glGenerateMipmap != null)
+            _glGenerateMipmap(GL_TEXTURE_2D);
+        gl.BindTexture(GL_TEXTURE_2D, 0);
+        return tex;
+    }
+
+    /// <summary>Convenience for hosts: callback they can invoke on the GL thread to delete a handle.</summary>
+    public void DeleteTexture(GlInterface gl, int handle) => gl.DeleteTexture(handle);
+
     // Gizmo hover / animation state
     int _hoveredGizmoAxis = -1;
     bool _animActive;
@@ -105,6 +147,8 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     unsafe delegate* unmanaged<int, int, byte, float*, void> _glUniformMatrix3fv;
     // Function pointer for glLineWidth (not exposed by Avalonia's GlInterface)
     unsafe delegate* unmanaged<float, void> _glLineWidth;
+    // Function pointer for glGenerateMipmap (not exposed by Avalonia's GlInterface)
+    unsafe delegate* unmanaged<int, void> _glGenerateMipmap;
 
     // Mouse tracking
     Point _lastPointerPos;
@@ -252,6 +296,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         _glUniform4f = (delegate* unmanaged<int, float, float, float, float, void>)gl.GetProcAddress("glUniform4f");
         _glUniformMatrix3fv = (delegate* unmanaged<int, int, byte, float*, void>)gl.GetProcAddress("glUniformMatrix3fv");
         _glLineWidth = (delegate* unmanaged<float, void>)gl.GetProcAddress("glLineWidth");
+        _glGenerateMipmap = (delegate* unmanaged<int, void>)gl.GetProcAddress("glGenerateMipmap");
 
         _program = CreateProgram(gl, vsPreamble + VertexShaderBody, fsPreamble + FragmentShaderBody);
         _uMvp = gl.GetUniformLocationString(_program, "uMVP");
@@ -467,27 +512,68 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
                 gl.BufferData(GL_ELEMENT_ARRAY_BUFFER, (IntPtr)(mesh.Indices.Length * sizeof(uint)), (IntPtr)ptr, GL_STATIC_DRAW);
         }
 
-        gl.UseProgram(_program);
+        // Light direction follows camera so the visible side is always well-lit
+        var target = new Vector3(_camera.TargetX, _camera.TargetY, _camera.TargetZ);
+        var lightDir = Vector3.Normalize(eye - target);
+
+        bool textured = _useTextured && _activeTextures != null;
 
         // System.Numerics is row-major, row-vector: v' = v * MVP
         // GLSL is column-major, column-vector: v' = MVP * v
         // Passing row-major data to glUniformMatrix4fv(transpose=false) reinterprets rows as
         // columns, which is the exact transpose needed for the convention switch.
-        gl.UniformMatrix4fv(_uMvp, 1, false, &mvp.M11);
-
-        // Light direction follows camera so the visible side is always well-lit
-        if (_glUniform3f != null)
+        if (textured)
         {
-            var target = new Vector3(_camera.TargetX, _camera.TargetY, _camera.TargetZ);
-            var lightDir = Vector3.Normalize(eye - target);
-            _glUniform3f(_uLightDir, lightDir.X, lightDir.Y, lightDir.Z);
-            _glUniform3f(_uColor, 0.75f, 0.75f, 0.75f);
+            gl.UseProgram(_texturedProgram);
+            var mvpCopy = mvp;
+            gl.UniformMatrix4fv(_uTexMvp, 1, false, &mvpCopy.M11);
+            if (_glUniform3f != null) _glUniform3f(_uTexLightDir, lightDir.X, lightDir.Y, lightDir.Z);
+            gl.Uniform1i(_uTexBaseSampler, 0);
+            gl.Uniform1i(_uTexNormalSampler, 1);
+        }
+        else
+        {
+            gl.UseProgram(_program);
+            var mvpCopy = mvp;
+            gl.UniformMatrix4fv(_uMvp, 1, false, &mvpCopy.M11);
+            if (_glUniform3f != null)
+            {
+                _glUniform3f(_uLightDir, lightDir.X, lightDir.Y, lightDir.Z);
+                _glUniform3f(_uColor, 0.75f, 0.75f, 0.75f);
+            }
         }
 
-        // Draw all mesh groups
-        foreach (var (offset, count) in mesh.DrawGroups)
+        // Draw all mesh groups; in textured mode, fall back to solid for groups
+        // that have no basecolor binding so the geometry never silently disappears.
+        for (int g = 0; g < mesh.DrawGroups.Length; g++)
         {
-            gl.DrawElements(GL_TRIANGLES, count, 0x1405 /* GL_UNSIGNED_INT */, (IntPtr)(offset * sizeof(uint)));
+            var (offset, count) = mesh.DrawGroups[g];
+            bool drawnTextured = false;
+
+            if (textured && _activeTextures!.MeshGroupBindings.TryGetValue(g, out var binding) && binding.BaseColor.HasValue)
+            {
+                gl.ActiveTexture(0x84C0 /* GL_TEXTURE0 */);
+                gl.BindTexture(GL_TEXTURE_2D, binding.BaseColor.Value);
+                gl.ActiveTexture(0x84C1 /* GL_TEXTURE1 */);
+                gl.BindTexture(GL_TEXTURE_2D, binding.Normal ?? binding.BaseColor.Value);
+                gl.DrawElements(GL_TRIANGLES, count, 0x1405 /* GL_UNSIGNED_INT */, (IntPtr)(offset * sizeof(uint)));
+                drawnTextured = true;
+            }
+
+            if (!drawnTextured)
+            {
+                // Group has no basecolor (or textured mode is off) - render with solid shader.
+                gl.UseProgram(_program);
+                var mvpCopy = mvp;
+                gl.UniformMatrix4fv(_uMvp, 1, false, &mvpCopy.M11);
+                if (_glUniform3f != null)
+                {
+                    _glUniform3f(_uLightDir, lightDir.X, lightDir.Y, lightDir.Z);
+                    _glUniform3f(_uColor, 0.75f, 0.75f, 0.75f);
+                }
+                gl.DrawElements(GL_TRIANGLES, count, 0x1405 /* GL_UNSIGNED_INT */, (IntPtr)(offset * sizeof(uint)));
+                if (textured) gl.UseProgram(_texturedProgram); // restore for next group
+            }
         }
 
         gl.BindVertexArray(0);
