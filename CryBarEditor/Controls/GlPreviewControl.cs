@@ -350,8 +350,101 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.UseProgram(0);
         gl.Disable(GL_DEPTH_TEST);
 
+        DrawMarkers(gl, mvp);
         DrawGizmo(gl, w, h, scaling);
         ProjectAndEmitGizmoLabels(scaling, w, h);
+    }
+
+    unsafe void DrawMarkers(GlInterface gl, in Matrix4x4 mvp)
+    {
+        var mesh = _meshData;
+        if (mesh == null) return;
+        if (mesh.Attachments.Length == 0 && mesh.ImpactPoints.Length == 0) return;
+        if (!_showMarkers) return;
+
+        float markerSize = MathF.Max(mesh.Radius * 0.04f, 0.05f);
+        float impactSize = markerSize * 0.5f;
+
+        // Build vertex list: 6 vertices per attachment (3 segments) + 6 per impact (3 stub axes).
+        int totalLines = mesh.Attachments.Length * 3 + mesh.ImpactPoints.Length * 3;
+        int totalFloats = totalLines * 2 * 3;
+
+        Span<float> verts = stackalloc float[Math.Min(totalFloats, 4096)];
+        float[]? heap = null;
+        if (totalFloats > verts.Length)
+        {
+            heap = System.Buffers.ArrayPool<float>.Shared.Rent(totalFloats);
+            verts = heap.AsSpan(0, totalFloats);
+        }
+
+        int vi = 0;
+        // Inline segment writes; cannot use a local function because Span captures aren't allowed.
+        int attLineCount = mesh.Attachments.Length * 3;
+        foreach (var m in mesh.Attachments)
+        {
+            var p = m.Position;
+            var ex = p + m.AxisX * markerSize;
+            var ey = p + m.AxisY * markerSize;
+            var ez = p + m.AxisZ * markerSize;
+            verts[vi++] = p.X; verts[vi++] = p.Y; verts[vi++] = p.Z;
+            verts[vi++] = ex.X; verts[vi++] = ex.Y; verts[vi++] = ex.Z;
+            verts[vi++] = p.X; verts[vi++] = p.Y; verts[vi++] = p.Z;
+            verts[vi++] = ey.X; verts[vi++] = ey.Y; verts[vi++] = ey.Z;
+            verts[vi++] = p.X; verts[vi++] = p.Y; verts[vi++] = p.Z;
+            verts[vi++] = ez.X; verts[vi++] = ez.Y; verts[vi++] = ez.Z;
+        }
+        foreach (var m in mesh.ImpactPoints)
+        {
+            var p = m.Position;
+            var ex = p + m.AxisX * impactSize;
+            var ey = p + m.AxisY * impactSize;
+            var ez = p + m.AxisZ * impactSize;
+            verts[vi++] = p.X; verts[vi++] = p.Y; verts[vi++] = p.Z;
+            verts[vi++] = ex.X; verts[vi++] = ex.Y; verts[vi++] = ex.Z;
+            verts[vi++] = p.X; verts[vi++] = p.Y; verts[vi++] = p.Z;
+            verts[vi++] = ey.X; verts[vi++] = ey.Y; verts[vi++] = ey.Z;
+            verts[vi++] = p.X; verts[vi++] = p.Y; verts[vi++] = p.Z;
+            verts[vi++] = ez.X; verts[vi++] = ez.Y; verts[vi++] = ez.Z;
+        }
+
+        gl.BindVertexArray(_markersVao);
+        gl.BindBuffer(GL_ARRAY_BUFFER, _markersVbo);
+        fixed (float* p = verts)
+            gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(totalFloats * sizeof(float)), (IntPtr)p, 0x88E8 /* GL_DYNAMIC_DRAW */);
+
+        gl.UseProgram(_markersProgram);
+        var mvpCopy = mvp;
+        gl.UniformMatrix4fv(_uMarkersMvp, 1, false, &mvpCopy.M11);
+
+        gl.Enable(GL_DEPTH_TEST);
+        gl.DepthMask(0);
+
+        if (_glUniform3f != null)
+        {
+            // Attachments: red / green / blue per axis. Impact points: same colors but dimmer.
+            for (int i = 0; i < mesh.Attachments.Length; i++)
+            {
+                int baseV = i * 6;
+                _glUniform3f(_uMarkersColor, 1.0f, 0.20f, 0.20f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 0, 2);
+                _glUniform3f(_uMarkersColor, 0.20f, 1.0f, 0.20f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 2, 2);
+                _glUniform3f(_uMarkersColor, 0.30f, 0.50f, 1.0f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 4, 2);
+            }
+            int impactBase = attLineCount * 2;
+            for (int i = 0; i < mesh.ImpactPoints.Length; i++)
+            {
+                int baseV = impactBase + i * 6;
+                _glUniform3f(_uMarkersColor, 0.7f, 0.4f, 0.4f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 0, 2);
+                _glUniform3f(_uMarkersColor, 0.4f, 0.7f, 0.4f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 2, 2);
+                _glUniform3f(_uMarkersColor, 0.4f, 0.5f, 0.7f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 4, 2);
+            }
+        }
+
+        gl.DepthMask(1);
+        gl.Disable(GL_DEPTH_TEST);
+        gl.BindVertexArray(0);
+        gl.UseProgram(0);
+
+        if (heap != null) System.Buffers.ArrayPool<float>.Shared.Return(heap);
     }
 
     void ProjectAndEmitGizmoLabels(double scaling, int viewportW, int viewportH)
