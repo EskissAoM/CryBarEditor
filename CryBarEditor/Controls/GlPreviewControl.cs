@@ -65,6 +65,24 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         }
     }
 
+    // Ground grid GL resources
+    int _gridProgram;
+    int _gridVao, _gridVbo;
+    int _uGridMvp, _uGridColor;
+    int _gridVertexCount;
+
+    bool _showGroundGrid = true;
+    public bool ShowGroundGrid
+    {
+        get => _showGroundGrid;
+        set
+        {
+            if (_showGroundGrid == value) return;
+            _showGroundGrid = value;
+            RequestNextFrameRendering();
+        }
+    }
+
     // Gizmo hover / animation state
     int _hoveredGizmoAxis = -1;
     bool _animActive;
@@ -75,6 +93,8 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
 
     // Function pointer for glUniform3f (not exposed by Avalonia's GlInterface)
     unsafe delegate* unmanaged<int, float, float, float, void> _glUniform3f;
+    // Function pointer for glUniform4f (not exposed by Avalonia's GlInterface)
+    unsafe delegate* unmanaged<int, float, float, float, float, void> _glUniform4f;
     // Function pointer for glUniformMatrix3fv (not exposed by Avalonia's GlInterface)
     unsafe delegate* unmanaged<int, int, byte, float*, void> _glUniformMatrix3fv;
     // Function pointer for glLineWidth (not exposed by Avalonia's GlInterface)
@@ -119,6 +139,18 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         uniform vec3 uColor;
         out vec4 FragColor;
         void main() { FragColor = vec4(uColor, 1.0); }
+        """;
+
+    const string GridVertexShaderBody = """
+        layout(location = 0) in vec3 aPos;
+        uniform mat4 uMVP;
+        void main() { gl_Position = uMVP * vec4(aPos, 1.0); }
+        """;
+
+    const string GridFragmentShaderBody = """
+        uniform vec4 uColor;
+        out vec4 FragColor;
+        void main() { FragColor = uColor; }
         """;
 
     const string GizmoVertexShaderBody = """
@@ -170,6 +202,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
 
         // Get proc address for glUniform3f (not in Avalonia's GlInterface)
         _glUniform3f = (delegate* unmanaged<int, float, float, float, void>)gl.GetProcAddress("glUniform3f");
+        _glUniform4f = (delegate* unmanaged<int, float, float, float, float, void>)gl.GetProcAddress("glUniform4f");
         _glUniformMatrix3fv = (delegate* unmanaged<int, int, byte, float*, void>)gl.GetProcAddress("glUniformMatrix3fv");
         _glLineWidth = (delegate* unmanaged<float, void>)gl.GetProcAddress("glLineWidth");
 
@@ -202,10 +235,52 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
 
         gl.BindVertexArray(0);
 
+        InitGroundGridResources(gl, vsPreamble, fsPreamble);
         InitMarkersResources(gl, vsPreamble, fsPreamble);
         InitGizmoResources(gl, vsPreamble, fsPreamble);
 
         _glInitialized = true;
+    }
+
+    unsafe void InitGroundGridResources(GlInterface gl, string vsPreamble, string fsPreamble)
+    {
+        _gridProgram = CreateProgram(gl,
+            vsPreamble + GridVertexShaderBody,
+            fsPreamble + GridFragmentShaderBody);
+        _uGridMvp   = gl.GetUniformLocationString(_gridProgram, "uMVP");
+        _uGridColor = gl.GetUniformLocationString(_gridProgram, "uColor");
+
+        // Build a 20x20 grid of XZ lines centered at origin in the y=0 plane.
+        // Each line runs full extent in X or Z; lines spaced 1 unit apart.
+        const int half = 10;            // lines from -half..+half
+        const float step = 1.0f;
+        const float extent = half * step;
+        int lineCount = (half * 2 + 1) * 2; // X-direction + Z-direction
+        int floatCount = lineCount * 2 * 3; // 2 verts per line, 3 floats per vert
+        var verts = new float[floatCount];
+        int vi = 0;
+        for (int i = -half; i <= half; i++)
+        {
+            // Line parallel to X axis at Z = i*step
+            float z = i * step;
+            verts[vi++] = -extent; verts[vi++] = 0; verts[vi++] = z;
+            verts[vi++] =  extent; verts[vi++] = 0; verts[vi++] = z;
+            // Line parallel to Z axis at X = i*step
+            float x = i * step;
+            verts[vi++] = x; verts[vi++] = 0; verts[vi++] = -extent;
+            verts[vi++] = x; verts[vi++] = 0; verts[vi++] =  extent;
+        }
+        _gridVertexCount = lineCount * 2;
+
+        _gridVao = gl.GenVertexArray();
+        gl.BindVertexArray(_gridVao);
+        _gridVbo = gl.GenBuffer();
+        gl.BindBuffer(GL_ARRAY_BUFFER, _gridVbo);
+        fixed (float* p = verts)
+            gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(verts.Length * sizeof(float)), (IntPtr)p, GL_STATIC_DRAW);
+        gl.VertexAttribPointer(0, 3, GL_FLOAT, 0, 12, IntPtr.Zero);
+        gl.EnableVertexAttribArray(0);
+        gl.BindVertexArray(0);
     }
 
     unsafe void InitGizmoResources(GlInterface gl, string vsPreamble, string fsPreamble)
@@ -273,6 +348,10 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.DeleteVertexArray(_vao);
         gl.DeleteProgram(_program);
 
+        gl.DeleteBuffer(_gridVbo);
+        gl.DeleteVertexArray(_gridVao);
+        gl.DeleteProgram(_gridProgram);
+
         gl.DeleteBuffer(_markersVbo);
         gl.DeleteVertexArray(_markersVao);
         gl.DeleteProgram(_markersProgram);
@@ -303,6 +382,16 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.ClearColor(0.04f, 0.04f, 0.04f, 1f);
         gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+        // Compute matrices early so the grid pass (which runs before the mesh) can use them.
+        // GetViewMatrix returns eye position to avoid recomputing for the light direction.
+        float aspect = (float)w / h;
+        var view = _camera.GetViewMatrix(out var eye);
+        var proj = _camera.GetProjectionMatrix(aspect);
+        var mvp = view * proj;
+
+        // Grid draws first so the mesh occludes it.
+        DrawGroundGrid(gl, mvp);
+
         var mesh = _meshData;
         if (mesh == null) return;
 
@@ -324,12 +413,6 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         }
 
         gl.UseProgram(_program);
-
-        // Compute matrices (GetViewMatrix returns eye position to avoid recomputing for light)
-        float aspect = (float)w / h;
-        var view = _camera.GetViewMatrix(out var eye);
-        var proj = _camera.GetProjectionMatrix(aspect);
-        var mvp = view * proj;
 
         // System.Numerics is row-major, row-vector: v' = v * MVP
         // GLSL is column-major, column-vector: v' = MVP * v
@@ -360,6 +443,29 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         ProjectAndEmitMarkers(mvp, scaling, w, h);
         DrawGizmo(gl, w, h, scaling);
         ProjectAndEmitGizmoLabels(scaling, w, h);
+    }
+
+    unsafe void DrawGroundGrid(GlInterface gl, in Matrix4x4 mvp)
+    {
+        if (!_showGroundGrid) return;
+
+        gl.UseProgram(_gridProgram);
+        var mvpCopy = mvp;
+        gl.UniformMatrix4fv(_uGridMvp, 1, false, &mvpCopy.M11);
+
+        // Solid dim gray; the mesh occludes it via depth testing.
+        if (_glUniform4f != null)
+            _glUniform4f(_uGridColor, 0.30f, 0.30f, 0.30f, 0.6f);
+
+        // Render lines under the mesh: enable depth test, write depth so the mesh occludes.
+        gl.Enable(GL_DEPTH_TEST);
+        gl.DepthMask(1);
+
+        gl.BindVertexArray(_gridVao);
+        gl.DrawArrays(0x0001 /* GL_LINES */, 0, _gridVertexCount);
+        gl.BindVertexArray(0);
+
+        gl.UseProgram(0);
     }
 
     unsafe void DrawMarkers(GlInterface gl, in Matrix4x4 mvp)

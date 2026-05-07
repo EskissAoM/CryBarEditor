@@ -685,6 +685,7 @@ public partial class MainWindow
         _glPreview.GizmoLabelsProjected += OnGizmoLabelsProjected;
         _glPreview.MarkersProjected += OnMarkersProjected;
         _glPreview.ShowMarkers = _showMarkersCheckbox.IsChecked == true;
+        _glPreview.ShowGroundGrid = _showGroundGridCheckbox.IsChecked == true;
         _3dViewContainer.Child = _glPreview;
     }
 
@@ -703,6 +704,13 @@ public partial class MainWindow
         {
             foreach (var tb in _markerLabelPool) tb.IsVisible = false;
         }
+    }
+
+    void ShowGroundGrid_Toggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        bool enabled = _showGroundGridCheckbox.IsChecked == true;
+        if (_glPreview != null) _glPreview.ShowGroundGrid = enabled;
+        SaveConfiguration();
     }
 
     void OnMarkersProjected(IReadOnlyList<Controls.GlPreviewControl.MarkerLabel> labels)

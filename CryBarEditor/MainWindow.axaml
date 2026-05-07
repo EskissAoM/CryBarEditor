@@ -474,6 +474,11 @@
 												  IsChecked="True"
 												  IsCheckedChanged="ShowMarkers_Toggled"
 												  Margin="0,0,8,0" />
+										<CheckBox x:Name="_showGroundGridCheckbox"
+												  Content="Show grid"
+												  IsChecked="True"
+												  IsCheckedChanged="ShowGroundGrid_Toggled"
+												  Margin="0,0,8,0" />
 										<TextBlock x:Name="_3dStatusText"
 											VerticalAlignment="Center" Margin="0,0,8,0"
 											Foreground="Gray" />
