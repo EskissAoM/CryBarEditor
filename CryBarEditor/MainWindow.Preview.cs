@@ -758,15 +758,18 @@ public partial class MainWindow
         var meshData = _glPreview?.GetMeshData();
         if (meshData == null) return;
 
-        // Map material name -> (basecolor pixels, normal pixels) decoded once on the worker thread.
-        // GPU upload runs later on the GL thread via QueueGlAction.
-        var matLookup = new Dictionary<string, (Image<Rgba32>? basePix, Image<Rgba32>? normPix)>(StringComparer.Ordinal);
+        // Decode textures into per-material-index arrays on the worker thread.
+        // Index-keyed (not name-keyed): the resolver returns materials in TMM material-index
+        // order, which is what DrawGroupMaterialIndices points into. Name lookup is broken
+        // because TMM MaterialNames (e.g. "atlantean\armory") don't match XML submaterial
+        // names (e.g. "base", "damaged"). GPU upload runs later on the GL thread via QueueGlAction.
+        var matCount = resolved.Value.Materials.Count;
+        var matBaseImages = new Image<Rgba32>?[matCount];
+        var matNormalImages = new Image<Rgba32>?[matCount];
 
-        foreach (var mat in resolved.Value.Materials)
+        for (int i = 0; i < matCount; i++)
         {
-            Image<Rgba32>? basePix = null;
-            Image<Rgba32>? normPix = null;
-
+            var mat = resolved.Value.Materials[i];
             foreach (var (texName, texPath) in mat.Textures)
             {
                 if (!resolved.Value.Textures.TryGetValue(texPath, out var info)) continue;
@@ -778,15 +781,18 @@ public partial class MainWindow
                 var img = await ddt.DecodeMipmapToImage(0, token);
                 if (img == null) continue;
 
-                if (lower == "basecolor" || lower == "diffuse") basePix = img;
-                else normPix = img;
+                if (lower == "basecolor" || lower == "diffuse") matBaseImages[i] = img;
+                else matNormalImages[i] = img;
             }
-            matLookup[mat.Name] = (basePix, normPix);
         }
 
         if (token.IsCancellationRequested)
         {
-            foreach (var (_, v) in matLookup) { v.basePix?.Dispose(); v.normPix?.Dispose(); }
+            for (int i = 0; i < matCount; i++)
+            {
+                matBaseImages[i]?.Dispose();
+                matNormalImages[i]?.Dispose();
+            }
             return;
         }
 
@@ -794,24 +800,24 @@ public partial class MainWindow
         _glPreview!.QueueGlAction((gl) =>
         {
             var owned = new List<int>();
-            var perMaterial = new Dictionary<string, (int? Base, int? Normal)>(StringComparer.Ordinal);
+            var perMaterialByIndex = new (int? Base, int? Normal)[matCount];
 
-            foreach (var (matName, (basePix, normPix)) in matLookup)
+            for (int i = 0; i < matCount; i++)
             {
                 int? bh = null, nh = null;
-                if (basePix != null)
+                if (matBaseImages[i] != null)
                 {
-                    bh = UploadImageRgba(gl, basePix);
+                    bh = UploadImageRgba(gl, matBaseImages[i]!);
                     if (bh.HasValue) owned.Add(bh.Value);
                 }
-                if (normPix != null)
+                if (matNormalImages[i] != null)
                 {
-                    nh = UploadImageRgba(gl, normPix);
+                    nh = UploadImageRgba(gl, matNormalImages[i]!);
                     if (nh.HasValue) owned.Add(nh.Value);
                 }
-                perMaterial[matName] = (bh, nh);
-                basePix?.Dispose();
-                normPix?.Dispose();
+                perMaterialByIndex[i] = (bh, nh);
+                matBaseImages[i]?.Dispose();
+                matNormalImages[i]?.Dispose();
             }
 
             var bindings = new Dictionary<int, (int? BaseColor, int? Normal)>();
@@ -819,10 +825,10 @@ public partial class MainWindow
             {
                 uint matIdx = meshData.DrawGroupMaterialIndices.Length > g
                     ? meshData.DrawGroupMaterialIndices[g] : 0u;
-                if (matIdx >= meshData.MaterialNames.Length) continue;
-                var matName = meshData.MaterialNames[matIdx];
-                if (perMaterial.TryGetValue(matName, out var pair))
-                    bindings[g] = pair;
+                if (matIdx >= matCount) continue;
+                var pair = perMaterialByIndex[(int)matIdx];
+                if (pair.Base.HasValue || pair.Normal.HasValue)
+                    bindings[g] = (pair.Base, pair.Normal);
             }
 
             var set = new PreviewTextureSet { OwnedHandles = owned, MeshGroupBindings = bindings };
@@ -1022,6 +1028,10 @@ public partial class MainWindow
         {
             EnsureGlPreviewInitialized();
             _glPreview!.LoadMesh(meshData);
+            // Clear any previously bound textures so the new mesh doesn't briefly render
+            // with the old TMM's textures while EnsureTexturesLoadedAsync is in flight.
+            // Cache hits in EnsureTexturesLoadedAsync will re-bind immediately.
+            _glPreview.SetActiveTextures(null);
             Update3DStatus("");
         }
         catch (Exception ex)
