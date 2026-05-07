@@ -40,7 +40,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     readonly List<GizmoLabel> _gizmoLabelBuffer = new(3);
 
     // Public API: marker label projection (consumed by overlay canvas)
-    public readonly record struct MarkerLabel(string Name, double X, double Y, bool Visible);
+    public readonly record struct MarkerLabel(string Name, double X, double Y, bool Visible, bool Occluded);
 
     public event Action<IReadOnlyList<MarkerLabel>>? MarkersProjected;
     readonly List<MarkerLabel> _markerLabelBuffer = new();
@@ -56,7 +56,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     // Markers GL resources
     int _markersProgram;
     int _markersVao, _markersVbo;
-    int _uMarkersMvp, _uMarkersColor;
+    int _uMarkersMvp, _uMarkersColor, _uMarkersAlpha;
     int _markersVertexCapacity;
 
     bool _showMarkers = true;
@@ -149,6 +149,10 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     unsafe delegate* unmanaged<float, void> _glLineWidth;
     // Function pointer for glGenerateMipmap (not exposed by Avalonia's GlInterface)
     unsafe delegate* unmanaged<int, void> _glGenerateMipmap;
+    // Function pointer for glBlendFunc (not exposed by Avalonia's GlInterface)
+    unsafe delegate* unmanaged<uint, uint, void> _glBlendFunc;
+    // Function pointer for glReadPixels (not exposed by Avalonia's GlInterface)
+    unsafe delegate* unmanaged<int, int, int, int, uint, uint, void*, void> _glReadPixels;
 
     // Mouse tracking
     Point _lastPointerPos;
@@ -228,8 +232,9 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
 
     const string MarkersFragmentShaderBody = """
         uniform vec3 uColor;
+        uniform float uAlpha;
         out vec4 FragColor;
-        void main() { FragColor = vec4(uColor, 1.0); }
+        void main() { FragColor = vec4(uColor, uAlpha); }
         """;
 
     const string GridVertexShaderBody = """
@@ -297,6 +302,8 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         _glUniformMatrix3fv = (delegate* unmanaged<int, int, byte, float*, void>)gl.GetProcAddress("glUniformMatrix3fv");
         _glLineWidth = (delegate* unmanaged<float, void>)gl.GetProcAddress("glLineWidth");
         _glGenerateMipmap = (delegate* unmanaged<int, void>)gl.GetProcAddress("glGenerateMipmap");
+        _glBlendFunc = (delegate* unmanaged<uint, uint, void>)gl.GetProcAddress("glBlendFunc");
+        _glReadPixels = (delegate* unmanaged<int, int, int, int, uint, uint, void*, void>)gl.GetProcAddress("glReadPixels");
 
         _program = CreateProgram(gl, vsPreamble + VertexShaderBody, fsPreamble + FragmentShaderBody);
         _uMvp = gl.GetUniformLocationString(_program, "uMVP");
@@ -421,6 +428,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
             fsPreamble + MarkersFragmentShaderBody);
         _uMarkersMvp   = gl.GetUniformLocationString(_markersProgram, "uMVP");
         _uMarkersColor = gl.GetUniformLocationString(_markersProgram, "uColor");
+        _uMarkersAlpha = gl.GetUniformLocationString(_markersProgram, "uAlpha");
 
         _markersVao = gl.GenVertexArray();
         gl.BindVertexArray(_markersVao);
@@ -670,35 +678,58 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         var mvpCopy = mvp;
         gl.UniformMatrix4fv(_uMarkersMvp, 1, false, &mvpCopy.M11);
 
+        if (_glLineWidth != null) _glLineWidth(2.0f);
+
+        // Two-pass: visible parts first (depth LESS, alpha 1.0), then occluded parts (depth GREATER, alpha 0.7) with blending.
         gl.Enable(GL_DEPTH_TEST);
         gl.DepthMask(0);
 
-        if (_glUniform3f != null)
-        {
-            // Attachments: red / green / blue per axis. Impact points: same colors but dimmer.
-            for (int i = 0; i < mesh.Attachments.Length; i++)
-            {
-                int baseV = i * 6;
-                _glUniform3f(_uMarkersColor, 1.0f, 0.20f, 0.20f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 0, 2);
-                _glUniform3f(_uMarkersColor, 0.20f, 1.0f, 0.20f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 2, 2);
-                _glUniform3f(_uMarkersColor, 0.30f, 0.50f, 1.0f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 4, 2);
-            }
-            int impactBase = attLineCount * 2;
-            for (int i = 0; i < mesh.ImpactPoints.Length; i++)
-            {
-                int baseV = impactBase + i * 6;
-                _glUniform3f(_uMarkersColor, 0.7f, 0.4f, 0.4f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 0, 2);
-                _glUniform3f(_uMarkersColor, 0.4f, 0.7f, 0.4f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 2, 2);
-                _glUniform3f(_uMarkersColor, 0.4f, 0.5f, 0.7f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 4, 2);
-            }
-        }
+        DrawMarkersPass(gl, mesh, attLineCount, alpha: 1.0f, depthFunc: 0x0201 /* GL_LESS */, blend: false);
+        DrawMarkersPass(gl, mesh, attLineCount, alpha: 0.7f, depthFunc: 0x0204 /* GL_GREATER */, blend: true);
 
+        // Restore default state.
+        gl.DepthFunc(0x0201 /* GL_LESS */);
+        if (_glLineWidth != null) _glLineWidth(1.0f);
         gl.DepthMask(1);
         gl.Disable(GL_DEPTH_TEST);
+        gl.Disable(0x0BE2 /* GL_BLEND */);
         gl.BindVertexArray(0);
         gl.UseProgram(0);
 
         if (heap != null) System.Buffers.ArrayPool<float>.Shared.Return(heap);
+    }
+
+    unsafe void DrawMarkersPass(GlInterface gl, PreviewMeshData mesh, int attLineCount, float alpha, int depthFunc, bool blend)
+    {
+        gl.DepthFunc(depthFunc);
+        if (blend)
+        {
+            gl.Enable(0x0BE2 /* GL_BLEND */);
+            if (_glBlendFunc != null) _glBlendFunc(0x0302 /* GL_SRC_ALPHA */, 0x0303 /* GL_ONE_MINUS_SRC_ALPHA */);
+        }
+        else
+        {
+            gl.Disable(0x0BE2 /* GL_BLEND */);
+        }
+
+        gl.Uniform1f(_uMarkersAlpha, alpha);
+        if (_glUniform3f == null) return;
+
+        for (int i = 0; i < mesh.Attachments.Length; i++)
+        {
+            int baseV = i * 6;
+            _glUniform3f(_uMarkersColor, 1.0f, 0.20f, 0.20f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 0, 2);
+            _glUniform3f(_uMarkersColor, 0.20f, 1.0f, 0.20f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 2, 2);
+            _glUniform3f(_uMarkersColor, 0.30f, 0.50f, 1.0f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 4, 2);
+        }
+        int impactBase = attLineCount * 2;
+        for (int i = 0; i < mesh.ImpactPoints.Length; i++)
+        {
+            int baseV = impactBase + i * 6;
+            _glUniform3f(_uMarkersColor, 0.7f, 0.4f, 0.4f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 0, 2);
+            _glUniform3f(_uMarkersColor, 0.4f, 0.7f, 0.4f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 2, 2);
+            _glUniform3f(_uMarkersColor, 0.4f, 0.5f, 0.7f); gl.DrawArrays(0x0001 /* GL_LINES */, baseV + 4, 2);
+        }
     }
 
     void ProjectAndEmitGizmoLabels(double scaling, int viewportW, int viewportH)
@@ -735,7 +766,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         GizmoLabelsProjected.Invoke(_gizmoLabelBuffer);
     }
 
-    void ProjectAndEmitMarkers(in System.Numerics.Matrix4x4 mvp, double scaling, int viewportW, int viewportH)
+    unsafe void ProjectAndEmitMarkers(in System.Numerics.Matrix4x4 mvp, double scaling, int viewportW, int viewportH)
     {
         if (MarkersProjected == null) return;
         var mesh = _meshData;
@@ -746,31 +777,72 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
             return;
         }
 
-        // Inline projection; local function cannot capture an `in` parameter.
+        // Pass 1: project to screen, capture NDC depth and pixel coords for inside markers.
+        int totalMarkers = mesh.Attachments.Length + mesh.ImpactPoints.Length;
+        Span<float> markerDepths = stackalloc float[Math.Min(Math.Max(totalMarkers, 1), 256)];
+        Span<int> markerPx = stackalloc int[markerDepths.Length];
+        Span<int> markerPy = stackalloc int[markerDepths.Length];
+        int markerIdx = 0;
+
         foreach (var m in mesh.Attachments)
         {
             var p = new System.Numerics.Vector4(m.Position, 1.0f);
             var clip = System.Numerics.Vector4.Transform(p, mvp);
-            if (clip.W <= 0) { _markerLabelBuffer.Add(new MarkerLabel(m.Name, 0, 0, false)); continue; }
+            if (clip.W <= 0)
+            {
+                _markerLabelBuffer.Add(new MarkerLabel(m.Name, 0, 0, false, false));
+                if (markerIdx < markerDepths.Length) { markerDepths[markerIdx] = 1.0f; markerPx[markerIdx] = -1; markerPy[markerIdx] = -1; markerIdx++; }
+                continue;
+            }
             float ndcX = clip.X / clip.W;
             float ndcY = clip.Y / clip.W;
+            float ndcZ = clip.Z / clip.W;
             bool inside = ndcX >= -1 && ndcX <= 1 && ndcY >= -1 && ndcY <= 1;
             double sx = (ndcX * 0.5 + 0.5) * (viewportW / scaling);
             double sy = (1.0 - (ndcY * 0.5 + 0.5)) * (viewportH / scaling);
-            _markerLabelBuffer.Add(new MarkerLabel(m.Name, sx, sy, inside));
+            // Pixel position in framebuffer coords (origin at bottom-left, full-resolution px not logical).
+            int px = (int)((ndcX * 0.5 + 0.5) * viewportW);
+            int py = (int)((ndcY * 0.5 + 0.5) * viewportH);
+            _markerLabelBuffer.Add(new MarkerLabel(m.Name, sx, sy, inside, false));
+            if (markerIdx < markerDepths.Length) { markerDepths[markerIdx] = ndcZ * 0.5f + 0.5f; markerPx[markerIdx] = inside ? px : -1; markerPy[markerIdx] = inside ? py : -1; markerIdx++; }
         }
         foreach (var m in mesh.ImpactPoints)
         {
             var p = new System.Numerics.Vector4(m.Position, 1.0f);
             var clip = System.Numerics.Vector4.Transform(p, mvp);
-            if (clip.W <= 0) { _markerLabelBuffer.Add(new MarkerLabel(m.Name, 0, 0, false)); continue; }
+            if (clip.W <= 0)
+            {
+                _markerLabelBuffer.Add(new MarkerLabel(m.Name, 0, 0, false, false));
+                if (markerIdx < markerDepths.Length) { markerDepths[markerIdx] = 1.0f; markerPx[markerIdx] = -1; markerPy[markerIdx] = -1; markerIdx++; }
+                continue;
+            }
             float ndcX = clip.X / clip.W;
             float ndcY = clip.Y / clip.W;
+            float ndcZ = clip.Z / clip.W;
             bool inside = ndcX >= -1 && ndcX <= 1 && ndcY >= -1 && ndcY <= 1;
             double sx = (ndcX * 0.5 + 0.5) * (viewportW / scaling);
             double sy = (1.0 - (ndcY * 0.5 + 0.5)) * (viewportH / scaling);
-            _markerLabelBuffer.Add(new MarkerLabel(m.Name, sx, sy, inside));
+            int px = (int)((ndcX * 0.5 + 0.5) * viewportW);
+            int py = (int)((ndcY * 0.5 + 0.5) * viewportH);
+            _markerLabelBuffer.Add(new MarkerLabel(m.Name, sx, sy, inside, false));
+            if (markerIdx < markerDepths.Length) { markerDepths[markerIdx] = ndcZ * 0.5f + 0.5f; markerPx[markerIdx] = inside ? px : -1; markerPy[markerIdx] = inside ? py : -1; markerIdx++; }
         }
+
+        // Pass 2: depth-buffer readback per inside marker to determine occlusion.
+        if (_glReadPixels != null)
+        {
+            for (int i = 0; i < markerIdx && i < _markerLabelBuffer.Count; i++)
+            {
+                if (markerPx[i] < 0) continue;
+                float depth = 0;
+                _glReadPixels(markerPx[i], markerPy[i], 1, 1, 0x1902 /* GL_DEPTH_COMPONENT */, 0x1406 /* GL_FLOAT */, &depth);
+                // If the depth buffer at this pixel is closer than the marker, the marker is behind something.
+                bool occluded = depth + 0.0001f < markerDepths[i];
+                var existing = _markerLabelBuffer[i];
+                _markerLabelBuffer[i] = existing with { Occluded = occluded };
+            }
+        }
+
         MarkersProjected.Invoke(_markerLabelBuffer);
     }
 

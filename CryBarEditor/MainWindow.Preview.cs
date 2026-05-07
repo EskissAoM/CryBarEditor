@@ -752,6 +752,8 @@ public partial class MainWindow
                 Canvas.SetTop(outline, label.Y + 1);
                 Canvas.SetLeft(fg, label.X);
                 Canvas.SetTop(fg, label.Y);
+                outline.Opacity = label.Occluded ? 0.5 : 1.0;
+                fg.Opacity = label.Occluded ? 0.7 : 1.0;
                 outline.IsVisible = true;
                 fg.IsVisible = true;
             }
