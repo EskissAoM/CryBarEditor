@@ -414,74 +414,21 @@ public partial class MainWindow
     /// Resolves materials and textures for a TMM model via FileIndex.
     /// Returns parsed materials + raw decompressed DDT bytes per texture path.
     /// </summary>
-    async ValueTask<(List<MaterialInfo> Materials, Dictionary<string, (string FileName, Memory<byte> DdtData)> Textures)?> 
+    async ValueTask<(List<MaterialInfo> Materials, Dictionary<string, (string FileName, Memory<byte> DdtData)> Textures)?>
         ResolveTmmMaterialsAsync(string tmmFileName)
     {
-        if (_fileIndex == null) 
-            return null;
+        if (_fileIndex == null) return null;
 
-        try
-        {
-            var tmmName = Path.GetFileNameWithoutExtension(tmmFileName);
-            var materialName = tmmName + ".material";
+        var resolver = new TmmMaterialResolver(_fileIndex, ReadFromIndexEntryPooledAsync);
+        var resolved = await resolver.ResolveAsync(tmmFileName);
+        if (resolved == null) return null;
 
-            // Try .material.XMB first, then .material
-            var materialEntries = _fileIndex.Find(materialName + ".XMB");
-            if (materialEntries.Count == 0)
-                materialEntries = _fileIndex.Find(materialName);
+        var converted = new Dictionary<string, (string FileName, Memory<byte> DdtData)>(
+            resolved.Value.Textures.Count);
+        foreach (var (path, (fileName, bytes)) in resolved.Value.Textures)
+            converted[path] = (fileName, bytes.AsMemory());
 
-            if (materialEntries.Count == 0) return null;
-
-            var matEntry = materialEntries[0];
-            using var matData = await ReadFromIndexEntryPooledAsync(matEntry);
-            if (matData == null) return null;
-
-            // Convert XMB to XML if needed
-            using var matBytes = BarCompression.EnsureDecompressedPooled(matData, out _);
-
-            string? xmlText;
-            if (matEntry.FileName.EndsWith(".XMB", StringComparison.OrdinalIgnoreCase))
-            {
-                xmlText = ConversionHelper.ConvertXmbToXmlText(matBytes.Span);
-            }
-            else
-            {
-                xmlText = Encoding.UTF8.GetString(matBytes.Span);
-            }
-
-            if (xmlText == null) return null;
-
-            var materials = MaterialExporter.ParseMaterialXml(xmlText);
-            var texturePaths = MaterialExporter.GetAllTexturePaths(materials);
-            var textures = new Dictionary<string, (string FileName, Memory<byte> DdtData)>();
-
-            // Find each texture
-            foreach (var texPath in texturePaths)
-            {
-                var texFileName = Path.GetFileName(texPath.Replace('\\', '/'));
-
-                var texEntries = _fileIndex.Find(texFileName + ".ddt");
-                if (texEntries.Count == 0)
-                    texEntries = _fileIndex.Find(texFileName);
-
-                if (texEntries.Count > 0)
-                {
-                    using var texData = await ReadFromIndexEntryPooledAsync(texEntries[0]);
-                    if (texData != null)
-                    {
-                        using var decompressedTex = BarCompression.EnsureDecompressedPooled(texData, out _);
-                        // Must copy: dictionary outlives the pooled buffer
-                        textures[texPath] = (texFileName, decompressedTex.Span.ToArray());
-                    }
-                }
-            }
-
-            return (materials, textures);
-        }
-        catch
-        {
-            return null;
-        }
+        return (resolved.Value.Materials, converted);
     }
 
     /// <summary>
