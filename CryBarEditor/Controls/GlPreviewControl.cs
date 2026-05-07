@@ -455,7 +455,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
 
         // Solid dim gray; the mesh occludes it via depth testing.
         if (_glUniform4f != null)
-            _glUniform4f(_uGridColor, 0.30f, 0.30f, 0.30f, 0.6f);
+            _glUniform4f(_uGridColor, 0.16f, 0.16f, 0.16f, 1.0f);
 
         // Render lines under the mesh: enable depth test, write depth so the mesh occludes.
         gl.Enable(GL_DEPTH_TEST);
