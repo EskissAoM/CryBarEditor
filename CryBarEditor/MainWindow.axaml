@@ -469,6 +469,11 @@
 								<DockPanel>
 									<StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
 												HorizontalAlignment="Right" Margin="0,4,0,0">
+										<CheckBox x:Name="_showMarkersCheckbox"
+												  Content="Show markers"
+												  IsChecked="True"
+												  IsCheckedChanged="ShowMarkers_Toggled"
+												  Margin="0,0,8,0" />
 										<TextBlock x:Name="_3dStatusText"
 											VerticalAlignment="Center" Margin="0,0,8,0"
 											Foreground="Gray" />

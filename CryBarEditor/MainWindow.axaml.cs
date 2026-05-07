@@ -637,6 +637,9 @@ public partial class MainWindow : SimpleWindow
             _quickAccessEntries = config.QuickAccessEntries ?? new();
             _filterOnlyOverriddenFiles = config.FilterOnlyOverriddenFiles ?? false;
             _filterOnlyOverriddenBarEntries = config.FilterOnlyOverriddenBarEntries ?? false;
+
+            if (config.Show3DMarkers == false)
+                _showMarkersCheckbox.IsChecked = false;
         }
         catch
         {
@@ -678,6 +681,7 @@ public partial class MainWindow : SimpleWindow
             _lastConfiguration.QuickAccessEntries = _quickAccessEntries;
             _lastConfiguration.FilterOnlyOverriddenFiles = _filterOnlyOverriddenFiles;
             _lastConfiguration.FilterOnlyOverriddenBarEntries = _filterOnlyOverriddenBarEntries;
+            _lastConfiguration.Show3DMarkers = _showMarkersCheckbox.IsChecked == true;
 
             File.WriteAllText(config_path, JsonSerializer.Serialize(_lastConfiguration, CryBarJsonContext.Default.Configuration));
         }

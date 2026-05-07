@@ -683,7 +683,80 @@ public partial class MainWindow
         if (_glPreview != null) return;
         _glPreview = new GlPreviewControl();
         _glPreview.GizmoLabelsProjected += OnGizmoLabelsProjected;
+        _glPreview.MarkersProjected += OnMarkersProjected;
+        _glPreview.ShowMarkers = _showMarkersCheckbox.IsChecked == true;
         _3dViewContainer.Child = _glPreview;
+    }
+
+    List<TextBlock>? _markerLabelPool;
+
+    void EnsureMarkerLabelPool() => _markerLabelPool ??= new List<TextBlock>();
+
+    void ShowMarkers_Toggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        bool enabled = _showMarkersCheckbox.IsChecked == true;
+        if (_glPreview != null) _glPreview.ShowMarkers = enabled;
+
+        SaveConfiguration();
+
+        if (!enabled && _markerLabelPool != null)
+        {
+            foreach (var tb in _markerLabelPool) tb.IsVisible = false;
+        }
+    }
+
+    void OnMarkersProjected(IReadOnlyList<Controls.GlPreviewControl.MarkerLabel> labels)
+    {
+        EnsureMarkerLabelPool();
+        var pool = _markerLabelPool!;
+        int needed = labels.Count * 2; // outline + foreground per label
+
+        while (pool.Count < needed)
+        {
+            var outline = new TextBlock
+            {
+                FontSize = 11,
+                Foreground = Brushes.Black,
+                IsHitTestVisible = false
+            };
+            var fg = new TextBlock
+            {
+                FontSize = 11,
+                Foreground = Brushes.White,
+                IsHitTestVisible = false
+            };
+            _3dLabelCanvas.Children.Add(outline);
+            _3dLabelCanvas.Children.Add(fg);
+            pool.Add(outline);
+            pool.Add(fg);
+        }
+
+        for (int i = 0; i < labels.Count; i++)
+        {
+            var label = labels[i];
+            var outline = pool[i * 2];
+            var fg = pool[i * 2 + 1];
+            if (label.Visible)
+            {
+                outline.Text = label.Name;
+                fg.Text = label.Name;
+                Canvas.SetLeft(outline, label.X + 1);
+                Canvas.SetTop(outline, label.Y + 1);
+                Canvas.SetLeft(fg, label.X);
+                Canvas.SetTop(fg, label.Y);
+                outline.IsVisible = true;
+                fg.IsVisible = true;
+            }
+            else
+            {
+                outline.IsVisible = false;
+                fg.IsVisible = false;
+            }
+        }
+
+        // Hide any leftover pool entries beyond the current count.
+        for (int i = labels.Count * 2; i < pool.Count; i++)
+            pool[i].IsVisible = false;
     }
 
     Border[]? _gizmoLabelBorders;
