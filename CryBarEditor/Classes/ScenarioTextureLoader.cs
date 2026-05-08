@@ -55,4 +55,32 @@ public sealed class ScenarioTextureLoader
             }
         }
     }
+
+    public sealed record SliceBuffer(int SliceIndex, byte[] Rgba);
+
+    // Decode resolved DDT byte buffers into 256x256 RGBA8 in parallel.
+    // resolvedBytes[i] == null means slice i was unresolved -- output[i] stays null.
+    public static async Task<SliceBuffer?[]> DecodeAllAsync(
+        IReadOnlyList<byte[]?> resolvedBytes,
+        CancellationToken ct)
+    {
+        var buffers = new SliceBuffer?[resolvedBytes.Count];
+
+        await Parallel.ForAsync(0, resolvedBytes.Count, new ParallelOptions
+        {
+            CancellationToken = ct,
+            MaxDegreeOfParallelism = Environment.ProcessorCount
+        }, async (i, innerCt) =>
+        {
+            innerCt.ThrowIfCancellationRequested();
+            var bytes = resolvedBytes[i];
+            if (bytes is null || bytes.Length == 0) return;
+
+            var rgba = await DDTImage.DecodeBaseColorOnlyAsync(bytes, TargetSize, innerCt);
+            if (rgba is not null)
+                buffers[i] = new SliceBuffer(i, rgba);
+        });
+
+        return buffers;
+    }
 }
