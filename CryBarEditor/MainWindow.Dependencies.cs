@@ -207,7 +207,10 @@ public partial class MainWindow
             if (fileEntries.Count == 0) continue;
 
             // Try cache first, otherwise load and parse
-            if (!_cachedSoundsetFiles.TryGetValue(fileName, out var definitions))
+            List<SoundsetDefinition>? definitions;
+            lock (_cachedSoundsetFilesLock)
+                _cachedSoundsetFiles.TryGetValue(fileName, out definitions);
+            if (definitions == null)
             {
                 using var data = await ReadFromIndexEntryPooledAsync(fileEntries[0]);
                 if (data == null) continue;
@@ -218,7 +221,8 @@ public partial class MainWindow
                 try
                 {
                     definitions = SoundsetParser.ParseSoundsetXml(xmlText);
-                    _cachedSoundsetFiles[fileName] = definitions;
+                    lock (_cachedSoundsetFilesLock)
+                        _cachedSoundsetFiles[fileName] = definitions;
                 }
                 catch { continue; }
             }

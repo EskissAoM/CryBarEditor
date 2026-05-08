@@ -122,8 +122,13 @@ public partial class MainWindow : SimpleWindow
     int _tmmSelectedTabIndex = 0;
     CancellationTokenSource? _meshConversionCts;
 
-    // BAR file metadata cache (avoids re-opening and re-parsing BAR headers)
-    readonly LruCache<CachedBarFile> _barFileCache = new(4, onEvict: v => v.Dispose());
+    // BAR file metadata cache (avoids re-opening and re-parsing BAR headers).
+    // Cap is generous (32) so concurrent fan-out paths -- e.g. ScenarioTextureLoader's
+    // Parallel.ForAsync hitting textures spread across many BARs -- can't trip the
+    // eviction-during-use race where Add() would Dispose() a CachedBarFile whose
+    // FileStream another worker is still reading. Eviction is safe only when no
+    // worker holds a ref; a generous cap keeps that the common case in practice.
+    readonly LruCache<CachedBarFile> _barFileCache = new(32, onEvict: v => v.Dispose());
 
     // Text document cache + async load cancellation
     readonly LruCache<TextDocument> _docCache = new(maxItems: 4, onEvict: OnDocEvicted);
