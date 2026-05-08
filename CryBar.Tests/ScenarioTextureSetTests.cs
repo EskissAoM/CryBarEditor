@@ -49,6 +49,7 @@ public class ScenarioTextureSetTests
             TileGroups = tileGroups,
             TileSubs = tileSubs,
             TilePt = new byte[tileGroups.Length],
+            WaterType = new byte[tileGroups.Length],
             TerrainGroups = groups
         };
     }

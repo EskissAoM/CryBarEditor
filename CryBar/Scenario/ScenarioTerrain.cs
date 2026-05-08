@@ -19,6 +19,13 @@ public sealed class ScenarioTerrain
     public required byte[] TileGroups { get; init; }
     public required ushort[] TileSubs { get; init; }
     public required byte[] TilePt { get; init; }
+    /// <summary>
+    /// Per-tile water type byte. 0 = no water on this tile; non-zero indexes into the
+    /// scenario's WaterNames list. This is the authoritative "is this tile water?" marker
+    /// the game uses -- WaterHeights is a global sea level reference and is set on any
+    /// low-lying vertex, including non-water depressions.
+    /// </summary>
+    public required byte[] WaterType { get; init; }
     public required TerrainTextureGroup[] TerrainGroups { get; init; }
 
     public static ScenarioTerrain? TryParse(ScenarioFile scenario)
@@ -80,10 +87,12 @@ public sealed class ScenarioTerrain
         var tileSubs = ReadUShortList(t3, ref off);
         var tilePt = ReadByteList(t3, ref off);
 
-        // Skip WaterColors, WaterNames, WaterType
+        // Skip WaterColors and WaterNames (cosmetic metadata for the water palette).
         SkipSizeSection(t3, ref off);
         SkipSizeSection(t3, ref off);
-        SkipSizeSection(t3, ref off);
+
+        // WaterType is per-tile: 0 = no water, non-zero = index into WaterNames.
+        var waterType = ReadByteList(t3, ref off);
 
         if (off + 4 > t3.Length) return null;
         var heightCount = (int)BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off));
@@ -102,6 +111,7 @@ public sealed class ScenarioTerrain
             TileGroups = tileGroups,
             TileSubs = tileSubs,
             TilePt = tilePt,
+            WaterType = waterType,
             TerrainGroups = groups
         };
     }

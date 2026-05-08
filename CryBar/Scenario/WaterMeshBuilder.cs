@@ -34,23 +34,22 @@ public static class WaterMeshBuilder
         var verts = new List<float>(64 * 3);
         var indices = new List<uint>(64);
 
+        var waterType = terrain.WaterType;
         for (int tz = 0; tz < mapZ; tz++)
         for (int tx = 0; tx < mapX; tx++)
         {
+            // A tile is actually water iff WaterType[tileIdx] == 0. WaterType
+            // appears to be a per-tile "no-water" override: holes and other
+            // non-water depressions get a non-zero entry, while genuine water
+            // tiles keep the default 0. WaterHeights alone isn't enough -- the
+            // sea-level height bleeds into low spots that aren't water bodies.
+            int tileIdx = tz * mapX + tx;
+            if (tileIdx >= waterType.Length || waterType[tileIdx] != 0) continue;
+
             int v00 = tz       * vCols + tx;
             int v10 = tz       * vCols + (tx + 1);
             int v01 = (tz + 1) * vCols + tx;
             int v11 = (tz + 1) * vCols + (tx + 1);
-
-            float h00 = waterH[v00];
-            float h10 = waterH[v10];
-            float h01 = waterH[v01];
-            float h11 = waterH[v11];
-
-            // Only emit tiles where all 4 corners have water -- "any corner" leaks
-            // water onto neighbor tiles that just share a watered boundary vertex,
-            // making the pond appear 1 tile wider than it actually is.
-            if (h00 <= 0 || h10 <= 0 || h01 <= 0 || h11 <= 0) continue;
 
             int i00 = AddVertex(verts, vertexMap, v00, tx,     waterY, tz);
             int i10 = AddVertex(verts, vertexMap, v10, tx + 1, waterY, tz);

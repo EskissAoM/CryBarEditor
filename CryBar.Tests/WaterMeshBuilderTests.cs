@@ -22,15 +22,12 @@ public class WaterMeshBuilderTests
     [Fact]
     public void Build_OneTileHasWater_EmitsOneQuad()
     {
-        // 2x2 map. Set the 4 corner heights of tile (0,0) only.
-        // Vertex grid is 3x3 indexed (vz * 3 + vx).
+        // 2x2 map. Vertex grid is 3x3 indexed (vz * 3 + vx). Set water level
+        // and mark only tile (0,0) as a water-textured tile.
         var heights = new float[9];
-        heights[0] = 5; // (vx=0, vz=0)
-        heights[1] = 5; // (vx=1, vz=0)
-        heights[3] = 5; // (vx=0, vz=1)
-        heights[4] = 5; // (vx=1, vz=1)
+        heights[0] = 5; heights[1] = 5; heights[3] = 5; heights[4] = 5;
 
-        var water = WaterMeshBuilder.Build(NewTerrain(2, 2, heights));
+        var water = WaterMeshBuilder.Build(NewWaterTerrain(2, 2, heights, waterTiles: [0]));
 
         Assert.NotNull(water);
         Assert.Equal(4, water!.VertexCount);
@@ -47,14 +44,25 @@ public class WaterMeshBuilderTests
     }
 
     [Fact]
+    public void Build_HoleWithoutWaterTexture_EmitsNothing()
+    {
+        // WaterHeights set everywhere (sea level), but no water-textured tile.
+        // A hole in the heightmap must NOT spawn a water surface on its own.
+        var heights = new float[9];
+        for (int i = 0; i < heights.Length; i++) heights[i] = 5;
+
+        var water = WaterMeshBuilder.Build(NewWaterTerrain(2, 2, heights, waterTiles: []));
+
+        Assert.Null(water);
+    }
+
+    [Fact]
     public void Build_FlatHeightAtMedianMinusBias()
     {
-        // 4 watered corners @ varying heights -> median is 5, biased down by ZBias.
-        // All emitted vertices share that flat height.
         var heights = new float[9];
         heights[0] = 4; heights[1] = 5; heights[3] = 5; heights[4] = 6;
 
-        var water = WaterMeshBuilder.Build(NewTerrain(2, 2, heights))!;
+        var water = WaterMeshBuilder.Build(NewWaterTerrain(2, 2, heights, waterTiles: [0]))!;
 
         // ZBias 0.7 -> emitted Y = 5 - 0.7 = 4.3
         for (int i = 0; i < water.VertexCount; i++)
@@ -72,6 +80,28 @@ public class WaterMeshBuilderTests
             WaterHeights = waterHeights,
             UnkHeights = new float[vCount],
             TileGroups = new byte[tCount], TileSubs = new ushort[tCount], TilePt = new byte[tCount],
+            WaterType = new byte[tCount],
+            TerrainGroups = []
+        };
+    }
+
+    // Variant that wires WaterType so the listed tiles are water (value 0) and
+    // all others are non-water (value 1). Matches WaterMeshBuilder's convention.
+    static ScenarioTerrain NewWaterTerrain(int mapX, int mapZ, float[] waterHeights, int[] waterTiles)
+    {
+        int vCount = (mapX + 1) * (mapZ + 1);
+        int tCount = mapX * mapZ;
+        var waterType = new byte[tCount];
+        Array.Fill(waterType, (byte)1); // non-water default
+        foreach (var t in waterTiles) waterType[t] = 0;
+        return new ScenarioTerrain
+        {
+            MapSizeX = mapX, MapSizeZ = mapZ,
+            Heights = new float[vCount],
+            WaterHeights = waterHeights,
+            UnkHeights = new float[vCount],
+            TileGroups = new byte[tCount], TileSubs = new ushort[tCount], TilePt = new byte[tCount],
+            WaterType = waterType,
             TerrainGroups = []
         };
     }

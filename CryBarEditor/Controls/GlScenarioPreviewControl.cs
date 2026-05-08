@@ -169,8 +169,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         void main() {
             // Apply the same Y scale as terrain, then lift above the (already scaled) ground.
             vec3 wp = vec3(aWorldPos.x, aWorldPos.y * uYScale + 0.4, aWorldPos.z);
-            // Selected entity gets a 50% bigger disc so it stands out at any zoom.
-            float sizeMul = (gl_InstanceID == uSelectedIdx) ? 1.5 : 1.0;
+            // Selected entity gets a slightly bigger disc so it stands out at any zoom.
+            float sizeMul = (gl_InstanceID == uSelectedIdx) ? 1.2 : 1.0;
             // World-anchored billboard: offset in view-space (X right, Y up relative
             // to camera) so the disc has a constant world radius and zooms naturally
             // with the terrain instead of staying fixed-pixel.

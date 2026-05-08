@@ -60,6 +60,7 @@ public class TerrainMeshBuilderTests
             TileGroups = new byte[tCount],
             TileSubs = new ushort[tCount],
             TilePt = new byte[tCount],
+            WaterType = new byte[tCount],
             TerrainGroups = [new TerrainTextureGroup { Name = "G0", Textures = ["a"] }]
         };
     }
