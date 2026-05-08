@@ -618,6 +618,12 @@ public partial class MainWindow
     #region TMM 3D Preview
     void ShowTmmPreview(string metadataText)
     {
+        // Mirror ShowScenarioPreview's HideTmmPreview() call: the two structured
+        // panels are mutually exclusive, and showing one without tearing down the
+        // other left both visible at once and the prior scenario's GL/data alive.
+        if (_scenarioTabControl is not null && _scenarioTabControl.IsVisible)
+            HideScenarioPreview();
+
         if (!_tmmTabControl.IsVisible)
             _tmmTabControl.SelectedIndex = _tmmSelectedTabIndex;
         _flatPreview.IsVisible = false;
