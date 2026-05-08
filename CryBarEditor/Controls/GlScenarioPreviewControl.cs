@@ -348,7 +348,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             _entitiesUploaded = true;
         }
         if (_entityCount > 0)
-            DrawEntities(gl, mvpCopy, MathF.Max(_data.Terrain.MapSizeX, _data.Terrain.MapSizeZ));
+            DrawEntities(gl, mvpCopy);
 
         gl.BindVertexArray(0);
         gl.UseProgram(0);
@@ -397,13 +397,16 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.BindVertexArray(0);
     }
 
-    unsafe void DrawEntities(GlInterface gl, Matrix4x4 mvpCopy, float mapExtent)
+    // Half-size of the marker quad in NDC, so the formula `clip.xy += aQuad * uSize * clip.w`
+    // resolves to a screen-stable billboard ~3% of the viewport wide.
+    const float BillboardHalfSizeNdc = 0.015f;
+
+    unsafe void DrawEntities(GlInterface gl, Matrix4x4 mvpCopy)
     {
         if (_glDrawArraysInstanced == null) return;
         gl.UseProgram(_billboardProgram);
         gl.UniformMatrix4fv(_uBillboardMvp, 1, false, &mvpCopy.M11);
-        // Marker radius scales with map extent so it stays visible from default zoom.
-        gl.Uniform1f(_uBillboardSize, mapExtent * 0.005f);
+        gl.Uniform1f(_uBillboardSize, BillboardHalfSizeNdc);
         gl.BindVertexArray(_billboardVao);
         _glDrawArraysInstanced(GL_TRIANGLES, 0, 6, _entityCount);
         gl.BindVertexArray(0);

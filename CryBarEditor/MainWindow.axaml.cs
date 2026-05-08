@@ -356,6 +356,13 @@ public partial class MainWindow : SimpleWindow
         _registryOptions = new RegistryOptions(ThemeName.DarkPlus);
         _textMateInstallation = _txtEditor.InstallTextMate(_registryOptions);
 
+        // Scenario XML tab is dedicated to XML, so install a fixed-grammar TextMate
+        // installation so it picks up the same DarkPlus theme as the main editor.
+        var xmlInstall = _scenarioXmlEditor.InstallTextMate(_registryOptions);
+        var xmlLang = _registryOptions.GetLanguageByExtension(".xml");
+        if (xmlLang is not null)
+            xmlInstall.SetGrammar(_registryOptions.GetScopeByLanguageId(xmlLang.Id));
+
         // prepare functions (to handle different types of entries - one from Root dir - others from BAR archives)
         F_GetFullRelativePathRoot = f => GetRootFullRelativePath(f);
         F_GetFullRelativePathBAR = f => GetBARFullRelativePath(f);
