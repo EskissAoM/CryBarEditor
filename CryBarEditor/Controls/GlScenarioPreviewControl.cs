@@ -358,6 +358,9 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     protected override void OnOpenGlDeinit(GlInterface gl)
     {
+        // Notify hosts first so they drop their GL-bound caches before tear-down.
+        GlContextLost?.Invoke();
+
         if (_heightProgram != 0) { gl.DeleteProgram(_heightProgram); _heightProgram = 0; }
         if (_heightVbo != 0)     { gl.DeleteBuffer(_heightVbo); _heightVbo = 0; }
         if (_heightEbo != 0)     { gl.DeleteBuffer(_heightEbo); _heightEbo = 0; }
@@ -566,6 +569,9 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     public event Action<EntityMarker?>? EntitySelected;
 
     public event Action<string?>? ErrorChanged;
+
+    // Fires when the GL context tears down; hosts must drop cached GL handles here.
+    public event Action? GlContextLost;
 
     public void RaiseError(string? message) => ErrorChanged?.Invoke(message);
 

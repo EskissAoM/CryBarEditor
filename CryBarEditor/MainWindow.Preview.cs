@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Media;
 using Avalonia.VisualTree;
 using Avalonia.Media.Imaging;
@@ -656,41 +657,41 @@ public partial class MainWindow
         // Mirror ShowScenarioPreview's HideTmmPreview() call: the two structured
         // panels are mutually exclusive, and showing one without tearing down the
         // other left both visible at once and the prior scenario's GL/data alive.
-        if (_scenarioTabControl is not null && _scenarioTabControl.IsVisible)
+        if (_scenarioRoot is not null && _scenarioRoot.IsVisible)
             HideScenarioPreview();
 
-        if (!_tmmTabControl.IsVisible)
-            _tmmTabControl.SelectedIndex = _tmmSelectedTabIndex;
+        if (!_tmmRoot.IsVisible)
+            _tmmTabStrip.SelectedIndex = _tmmSelectedTabIndex;
         _flatPreview.IsVisible = false;
-        _tmmTabControl.IsVisible = true;
-        _tmmTabControl.SelectionChanged -= TmmTabControl_SelectionChanged;
-        _tmmTabControl.SelectionChanged += TmmTabControl_SelectionChanged;
+        _tmmRoot.IsVisible = true;
         _tmmMetadataEditor.Document = new TextDocument(metadataText);
     }
 
-    void TmmTabControl_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    void TmmTab_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
-        if (_tmmTabControl.SelectedIndex == 1)
-        {
-            // Flush pending mesh on first switch to 3D tab
-            if (_pendingMeshData != null)
-                FlushPendingMesh();
+        ToggleTabPanels(_tmmTabStrip, _tmmMetadataEditor, _tmm3dPanel);
+        // On 3D tab: flush pending mesh, then load textures (deferred from
+        // Metadata tab to avoid baking bindings against a stale mesh).
+        if (_tmmTabStrip?.SelectedIndex != 1) return;
+        if (_pendingMeshData != null) FlushPendingMesh();
+        TryKickTextureLoadForCurrent();
+    }
 
-            // Force GL control to re-render by detaching and reattaching
-            if (_glPreview != null)
-            {
-                _3dViewContainer.Child = null;
-                _3dViewContainer.Child = _glPreview;
-            }
+    void TryKickTextureLoadForCurrent()
+    {
+        if (!_useTextured3D || _currentTmmFileName == null) return;
+        if (!_textureAvailability.TryGetValue(_currentTmmFileName, out var has) || !has) return;
+        _ = EnsureTexturesLoadedAsync(_currentTmmFileName, RestartTextureLoadCts());
+    }
 
-            // Reattach destroyed the prior GL context (handles die with it); kick a
-            // fresh texture load against the new context.
-            if (_useTextured3D && _currentTmmFileName != null
-                && _textureAvailability.TryGetValue(_currentTmmFileName, out var has) && has)
-            {
-                _ = EnsureTexturesLoadedAsync(_currentTmmFileName, RestartTextureLoadCts());
-            }
-        }
+    // Shared by TmmTab/ScenarioTab handlers. Null-guarded because Avalonia raises
+    // SelectionChanged during XAML EndInit before named fields are populated.
+    static void ToggleTabPanels(TabStrip? strip, Control? first, Control? second)
+    {
+        if (strip is null || first is null || second is null) return;
+        bool firstSelected = strip.SelectedIndex == 0;
+        first.IsVisible = firstSelected;
+        second.IsVisible = !firstSelected;
     }
 
     void FlushPendingMesh()
@@ -703,16 +704,16 @@ public partial class MainWindow
 
     void HideTmmPreview()
     {
-        if (_tmmTabControl.IsVisible)
-            _tmmSelectedTabIndex = _tmmTabControl.SelectedIndex;
-        _tmmTabControl.IsVisible = false;
+        if (_tmmRoot.IsVisible)
+            _tmmSelectedTabIndex = _tmmTabStrip.SelectedIndex;
+        _tmmRoot.IsVisible = false;
         _flatPreview.IsVisible = true;
         _meshConversionCts?.Cancel();
 
         // Scenario tab is also a structured preview; hide it whenever the editor
         // is switching back to flat-text mode so call sites don't need to know
         // which structured panel was visible before.
-        if (_scenarioTabControl is not null && _scenarioTabControl.IsVisible)
+        if (_scenarioRoot is not null && _scenarioRoot.IsVisible)
             HideScenarioPreview();
     }
 
@@ -753,7 +754,7 @@ public partial class MainWindow
 
         // Store pending mesh; only initialize GL and upload when 3D tab is visible
         _pendingMeshData = meshData;
-        if (_tmmTabControl.SelectedIndex == 1)
+        if (_tmmTabStrip.SelectedIndex == 1)
             FlushPendingMesh();
         else
             Update3DStatus(""); // ready, will load when tab is selected
@@ -766,21 +767,19 @@ public partial class MainWindow
     {
         var resolver = GetMaterialResolver();
         if (resolver == null) { UpdateTexturedToggleVisibility(false); return; }
-        if (_textureAvailability.TryGetValue(tmmFileName, out bool cached))
+
+        if (!_textureAvailability.TryGetValue(tmmFileName, out var has))
         {
-            UpdateTexturedToggleVisibility(cached);
-            if (cached && _useTextured3D)
-                await EnsureTexturesLoadedAsync(tmmFileName, token);
-            return;
+            has = await resolver.HasAtLeastBaseColorAsync(tmmFileName, token);
+            if (token.IsCancellationRequested) return;
+            _textureAvailability[tmmFileName] = has;
         }
 
-        bool has = await resolver.HasAtLeastBaseColorAsync(tmmFileName, token);
-        if (token.IsCancellationRequested) return;
-
-        _textureAvailability[tmmFileName] = has;
         UpdateTexturedToggleVisibility(has);
 
-        if (has && _useTextured3D)
+        // Auto-load only when 3D tab is active; otherwise the mesh isn't in place
+        // and TmmTab_SelectionChanged will kick the load on tab activation.
+        if (has && _useTextured3D && _tmmTabStrip?.SelectedIndex == 1)
             await EnsureTexturesLoadedAsync(tmmFileName, token);
     }
 
@@ -963,9 +962,7 @@ public partial class MainWindow
     {
         _useTextured3D = _texturedToggle.IsChecked == true;
         if (_glPreview != null) _glPreview.UseTexturedMode = _useTextured3D;
-
-        if (_useTextured3D && _currentTmmFileName != null)
-            _ = EnsureTexturesLoadedAsync(_currentTmmFileName, RestartTextureLoadCts());
+        TryKickTextureLoadForCurrent();
     }
 
     PreviewMeshData? _pendingMeshData;

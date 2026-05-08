@@ -21,7 +21,7 @@ public partial class MainWindow
         HideScenarioPreview();
 
         _flatPreview.IsVisible = false;
-        _scenarioTabControl.IsVisible = true;
+        _scenarioRoot.IsVisible = true;
 
         // Reparent the main editor into the XML tab so the scenario view reuses
         // the existing TextMate grammar, folding manager, and large-doc cache.
@@ -72,6 +72,9 @@ public partial class MainWindow
         return gl;
     }
 
+    void ScenarioTab_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+        => ToggleTabPanels(_scenarioTabStrip, _scenarioXmlHost, _scenario3dPanel);
+
     void UpdateScenarioProgress(ScenarioTextureLoader.LoadProgress p)
     {
         _scenarioProgressText.Text =
@@ -112,9 +115,9 @@ public partial class MainWindow
         _scenarioData?.Dispose();
         _scenarioData = null;
 
-        if (_scenarioTabControl.IsVisible)
+        if (_scenarioRoot.IsVisible)
         {
-            _scenarioTabControl.IsVisible = false;
+            _scenarioRoot.IsVisible = false;
             _flatPreview.IsVisible = true;
 
             // Move the editor back to the flat preview panel so other dispatchers can use it.
