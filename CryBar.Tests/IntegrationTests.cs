@@ -2539,9 +2539,8 @@ public class IntegrationTests
         for (int vx = 0; vx <= terrain.MapSizeX; vx++)
             if (Math.Abs(terrain.Heights[vz * vCols + vx] - terrain.Heights[(vz + 1) * vCols + vx]) > 5f) bigJumpsZ++;
 
-        // Misread (pre-fix) was 235 X-jumps vs 17,788 Z-jumps. Post-transpose both
-        // are under a few hundred. Cap at 500 so any future regression that swaps
-        // axes back gets caught.
+        // Real terrain stays under a few hundred big jumps per axis; cap at 500 so
+        // an axis-swap regression (one axis spiking to thousands) gets caught.
         Assert.True(bigJumpsX < 500, $"Too many X-axis height jumps: {bigJumpsX} (transpose regression?)");
         Assert.True(bigJumpsZ < 500, $"Too many Z-axis height jumps: {bigJumpsZ} (transpose regression?)");
     }

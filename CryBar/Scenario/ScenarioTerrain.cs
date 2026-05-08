@@ -99,10 +99,11 @@ public sealed class ScenarioTerrain
         // row-major indexing data[vz * mapX + vx], so transpose here once.
         // Square maps hide the difference; non-square ones (like fott26) read off
         // the end of every row and produce a forest of spikes without this fix.
-        if (tileGroups.Length == mapX * mapZ) tileGroups = TransposeBytes(tileGroups, mapX, mapZ);
-        if (tileSubs.Length == mapX * mapZ) tileSubs = TransposeUShorts(tileSubs, mapX, mapZ);
-        if (tilePt.Length == mapX * mapZ) tilePt = TransposeBytes(tilePt, mapX, mapZ);
-        if (waterType.Length == mapX * mapZ) waterType = TransposeBytes(waterType, mapX, mapZ);
+        int tileCount = mapX * mapZ;
+        if (tileGroups.Length == tileCount) tileGroups = Transpose(tileGroups, mapX, mapZ);
+        if (tileSubs.Length == tileCount) tileSubs = Transpose(tileSubs, mapX, mapZ);
+        if (tilePt.Length == tileCount) tilePt = Transpose(tilePt, mapX, mapZ);
+        if (waterType.Length == tileCount) waterType = Transpose(waterType, mapX, mapZ);
 
         if (off + 4 > t3.Length) return null;
         var heightCount = (int)BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off));
@@ -113,9 +114,10 @@ public sealed class ScenarioTerrain
 
         int vCols = mapX + 1;
         int vRows = mapZ + 1;
-        if (heights.Length == vCols * vRows) heights = TransposeFloats(heights, vCols, vRows);
-        if (waterHeights.Length == vCols * vRows) waterHeights = TransposeFloats(waterHeights, vCols, vRows);
-        if (unkHeights.Length == vCols * vRows) unkHeights = TransposeFloats(unkHeights, vCols, vRows);
+        int vertCount = vCols * vRows;
+        if (heights.Length == vertCount) heights = Transpose(heights, vCols, vRows);
+        if (waterHeights.Length == vertCount) waterHeights = Transpose(waterHeights, vCols, vRows);
+        if (unkHeights.Length == vertCount) unkHeights = Transpose(unkHeights, vCols, vRows);
 
         return new ScenarioTerrain
         {
@@ -217,27 +219,9 @@ public sealed class ScenarioTerrain
 
     // Convert from file's [outer * inner + i] layout (outer axis = vx, inner = vz)
     // to [vz * outer + vx] which the renderer assumes.
-    static float[] TransposeFloats(float[] src, int outerCount, int innerCount)
+    static T[] Transpose<T>(T[] src, int outerCount, int innerCount)
     {
-        var dst = new float[src.Length];
-        for (int o = 0; o < outerCount; o++)
-        for (int i = 0; i < innerCount; i++)
-            dst[i * outerCount + o] = src[o * innerCount + i];
-        return dst;
-    }
-
-    static byte[] TransposeBytes(byte[] src, int outerCount, int innerCount)
-    {
-        var dst = new byte[src.Length];
-        for (int o = 0; o < outerCount; o++)
-        for (int i = 0; i < innerCount; i++)
-            dst[i * outerCount + o] = src[o * innerCount + i];
-        return dst;
-    }
-
-    static ushort[] TransposeUShorts(ushort[] src, int outerCount, int innerCount)
-    {
-        var dst = new ushort[src.Length];
+        var dst = new T[src.Length];
         for (int o = 0; o < outerCount; o++)
         for (int i = 0; i < innerCount; i++)
             dst[i * outerCount + o] = src[o * innerCount + i];
