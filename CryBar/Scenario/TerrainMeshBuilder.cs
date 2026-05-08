@@ -35,8 +35,11 @@ public static class TerrainMeshBuilder
             verts[off + 0] = vx;
             verts[off + 1] = y;
             verts[off + 2] = vz;
-            verts[off + 3] = 0f;
-            verts[off + 4] = 0f;
+            // Per-vertex height-field slope (central difference, edge-clamped). Smooth-interpolating
+            // these in the fragment shader gives a continuous normal across tile boundaries -- so
+            // hills read as round mounds instead of faceted polygons.
+            verts[off + 3] = SlopeAlong(heights, vCols, vRows, vx, vz, dx: 1, dz: 0);
+            verts[off + 4] = SlopeAlong(heights, vCols, vRows, vx, vz, dx: 0, dz: 1);
 
             int sliceA = SliceAt(vx - 1, vz - 1, mapX, mapZ, slices);
             int sliceB = SliceAt(vx,     vz - 1, mapX, mapZ, slices);
@@ -101,5 +104,16 @@ public static class TerrainMeshBuilder
     {
         if ((uint)tx >= (uint)mapX || (uint)tz >= (uint)mapZ) return -1;
         return slices[tz * mapX + tx];
+    }
+
+    static float SlopeAlong(float[] heights, int vCols, int vRows, int vx, int vz, int dx, int dz)
+    {
+        int x0 = Math.Max(0, vx - dx);
+        int z0 = Math.Max(0, vz - dz);
+        int x1 = Math.Min(vCols - 1, vx + dx);
+        int z1 = Math.Min(vRows - 1, vz + dz);
+        int span = (x1 - x0) + (z1 - z0);
+        if (span == 0) return 0f;
+        return (heights[z1 * vCols + x1] - heights[z0 * vCols + x0]) / span;
     }
 }

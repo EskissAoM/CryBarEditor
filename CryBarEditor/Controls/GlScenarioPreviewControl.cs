@@ -125,7 +125,9 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     const string VertexShaderBody = """
         layout(location = 0) in vec3 aPos;
-        layout(location = 1) in vec2 aUv;
+        // Per-vertex height-field slope (dh/dx, dh/dz). Smoothly interpolated so the
+        // fragment shader can derive a continuous normal across triangle boundaries.
+        layout(location = 1) in vec2 aSlope;
         layout(location = 2) in vec4 aSlices;
         layout(location = 3) in vec3 aWeights;
 
@@ -133,6 +135,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         uniform float uYScale;
 
         out vec3 vWorld;
+        out vec2 vSlope;
         // Slice indices use flat interpolation -- linear interpolation produces
         // fractional values that round to the wrong slice between vertices, sampling
         // neighbor tiles' textures and producing the colored bleed-through.
@@ -143,6 +146,9 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             vec3 p = vec3(aPos.x, aPos.y * uYScale, aPos.z);
             gl_Position = uMVP * vec4(p, 1.0);
             vWorld = p;
+            // Bake the Y-scale into the slope so the fragment shader only sees one
+            // already-correct value -- avoids declaring uYScale in both stages.
+            vSlope = aSlope * uYScale;
             vSlices = aSlices;
             // 4th weight is implicit so the data fits in 12 floats per vertex
             float w4 = clamp(1.0 - aWeights.x - aWeights.y - aWeights.z, 0.0, 1.0);
@@ -222,6 +228,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     const string FragmentShaderBody = """
         in vec3 vWorld;
+        in vec2 vSlope;
         flat in vec4 vSlices;
         in vec4 vWeights;
 
@@ -256,9 +263,17 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             // visible if the texture array isn't fully populated yet.
             if (col.r + col.g + col.b < 0.01) col = vec4(0.30, 0.42, 0.20, 1.0);
 
-            vec3 N = vec3(0.0, 1.0, 0.0);
-            float NdotL = max(dot(N, normalize(vec3(0.4, 1.0, 0.3))), 0.0);
-            fragColor = vec4(col.rgb * (0.55 + 0.45 * NdotL), 1.0);
+            // Smooth-shaded normal from the interpolated per-vertex slope.
+            // vSlope already carries the Y-scale baked in by the vertex shader.
+            vec3 N = normalize(vec3(-vSlope.x, 1.0, -vSlope.y));
+
+            // Sun comes from above the (0,0) corner -- the camera-side corner
+            // matching the in-game default view -- so shadows fall on the
+            // far side of peaks instead of wrapping all around.
+            vec3 L = normalize(vec3(-0.55, 0.65, -0.55));
+            float NdotL = max(dot(N, L), 0.0);
+            float lighting = mix(0.4, 1.05, NdotL);
+            fragColor = vec4(min(col.rgb * lighting, vec3(1.0)), 1.0);
         }
         """;
 
