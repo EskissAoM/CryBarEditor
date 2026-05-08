@@ -753,7 +753,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         }
         else if (_rightDragging)
         {
-            _camera.Pan(-dx * 0.003f, dy * 0.003f);
+            _camera.PanGround(-dx * 0.003f, dy * 0.003f);
             RequestNextFrameRendering();
             e.Handled = true;
         }
@@ -874,7 +874,9 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     protected override void OnPointerWheelChanged(Avalonia.Input.PointerWheelEventArgs e)
     {
         base.OnPointerWheelChanged(e);
-        _camera.Zoom((float)e.Delta.Y);
+        // Larger rate than the TMM viewer: scenario maps are big and the multiplicative
+        // step felt too small at close-up to traverse quickly.
+        _camera.Zoom((float)e.Delta.Y, rate: 0.25f);
         RequestNextFrameRendering();
         e.Handled = true;
     }

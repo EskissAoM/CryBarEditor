@@ -53,9 +53,11 @@ public class OrbitCamera
         Elevation = Math.Clamp(Elevation + dElevation, -89f, 89f);
     }
 
-    public void Zoom(float delta)
+    /// <param name="rate">Per-tick multiplicative step (0.1 = 10% per scroll). Larger
+    /// values give snappier close-up zoom for top-down views like the scenario map.</param>
+    public void Zoom(float delta, float rate = 0.1f)
     {
-        float factor = 1f - delta * 0.1f;
+        float factor = 1f - delta * rate;
         Distance = MathF.Max(0.01f, Distance * factor);
     }
 
@@ -70,6 +72,28 @@ public class OrbitCamera
         var offset = right * (dx * scale) + up * (dy * scale);
         TargetX += offset.X;
         TargetY += offset.Y;
+        TargetZ += offset.Z;
+    }
+
+    /// <summary>
+    /// XZ-plane pan: TargetY stays fixed; dy pans along the camera's forward
+    /// direction projected to the ground. Suited for top-down map views where
+    /// height drift while panning feels disorienting.
+    /// </summary>
+    public void PanGround(float dx, float dy)
+    {
+        var view = GetViewMatrix();
+        var right = new Vector3(view.M11, view.M21, view.M31);
+        var forward = -new Vector3(view.M13, view.M23, view.M33);
+
+        var rightXZ = new Vector3(right.X, 0, right.Z);
+        var forwardXZ = new Vector3(forward.X, 0, forward.Z);
+        if (rightXZ.LengthSquared() > 1e-6f) rightXZ = Vector3.Normalize(rightXZ);
+        if (forwardXZ.LengthSquared() > 1e-6f) forwardXZ = Vector3.Normalize(forwardXZ);
+
+        float scale = Distance;
+        var offset = rightXZ * (dx * scale) + forwardXZ * (dy * scale);
+        TargetX += offset.X;
         TargetZ += offset.Z;
     }
 
