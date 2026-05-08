@@ -184,12 +184,14 @@ public partial class ScenarioFile
         if (TryReadProtoIndex(h1, enEnd, out var protoIndex))
             writer.WriteAttributeString("protoIndex", protoIndex.ToString());
 
-        var px = BitConverter.ToSingle(h1.Slice(posOff, 4));
-        var py = BitConverter.ToSingle(h1.Slice(posOff + 4, 4));
-        var pz = BitConverter.ToSingle(h1.Slice(posOff + 8, 4));
-        writer.WriteAttributeString("x", FormatFloat(px));
-        writer.WriteAttributeString("y", FormatFloat(py));
-        writer.WriteAttributeString("z", FormatFloat(pz));
+        // File order is (gameZ, gameY, gameX); XML attributes use game-axis names
+        // so x/z here line up with EntityMarker.Position.X / .Z downstream.
+        var gameZ = BitConverter.ToSingle(h1.Slice(posOff, 4));
+        var gameY = BitConverter.ToSingle(h1.Slice(posOff + 4, 4));
+        var gameX = BitConverter.ToSingle(h1.Slice(posOff + 8, 4));
+        writer.WriteAttributeString("x", FormatFloat(gameX));
+        writer.WriteAttributeString("y", FormatFloat(gameY));
+        writer.WriteAttributeString("z", FormatFloat(gameZ));
 
         var rotSb = new StringBuilder();
         for (int i = 0; i < 9; i++)
@@ -428,9 +430,10 @@ public partial class ScenarioFile
             if (!string.IsNullOrEmpty(playerAttr))
                 BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(14), int.Parse(playerAttr));
 
-            if (!string.IsNullOrEmpty(xAttr)) BitConverter.TryWriteBytes(header.AsSpan(posOff), float.Parse(xAttr));
+            // XML uses game-axis order (x=gameX, z=gameZ); file stores (gameZ, gameY, gameX).
+            if (!string.IsNullOrEmpty(zAttr)) BitConverter.TryWriteBytes(header.AsSpan(posOff), float.Parse(zAttr));
             if (!string.IsNullOrEmpty(yAttr)) BitConverter.TryWriteBytes(header.AsSpan(posOff + 4), float.Parse(yAttr));
-            if (!string.IsNullOrEmpty(zAttr)) BitConverter.TryWriteBytes(header.AsSpan(posOff + 8), float.Parse(zAttr));
+            if (!string.IsNullOrEmpty(xAttr)) BitConverter.TryWriteBytes(header.AsSpan(posOff + 8), float.Parse(xAttr));
 
             if (!string.IsNullOrEmpty(rotAttr))
             {
@@ -462,9 +465,9 @@ public partial class ScenarioFile
 
             var posBytes = new byte[12];
             var rotBytes = new byte[36];
-            if (!string.IsNullOrEmpty(xAttr)) BitConverter.TryWriteBytes(posBytes.AsSpan(0), float.Parse(xAttr));
+            if (!string.IsNullOrEmpty(zAttr)) BitConverter.TryWriteBytes(posBytes.AsSpan(0), float.Parse(zAttr));
             if (!string.IsNullOrEmpty(yAttr)) BitConverter.TryWriteBytes(posBytes.AsSpan(4), float.Parse(yAttr));
-            if (!string.IsNullOrEmpty(zAttr)) BitConverter.TryWriteBytes(posBytes.AsSpan(8), float.Parse(zAttr));
+            if (!string.IsNullOrEmpty(xAttr)) BitConverter.TryWriteBytes(posBytes.AsSpan(8), float.Parse(xAttr));
             if (!string.IsNullOrEmpty(rotAttr))
             {
                 var parts = rotAttr.Split(',');
