@@ -73,10 +73,14 @@ public sealed class ScenarioTerrain
         var groups = ParseTerrainGroups(t3.Slice(off, ttSize));
         off += ttSize;
 
-        // map_size_x, map_size_z
+        // The two map-size u32s are stored as (gameZ, gameX) -- the file's first
+        // dimension is the game's Z (north-south) axis and the second is X. Loading
+        // them in the natural order with that labeling means the per-vertex/per-tile
+        // arrays that follow are already in the renderer's expected
+        // [vz_outer * (mapX+1) + vx_inner] layout, no transpose needed.
         if (off + 8 > t3.Length) return null;
-        var mapX = (int)BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off));
-        var mapZ = (int)BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off + 4));
+        var mapZ = (int)BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off));
+        var mapX = (int)BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off + 4));
         off += 8;
 
         // 2 unknown floats
@@ -94,30 +98,12 @@ public sealed class ScenarioTerrain
         // WaterType is per-tile: 0 = no water, non-zero = index into WaterNames.
         var waterType = ReadByteList(t3, ref off);
 
-        // The file lays per-tile arrays out with vx as the outer axis, vz inner --
-        // i.e. data[vx * mapZ + vz] = value at tile (vx, vz). Renderer code expects
-        // row-major indexing data[vz * mapX + vx], so transpose here once.
-        // Square maps hide the difference; non-square ones (like fott26) read off
-        // the end of every row and produce a forest of spikes without this fix.
-        int tileCount = mapX * mapZ;
-        if (tileGroups.Length == tileCount) tileGroups = Transpose(tileGroups, mapX, mapZ);
-        if (tileSubs.Length == tileCount) tileSubs = Transpose(tileSubs, mapX, mapZ);
-        if (tilePt.Length == tileCount) tilePt = Transpose(tilePt, mapX, mapZ);
-        if (waterType.Length == tileCount) waterType = Transpose(waterType, mapX, mapZ);
-
         if (off + 4 > t3.Length) return null;
         var heightCount = (int)BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off));
         off += 4;
         var heights = ReadFloats(t3, ref off, heightCount);
         var waterHeights = ReadFloats(t3, ref off, heightCount);
         var unkHeights = ReadFloats(t3, ref off, heightCount);
-
-        int vCols = mapX + 1;
-        int vRows = mapZ + 1;
-        int vertCount = vCols * vRows;
-        if (heights.Length == vertCount) heights = Transpose(heights, vCols, vRows);
-        if (waterHeights.Length == vertCount) waterHeights = Transpose(waterHeights, vCols, vRows);
-        if (unkHeights.Length == vertCount) unkHeights = Transpose(unkHeights, vCols, vRows);
 
         return new ScenarioTerrain
         {
@@ -217,14 +203,4 @@ public sealed class ScenarioTerrain
         return result;
     }
 
-    // Convert from file's [outer * inner + i] layout (outer axis = vx, inner = vz)
-    // to [vz * outer + vx] which the renderer assumes.
-    static T[] Transpose<T>(T[] src, int outerCount, int innerCount)
-    {
-        var dst = new T[src.Length];
-        for (int o = 0; o < outerCount; o++)
-        for (int i = 0; i < innerCount; i++)
-            dst[i * outerCount + o] = src[o * innerCount + i];
-        return dst;
-    }
 }

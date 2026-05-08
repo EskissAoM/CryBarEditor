@@ -106,11 +106,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             float cz = data.Terrain.MapSizeZ * 0.5f;
             float radius = MathF.Max(data.Terrain.MapSizeX, data.Terrain.MapSizeZ) * 0.55f;
             _camera.FitToSphere(cx, 0f, cz, radius);
-            // Match the in-game default: camera sits over the (0,0) corner
-            // (where unit (0,0) and Ajax-spawn-style placements live) and
-            // looks NE toward (mapX, mapZ). Puts that corner at the bottom
-            // of the diamond, near the viewer.
-            _camera.Azimuth = 225f;
+            _camera.Azimuth = 232f;
 
             double sum = 0;
             for (int i = 0; i < data.Terrain.Heights.Length; i++) sum += data.Terrain.Heights[i];

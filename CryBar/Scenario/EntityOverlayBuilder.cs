@@ -92,10 +92,13 @@ public static class EntityOverlayBuilder
         if (ScenarioFile.TryReadProtoIndex(h1, enEnd, out var pi))
             protoIndex = (int)pi;
 
+        // The file stores position as (gameZ, gameY, gameX) -- first float is the
+        // game's Z axis, third is X. Map them onto Vector3 in game-axis order so
+        // Position.X means gameX downstream.
         pos = new Vector3(
-            BitConverter.ToSingle(h1.Slice(posOff, 4)),
+            BitConverter.ToSingle(h1.Slice(posOff + 8, 4)),
             BitConverter.ToSingle(h1.Slice(posOff + 4, 4)),
-            BitConverter.ToSingle(h1.Slice(posOff + 8, 4)));
+            BitConverter.ToSingle(h1.Slice(posOff, 4)));
         return true;
     }
 }
