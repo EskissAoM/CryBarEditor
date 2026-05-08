@@ -506,11 +506,11 @@ public class DDTImage
             ResampleBilinearRgba8(MemoryMarshal.AsBytes(contiguous.Span), src.Width, src.Height, dst, dstW, dstH);
             return;
         }
-        // Strided fallback for the rare non-contiguous Memory2D.
-        if (UseSimd && Sse2.IsSupported && Vector128.IsHardwareAccelerated)
-            ResampleBilinearRgba8SimdFromMemory2D(src, dst, dstW, dstH);
-        else
-            ResampleBilinearRgba8ScalarFromMemory2D(src, dst, dstW, dstH);
+        // Strided fallback (rare): copy rows into a contiguous pooled buffer
+        // and re-enter the byte-span path. Avoids carrying a separate strided
+        // codepath that the SIMD/scalar parity tests don't cover.
+        using var pooled = CopyMemory2DToContiguous(src, out int byteCount);
+        ResampleBilinearRgba8(pooled.Span.Slice(0, byteCount), src.Width, src.Height, dst, dstW, dstH);
     }
 
     internal static void ResampleBilinearRgba8(ReadOnlySpan<byte> src, int srcW, int srcH, Span<byte> dst, int dstW, int dstH)
@@ -528,7 +528,8 @@ public class DDTImage
             ResampleBilinearRgba8Scalar(MemoryMarshal.AsBytes(contiguous.Span), src.Width, src.Height, dst, dstW, dstH);
             return;
         }
-        ResampleBilinearRgba8ScalarFromMemory2D(src, dst, dstW, dstH);
+        using var pooled = CopyMemory2DToContiguous(src, out int byteCount);
+        ResampleBilinearRgba8Scalar(pooled.Span.Slice(0, byteCount), src.Width, src.Height, dst, dstW, dstH);
     }
 
     internal static void ResampleBilinearRgba8Scalar(ReadOnlySpan<byte> src, int srcW, int srcH, Span<byte> dst, int dstW, int dstH)
@@ -572,48 +573,20 @@ public class DDTImage
         }
     }
 
-    /// Strided-Memory2D fallback for the rare case where TryGetMemory returns false.
-    static void ResampleBilinearRgba8ScalarFromMemory2D(Memory2D<ColorRgba32> src, Span<byte> dst, int dstW, int dstH)
+    /// Copy a strided Memory2D source to a contiguous pooled byte buffer.
+    /// The caller is responsible for disposing the returned PooledBuffer.
+    static PooledBuffer CopyMemory2DToContiguous(Memory2D<ColorRgba32> src, out int byteCount)
     {
         int srcW = src.Width;
         int srcH = src.Height;
-        float scaleX = (float)srcW / dstW;
-        float scaleY = (float)srcH / dstH;
+        byteCount = srcW * srcH * 4;
+        int strideBytes = srcW * 4;
+        var pooled = new PooledBuffer(byteCount);
+        var dstBytes = pooled.Span.Slice(0, byteCount);
         var srcSpan = src.Span;
-
-        for (int y = 0; y < dstH; y++)
-        {
-            float fy = (y + 0.5f) * scaleY - 0.5f;
-            int y0 = (int)MathF.Floor(fy); int y1 = y0 + 1;
-            float wy = fy - y0;
-            if (y0 < 0) y0 = 0; if (y1 >= srcH) y1 = srcH - 1;
-
-            var row0 = MemoryMarshal.AsBytes(srcSpan.GetRowSpan(y0));
-            var row1 = MemoryMarshal.AsBytes(srcSpan.GetRowSpan(y1));
-            int dstRow = y * dstW * 4;
-            float iwy = 1 - wy;
-
-            for (int x = 0; x < dstW; x++)
-            {
-                float fx = (x + 0.5f) * scaleX - 0.5f;
-                int x0 = (int)MathF.Floor(fx); int x1 = x0 + 1;
-                float wx = fx - x0;
-                if (x0 < 0) x0 = 0; if (x1 >= srcW) x1 = srcW - 1;
-
-                int p0 = x0 * 4, p1 = x1 * 4, dp = dstRow + x * 4;
-                float iwx = 1 - wx;
-
-                float r = (row0[p0]     * iwx + row0[p1]     * wx) * iwy + (row1[p0]     * iwx + row1[p1]     * wx) * wy;
-                float g = (row0[p0 + 1] * iwx + row0[p1 + 1] * wx) * iwy + (row1[p0 + 1] * iwx + row1[p1 + 1] * wx) * wy;
-                float b = (row0[p0 + 2] * iwx + row0[p1 + 2] * wx) * iwy + (row1[p0 + 2] * iwx + row1[p1 + 2] * wx) * wy;
-                float a = (row0[p0 + 3] * iwx + row0[p1 + 3] * wx) * iwy + (row1[p0 + 3] * iwx + row1[p1 + 3] * wx) * wy;
-
-                dst[dp]     = (byte)Math.Clamp(r, 0, 255);
-                dst[dp + 1] = (byte)Math.Clamp(g, 0, 255);
-                dst[dp + 2] = (byte)Math.Clamp(b, 0, 255);
-                dst[dp + 3] = (byte)Math.Clamp(a, 0, 255);
-            }
-        }
+        for (int y = 0; y < srcH; y++)
+            MemoryMarshal.AsBytes(srcSpan.GetRowSpan(y)).CopyTo(dstBytes.Slice(y * strideBytes));
+        return pooled;
     }
 
     internal static void ResampleBilinearRgba8Simd(Memory2D<ColorRgba32> src, byte[] dst, int dstW, int dstH)
@@ -623,7 +596,8 @@ public class DDTImage
             ResampleBilinearRgba8Simd(MemoryMarshal.AsBytes(contiguous.Span), src.Width, src.Height, dst, dstW, dstH);
             return;
         }
-        ResampleBilinearRgba8SimdFromMemory2D(src, dst, dstW, dstH);
+        using var pooled = CopyMemory2DToContiguous(src, out int byteCount);
+        ResampleBilinearRgba8Simd(pooled.Span.Slice(0, byteCount), src.Width, src.Height, dst, dstW, dstH);
     }
 
     /// SSE2 bilinear. Float ops follow the scalar evaluation order
@@ -648,62 +622,6 @@ public class DDTImage
 
             var row0 = src.Slice(y0 * strideBytes, strideBytes);
             var row1 = src.Slice(y1 * strideBytes, strideBytes);
-            int dstRow = y * dstW * 4;
-            float iwy = 1 - wy;
-            var vWy = Vector128.Create(wy);
-            var vIwy = Vector128.Create(iwy);
-
-            for (int x = 0; x < dstW; x++)
-            {
-                float fx = (x + 0.5f) * scaleX - 0.5f;
-                int x0 = (int)MathF.Floor(fx); int x1 = x0 + 1;
-                float wx = fx - x0;
-                if (x0 < 0) x0 = 0; if (x1 >= srcW) x1 = srcW - 1;
-
-                int p0 = x0 * 4, p1 = x1 * 4, dp = dstRow + x * 4;
-                var vWx = Vector128.Create(wx);
-                var vIwx = Vector128.Create(1 - wx);
-
-                var c00 = LoadPixelToFloat(row0, p0);
-                var c01 = LoadPixelToFloat(row0, p1);
-                var c10 = LoadPixelToFloat(row1, p0);
-                var c11 = LoadPixelToFloat(row1, p1);
-
-                var top = Vector128.Add(Vector128.Multiply(c00, vIwx), Vector128.Multiply(c01, vWx));
-                var bot = Vector128.Add(Vector128.Multiply(c10, vIwx), Vector128.Multiply(c11, vWx));
-                var blended = Vector128.Add(Vector128.Multiply(top, vIwy), Vector128.Multiply(bot, vWy));
-
-                var clamped = Vector128.Min(Vector128.Max(blended, vZero), vMax);
-                var asInt32 = Sse2.ConvertToVector128Int32WithTruncation(clamped);
-                var asInt16 = Sse2.PackSignedSaturate(asInt32, asInt32);
-                var asByte = Sse2.PackUnsignedSaturate(asInt16, asInt16);
-                uint packed = asByte.AsUInt32().GetElement(0);
-                Unsafe.WriteUnaligned(ref dst[dp], packed);
-            }
-        }
-    }
-
-    /// Strided-Memory2D SIMD fallback for the rare case where TryGetMemory returns false.
-    static void ResampleBilinearRgba8SimdFromMemory2D(Memory2D<ColorRgba32> src, Span<byte> dst, int dstW, int dstH)
-    {
-        int srcW = src.Width;
-        int srcH = src.Height;
-        float scaleX = (float)srcW / dstW;
-        float scaleY = (float)srcH / dstH;
-        var srcSpan = src.Span;
-
-        var vMax = Vector128.Create(255f);
-        var vZero = Vector128<float>.Zero;
-
-        for (int y = 0; y < dstH; y++)
-        {
-            float fy = (y + 0.5f) * scaleY - 0.5f;
-            int y0 = (int)MathF.Floor(fy); int y1 = y0 + 1;
-            float wy = fy - y0;
-            if (y0 < 0) y0 = 0; if (y1 >= srcH) y1 = srcH - 1;
-
-            var row0 = MemoryMarshal.AsBytes(srcSpan.GetRowSpan(y0));
-            var row1 = MemoryMarshal.AsBytes(srcSpan.GetRowSpan(y1));
             int dstRow = y * dstW * 4;
             float iwy = 1 - wy;
             var vWy = Vector128.Create(wy);
