@@ -57,6 +57,33 @@ public class WaterMeshBuilderTests
     }
 
     [Fact]
+    public void Build_TwoDisjointBodies_GetIndependentLevels()
+    {
+        // 4x1 strip with water at tiles 0 and 3 (separated by dry tiles 1,2).
+        // Vertex grid is 5x2 = 10 entries. Body A sits at h=2, body B at h=20.
+        // A global-median renderer would snap both bodies to ~11; per-component
+        // rendering gives each body its own y.
+        var heights = new float[10];
+        // tile 0 corners: v indices 0,1,5,6
+        heights[0] = 2; heights[1] = 2; heights[5] = 2; heights[6] = 2;
+        // tile 3 corners: v indices 3,4,8,9
+        heights[3] = 20; heights[4] = 20; heights[8] = 20; heights[9] = 20;
+
+        var water = WaterMeshBuilder.Build(NewWaterTerrain(4, 1, heights, waterTiles: [0, 3]))!;
+
+        // Two disjoint quads, no shared vertices (vertex map is per-component)
+        Assert.Equal(8, water.VertexCount);
+        Assert.Equal(12, water.IndexCount);
+
+        // Two distinct y levels show up, each at body-height minus ZBias.
+        var ys = new HashSet<float>();
+        for (int i = 0; i < water.VertexCount; i++) ys.Add(water.Vertices[i * 3 + 1]);
+        Assert.Equal(2, ys.Count);
+        Assert.Contains(2f - WaterMeshBuilder.ZBias, ys);
+        Assert.Contains(20f - WaterMeshBuilder.ZBias, ys);
+    }
+
+    [Fact]
     public void Build_FlatHeightAtMedianMinusBias()
     {
         var heights = new float[9];
@@ -64,9 +91,10 @@ public class WaterMeshBuilderTests
 
         var water = WaterMeshBuilder.Build(NewWaterTerrain(2, 2, heights, waterTiles: [0]))!;
 
-        // ZBias 0.7 -> emitted Y = 5 - 0.7 = 4.3
+        // Emitted Y = median(5) - ZBias
+        float expectedY = 5f - WaterMeshBuilder.ZBias;
         for (int i = 0; i < water.VertexCount; i++)
-            Assert.Equal(4.3f, water.Vertices[i * 3 + 1], 4);
+            Assert.Equal(expectedY, water.Vertices[i * 3 + 1], 4);
     }
 
     static ScenarioTerrain NewTerrain(int mapX, int mapZ, float[] waterHeights)

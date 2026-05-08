@@ -20,10 +20,11 @@ public sealed class ScenarioTerrain
     public required ushort[] TileSubs { get; init; }
     public required byte[] TilePt { get; init; }
     /// <summary>
-    /// Per-tile water type byte. 0 = no water on this tile; non-zero indexes into the
-    /// scenario's WaterNames list. This is the authoritative "is this tile water?" marker
-    /// the game uses -- WaterHeights is a global sea level reference and is set on any
-    /// low-lying vertex, including non-water depressions.
+    /// Per-tile water marker. 0 = water tile (uses the default body), non-zero =
+    /// "no-water" override the editor stamps on dry holes / non-water depressions.
+    /// This is the authoritative "is this tile water?" flag -- WaterHeights alone
+    /// can't be trusted because the sea-level reference bleeds into low-lying
+    /// non-water terrain. WaterMeshBuilder reads it as `value == 0`.
     /// </summary>
     public required byte[] WaterType { get; init; }
     public required TerrainTextureGroup[] TerrainGroups { get; init; }
