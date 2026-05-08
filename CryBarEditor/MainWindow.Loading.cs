@@ -339,30 +339,43 @@ public partial class MainWindow
         _textureCache?.Clear();
     }
 
+    // Serializes cache misses so parallel callers (e.g. ScenarioTextureLoader's
+    // Parallel.ForAsync over textures sharing one BAR) can't both open the same
+    // file and have the second Add() evict + dispose the first thread's still-
+    // in-use CachedBarFile -- which manifested as ObjectDisposedException on
+    // the underlying FileStream during BAR entry reads.
+    readonly Lock _barLoadLock = new();
+
     internal CachedBarFile? GetOrLoadBar(string barFilePath)
     {
         if (_barFileCache.TryGet(barFilePath, out var cached))
             return cached;
 
-        FileStream? stream = null;
-        try
+        lock (_barLoadLock)
         {
-            stream = File.OpenRead(barFilePath);
-            var bar = new BarFile(stream);
-            if (!bar.Load(out _))
+            if (_barFileCache.TryGet(barFilePath, out cached))
+                return cached;
+
+            FileStream? stream = null;
+            try
             {
-                stream.Dispose();
+                stream = File.OpenRead(barFilePath);
+                var bar = new BarFile(stream);
+                if (!bar.Load(out _))
+                {
+                    stream.Dispose();
+                    return null;
+                }
+
+                cached = new CachedBarFile(bar, stream);
+                _barFileCache.Add(barFilePath, cached);
+                return cached;
+            }
+            catch
+            {
+                stream?.Dispose();
                 return null;
             }
-
-            cached = new CachedBarFile(bar, stream);
-            _barFileCache.Add(barFilePath, cached);
-            return cached;
-        }
-        catch
-        {
-            stream?.Dispose();
-            return null;
         }
     }
 
