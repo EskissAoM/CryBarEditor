@@ -61,7 +61,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     int _billboardProgram;
     int _billboardVao, _billboardQuadVbo, _billboardInstanceVbo;
-    int _uBillboardMvp, _uBillboardSize;
+    int _uBillboardMvp, _uBillboardSize, _uBillboardCamPos, _uBillboardFadeNear, _uBillboardFadeFar;
     bool _entitiesUploaded;
     int _entityCount;
     float _avgHeight;
@@ -82,6 +82,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     unsafe delegate* unmanaged<uint, uint, void> _glBlendFunc;
     unsafe delegate* unmanaged<uint, uint, void> _glVertexAttribDivisor;
     unsafe delegate* unmanaged<uint, int, int, int, void> _glDrawArraysInstanced;
+    unsafe delegate* unmanaged<int, float, float, float, void> _glUniform3f;
 
     public void QueueGlAction(Action<GlInterface> action)
     {
@@ -149,27 +150,39 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         layout(location = 2) in vec4 aColor;
         uniform mat4 uMVP;
         uniform float uSize;
+        uniform vec3 uCamPos;
+        uniform float uFadeNear;
+        uniform float uFadeFar;
         out vec2 vUv;
         out vec4 vColor;
+        out float vFade;
         void main() {
-            vec4 clip = uMVP * vec4(aWorldPos, 1.0);
+            // Lift the marker above the terrain so slope tiles don't slice the disc.
+            vec3 wp = aWorldPos + vec3(0.0, 0.4, 0.0);
+            vec4 clip = uMVP * vec4(wp, 1.0);
             // Screen-stable size: aQuad is in [-1,1], scaled by uSize in NDC
             clip.xy += aQuad * uSize * clip.w;
             gl_Position = clip;
             vUv = aQuad;
             vColor = aColor;
+            float d = distance(uCamPos, wp);
+            vFade = 1.0 - smoothstep(uFadeNear, uFadeFar, d);
         }
         """;
 
     const string BillboardFragmentShaderBody = """
         in vec2 vUv;
         in vec4 vColor;
+        in float vFade;
         out vec4 fragColor;
         void main() {
             float r = length(vUv);
             if (r > 1.0) discard;
             float edge = smoothstep(0.92, 1.0, r);
-            fragColor = mix(vColor, vec4(0.0, 0.0, 0.0, 1.0), edge);
+            vec4 col = mix(vColor, vec4(0.0, 0.0, 0.0, 1.0), edge);
+            // Distance fade: closer entities are opaque, far ones drop toward 0.35.
+            col.a *= mix(0.35, 1.0, clamp(vFade, 0.0, 1.0));
+            fragColor = col;
         }
         """;
 
@@ -239,6 +252,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _glBlendFunc = (delegate* unmanaged<uint, uint, void>)gl.GetProcAddress("glBlendFunc");
         _glVertexAttribDivisor = (delegate* unmanaged<uint, uint, void>)gl.GetProcAddress("glVertexAttribDivisor");
         _glDrawArraysInstanced = (delegate* unmanaged<uint, int, int, int, void>)gl.GetProcAddress("glDrawArraysInstanced");
+        _glUniform3f = (delegate* unmanaged<int, float, float, float, void>)gl.GetProcAddress("glUniform3f");
 
         string?[] missing =
         [
@@ -271,8 +285,11 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _waterEbo = gl.GenBuffer();
 
         _billboardProgram = CreateProgram(gl, vsPreamble + BillboardVertexShaderBody, fsPreamble + BillboardFragmentShaderBody);
-        _uBillboardMvp = gl.GetUniformLocationString(_billboardProgram, "uMVP");
-        _uBillboardSize = gl.GetUniformLocationString(_billboardProgram, "uSize");
+        _uBillboardMvp      = gl.GetUniformLocationString(_billboardProgram, "uMVP");
+        _uBillboardSize     = gl.GetUniformLocationString(_billboardProgram, "uSize");
+        _uBillboardCamPos   = gl.GetUniformLocationString(_billboardProgram, "uCamPos");
+        _uBillboardFadeNear = gl.GetUniformLocationString(_billboardProgram, "uFadeNear");
+        _uBillboardFadeFar  = gl.GetUniformLocationString(_billboardProgram, "uFadeFar");
         _billboardVao = gl.GenVertexArray();
         _billboardQuadVbo = gl.GenBuffer();
         _billboardInstanceVbo = gl.GenBuffer();
@@ -358,7 +375,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.Enable(GL_DEPTH_TEST);
 
         float aspect = (float)w / h;
-        var view = _camera.GetViewMatrix();
+        var view = _camera.GetViewMatrix(out var eyePos);
         var proj = _camera.GetProjectionMatrix(aspect);
         var mvp = view * proj;
         var mvpCopy = mvp;
@@ -389,7 +406,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             _entitiesUploaded = true;
         }
         if (_entityCount > 0)
-            DrawEntities(gl, mvpCopy);
+            DrawEntities(gl, mvpCopy, eyePos);
 
         gl.BindVertexArray(0);
         gl.UseProgram(0);
@@ -448,15 +465,34 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     // resolves to a screen-stable billboard ~3% of the viewport wide.
     const float BillboardHalfSizeNdc = 0.015f;
 
-    unsafe void DrawEntities(GlInterface gl, Matrix4x4 mvpCopy)
+    unsafe void DrawEntities(GlInterface gl, Matrix4x4 mvpCopy, Vector3 eyePos)
     {
         if (_glDrawArraysInstanced == null) return;
+        if (_data is null) return;
+
+        // Fade entire-map distance: full alpha out to fadeNear, ramps to ~35%
+        // by fadeFar. Tuned against the typical orbit distance: at the default
+        // FitToSphere, fadeFar puts the far corner of the diamond near the
+        // bottom of the alpha range while keeping the near corner solid.
+        float mapSize = MathF.Max(_data.Terrain.MapSizeX, _data.Terrain.MapSizeZ);
+        float fadeNear = mapSize * 0.4f;
+        float fadeFar  = mapSize * 1.4f;
+
+        gl.Enable(GL_BLEND);
+        if (_glBlendFunc != null) _glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
         gl.UseProgram(_billboardProgram);
         gl.UniformMatrix4fv(_uBillboardMvp, 1, false, &mvpCopy.M11);
         gl.Uniform1f(_uBillboardSize, BillboardHalfSizeNdc);
+        if (_glUniform3f != null)
+            _glUniform3f(_uBillboardCamPos, eyePos.X, eyePos.Y, eyePos.Z);
+        gl.Uniform1f(_uBillboardFadeNear, fadeNear);
+        gl.Uniform1f(_uBillboardFadeFar, fadeFar);
         gl.BindVertexArray(_billboardVao);
         _glDrawArraysInstanced(GL_TRIANGLES, 0, 6, _entityCount);
         gl.BindVertexArray(0);
+
+        gl.Disable(GL_BLEND);
     }
 
     static (float r, float g, float b, float a) PlayerColor(int playerId) => playerId switch
