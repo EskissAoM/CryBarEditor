@@ -2506,5 +2506,45 @@ public class IntegrationTests
             string.Join("\n", unresolved.Take(20)));
     }
 
+    /// <summary>
+    /// Regression guard for the column-major terrain layout. fott26 (210x160) is
+    /// non-square so per-vertex/per-tile arrays read with the wrong stride produce
+    /// huge row-to-row jumps. Real terrain has similar smoothness in both directions;
+    /// a misread shows up as one axis having ~50x more big jumps than the other.
+    /// </summary>
+    [SkippableFact]
+    public void Fott26_TerrainHeights_AreSmoothInBothAxes()
+    {
+        Skip.IfNot(GameInstalled, "AoM:Retold game directory not found");
+
+        var path = Path.Combine(FottCampaignDir, "fott26.mythscn");
+        Skip.IfNot(File.Exists(path), $"{path} not found");
+
+        var compressed = File.ReadAllBytes(path);
+        var decompressed = BarCompression.DecompressL33t(compressed);
+        Assert.NotNull(decompressed);
+
+        var scenario = new ScenarioFile(decompressed!);
+        Assert.True(scenario.Parsed);
+
+        var terrain = ScenarioTerrain.TryParse(scenario);
+        Assert.NotNull(terrain);
+
+        int vCols = terrain!.MapSizeX + 1;
+        int bigJumpsX = 0, bigJumpsZ = 0;
+        for (int vz = 0; vz <= terrain.MapSizeZ; vz++)
+        for (int vx = 0; vx < terrain.MapSizeX; vx++)
+            if (Math.Abs(terrain.Heights[vz * vCols + vx] - terrain.Heights[vz * vCols + vx + 1]) > 5f) bigJumpsX++;
+        for (int vz = 0; vz < terrain.MapSizeZ; vz++)
+        for (int vx = 0; vx <= terrain.MapSizeX; vx++)
+            if (Math.Abs(terrain.Heights[vz * vCols + vx] - terrain.Heights[(vz + 1) * vCols + vx]) > 5f) bigJumpsZ++;
+
+        // Misread (pre-fix) was 235 X-jumps vs 17,788 Z-jumps. Post-transpose both
+        // are under a few hundred. Cap at 500 so any future regression that swaps
+        // axes back gets caught.
+        Assert.True(bigJumpsX < 500, $"Too many X-axis height jumps: {bigJumpsX} (transpose regression?)");
+        Assert.True(bigJumpsZ < 500, $"Too many Z-axis height jumps: {bigJumpsZ} (transpose regression?)");
+    }
+
     #endregion
 }

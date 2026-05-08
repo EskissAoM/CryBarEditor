@@ -468,20 +468,17 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
         // Per instance: pos.xyz + color.rgba.
         // AoMR stores entity X/Z in half-tile units (1 tile = 2 stored units).
-        // The stored axes are swapped relative to the terrain mesh: a unit
-        // placed in-game at the same corner as a terrain feature comes out
-        // mirrored across the (0,0)-to-(mapX,mapZ) diagonal. Swapping X<->Z
-        // keeps the (0,0) corner fixed (Ajax stays put) while putting other
-        // units on the matching screen-side of the diamond.
+        // Terrain heights are transposed at parse time so the file's vx-outer
+        // layout becomes our vz-outer; entity coords go through unchanged.
         const int floatsPerInstance = 7;
         var inst = new float[_entityCount * floatsPerInstance];
         for (int i = 0; i < _entityCount; i++)
         {
             var m = data.Entities[i];
             int o = i * floatsPerInstance;
-            inst[o + 0] = m.Position.Z * 0.5f;
+            inst[o + 0] = m.Position.X * 0.5f;
             inst[o + 1] = m.Position.Y;
-            inst[o + 2] = m.Position.X * 0.5f;
+            inst[o + 2] = m.Position.Z * 0.5f;
             var (r, g, b, a) = PlayerColor(m.PlayerId);
             inst[o + 3] = r; inst[o + 4] = g; inst[o + 5] = b; inst[o + 6] = a;
         }
@@ -792,8 +789,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         for (int i = 0; i < _entityCount; i++)
         {
             var m = _data.Entities[i];
-            // Mirror the X<->Z swap, Y scale, and lift used in UploadEntities + the vertex shader.
-            var wp = new Vector4(m.Position.Z * 0.5f, m.Position.Y * HeightScale + 0.4f, m.Position.X * 0.5f, 1f);
+            // Mirror the half-tile scale, Y scale, and lift used in UploadEntities + the vertex shader.
+            var wp = new Vector4(m.Position.X * 0.5f, m.Position.Y * HeightScale + 0.4f, m.Position.Z * 0.5f, 1f);
             var viewPos = Vector4.Transform(wp, view);
             var centerClip = Vector4.Transform(viewPos, proj);
             if (centerClip.W <= 0) continue;

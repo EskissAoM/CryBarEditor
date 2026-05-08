@@ -94,12 +94,28 @@ public sealed class ScenarioTerrain
         // WaterType is per-tile: 0 = no water, non-zero = index into WaterNames.
         var waterType = ReadByteList(t3, ref off);
 
+        // The file lays per-tile arrays out with vx as the outer axis, vz inner --
+        // i.e. data[vx * mapZ + vz] = value at tile (vx, vz). Renderer code expects
+        // row-major indexing data[vz * mapX + vx], so transpose here once.
+        // Square maps hide the difference; non-square ones (like fott26) read off
+        // the end of every row and produce a forest of spikes without this fix.
+        if (tileGroups.Length == mapX * mapZ) tileGroups = TransposeBytes(tileGroups, mapX, mapZ);
+        if (tileSubs.Length == mapX * mapZ) tileSubs = TransposeUShorts(tileSubs, mapX, mapZ);
+        if (tilePt.Length == mapX * mapZ) tilePt = TransposeBytes(tilePt, mapX, mapZ);
+        if (waterType.Length == mapX * mapZ) waterType = TransposeBytes(waterType, mapX, mapZ);
+
         if (off + 4 > t3.Length) return null;
         var heightCount = (int)BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off));
         off += 4;
         var heights = ReadFloats(t3, ref off, heightCount);
         var waterHeights = ReadFloats(t3, ref off, heightCount);
         var unkHeights = ReadFloats(t3, ref off, heightCount);
+
+        int vCols = mapX + 1;
+        int vRows = mapZ + 1;
+        if (heights.Length == vCols * vRows) heights = TransposeFloats(heights, vCols, vRows);
+        if (waterHeights.Length == vCols * vRows) waterHeights = TransposeFloats(waterHeights, vCols, vRows);
+        if (unkHeights.Length == vCols * vRows) unkHeights = TransposeFloats(unkHeights, vCols, vRows);
 
         return new ScenarioTerrain
         {
@@ -197,5 +213,34 @@ public sealed class ScenarioTerrain
         }
         off += available;
         return result;
+    }
+
+    // Convert from file's [outer * inner + i] layout (outer axis = vx, inner = vz)
+    // to [vz * outer + vx] which the renderer assumes.
+    static float[] TransposeFloats(float[] src, int outerCount, int innerCount)
+    {
+        var dst = new float[src.Length];
+        for (int o = 0; o < outerCount; o++)
+        for (int i = 0; i < innerCount; i++)
+            dst[i * outerCount + o] = src[o * innerCount + i];
+        return dst;
+    }
+
+    static byte[] TransposeBytes(byte[] src, int outerCount, int innerCount)
+    {
+        var dst = new byte[src.Length];
+        for (int o = 0; o < outerCount; o++)
+        for (int i = 0; i < innerCount; i++)
+            dst[i * outerCount + o] = src[o * innerCount + i];
+        return dst;
+    }
+
+    static ushort[] TransposeUShorts(ushort[] src, int outerCount, int innerCount)
+    {
+        var dst = new ushort[src.Length];
+        for (int o = 0; o < outerCount; o++)
+        for (int i = 0; i < innerCount; i++)
+            dst[i * outerCount + o] = src[o * innerCount + i];
+        return dst;
     }
 }
