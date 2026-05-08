@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Numerics;
 using System.Threading.Tasks;
 using Avalonia;
@@ -53,8 +54,9 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     int _uMvp, _uTexArray;
 
     int _waterProgram;
-    int _waterVao, _waterVbo;
+    int _waterVao, _waterVbo, _waterEbo;
     int _uWaterMvp;
+    int _waterIndexCount;
     bool _waterUploaded;
 
     int _billboardProgram;
@@ -77,7 +79,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     // Function pointers for GL calls Avalonia's GlInterface doesn't expose.
     unsafe delegate* unmanaged<int, int, int, int, int, int, int, int, int, void*, void> _glTexImage3D;
     unsafe delegate* unmanaged<int, int, int, int, int, int, int, int, int, int, void*, void> _glTexSubImage3D;
-    unsafe delegate* unmanaged<int, void> _glGenerateMipmap;
     unsafe delegate* unmanaged<uint, uint, void> _glBlendFunc;
     unsafe delegate* unmanaged<uint, uint, void> _glVertexAttribDivisor;
     unsafe delegate* unmanaged<uint, int, int, int, void> _glDrawArraysInstanced;
@@ -100,6 +101,11 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             float cz = data.Terrain.MapSizeZ * 0.5f;
             float radius = MathF.Max(data.Terrain.MapSizeX, data.Terrain.MapSizeZ) * 0.55f;
             _camera.FitToSphere(cx, 0f, cz, radius);
+            // Match the in-game default: camera sits over the (0,0) corner
+            // (where unit (0,0) and Ajax-spawn-style placements live) and
+            // looks NE toward (mapX, mapZ). Puts that corner at the bottom
+            // of the diamond, near the viewer.
+            _camera.Azimuth = 225f;
 
             double sum = 0;
             for (int i = 0; i < data.Terrain.Heights.Length; i++) sum += data.Terrain.Heights[i];
@@ -121,15 +127,15 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         uniform mat4 uMVP;
 
         out vec3 vWorld;
-        out vec4 vSlices;
+        // Slice indices use flat interpolation -- linear interpolation produces
+        // fractional values that round to the wrong slice between vertices, sampling
+        // neighbor tiles' textures and producing the colored bleed-through.
+        flat out vec4 vSlices;
         out vec4 vWeights;
 
         void main() {
-            // Game space is Y-up Left-Handed; OpenGL is Y-up Right-Handed -- single X negation
-            // matches the convention used by GlbExporter / TmmWriter / PreviewMeshData.
-            vec3 p = vec3(-aPos.x, aPos.y, aPos.z);
-            gl_Position = uMVP * vec4(p, 1.0);
-            vWorld = p;
+            gl_Position = uMVP * vec4(aPos, 1.0);
+            vWorld = aPos;
             vSlices = aSlices;
             // 4th weight is implicit so the data fits in 12 floats per vertex
             float w4 = clamp(1.0 - aWeights.x - aWeights.y - aWeights.z, 0.0, 1.0);
@@ -146,9 +152,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         out vec2 vUv;
         out vec4 vColor;
         void main() {
-            // Match the heightmap shader's X-negation so entities sit at the
-            // correct game-space tile.
-            vec4 clip = uMVP * vec4(-aWorldPos.x, aWorldPos.y, aWorldPos.z, 1.0);
+            vec4 clip = uMVP * vec4(aWorldPos, 1.0);
             // Screen-stable size: aQuad is in [-1,1], scaled by uSize in NDC
             clip.xy += aQuad * uSize * clip.w;
             gl_Position = clip;
@@ -172,7 +176,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     const string WaterVertexShaderBody = """
         layout(location = 0) in vec3 aPos;
         uniform mat4 uMVP;
-        void main() { gl_Position = uMVP * vec4(-aPos.x, aPos.y, aPos.z, 1.0); }
+        void main() { gl_Position = uMVP * vec4(aPos, 1.0); }
         """;
 
     const string WaterFragmentShaderBody = """
@@ -182,7 +186,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     const string FragmentShaderBody = """
         in vec3 vWorld;
-        in vec4 vSlices;
+        flat in vec4 vSlices;
         in vec4 vWeights;
 
         uniform sampler2DArray uTexArray;
@@ -209,7 +213,10 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             wSum = max(wSum, 1e-4);
             vec4 col = (a * vWeights.x + b * vWeights.y + c * vWeights.z + d * vWeights.w) / wSum;
 
-            // Fixed light from the upper-right so peaks read against valleys
+            // Grass-green fallback if texture sampling returns zero so terrain stays
+            // visible if the texture array isn't fully populated yet.
+            if (col.r + col.g + col.b < 0.01) col = vec4(0.30, 0.42, 0.20, 1.0);
+
             vec3 N = vec3(0.0, 1.0, 0.0);
             float NdotL = max(dot(N, normalize(vec3(0.4, 1.0, 0.3))), 0.0);
             fragColor = vec4(col.rgb * (0.55 + 0.45 * NdotL), 1.0);
@@ -220,14 +227,32 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     {
         bool isGles = gl.ContextInfo.Version.Type == GlProfileType.OpenGLES;
         string vsPreamble = isGles ? "#version 300 es\n" : "#version 330 core\n";
-        string fsPreamble = isGles ? "#version 300 es\nprecision mediump float;\n" : "#version 330 core\n";
+        // sampler2DArray is opaque, so GLSL ES 3.00 requires an explicit precision
+        // qualifier; without it the heightmap program silently fails to link and
+        // the terrain renders nothing (canvas stays at clear color).
+        string fsPreamble = isGles
+            ? "#version 300 es\nprecision mediump float;\nprecision mediump sampler2DArray;\n"
+            : "#version 330 core\n";
 
         _glTexImage3D    = (delegate* unmanaged<int, int, int, int, int, int, int, int, int, void*, void>)gl.GetProcAddress("glTexImage3D");
         _glTexSubImage3D = (delegate* unmanaged<int, int, int, int, int, int, int, int, int, int, void*, void>)gl.GetProcAddress("glTexSubImage3D");
-        _glGenerateMipmap = (delegate* unmanaged<int, void>)gl.GetProcAddress("glGenerateMipmap");
         _glBlendFunc = (delegate* unmanaged<uint, uint, void>)gl.GetProcAddress("glBlendFunc");
         _glVertexAttribDivisor = (delegate* unmanaged<uint, uint, void>)gl.GetProcAddress("glVertexAttribDivisor");
         _glDrawArraysInstanced = (delegate* unmanaged<uint, int, int, int, void>)gl.GetProcAddress("glDrawArraysInstanced");
+
+        string?[] missing =
+        [
+            _glTexImage3D == null ? "glTexImage3D" : null,
+            _glTexSubImage3D == null ? "glTexSubImage3D" : null,
+            _glDrawArraysInstanced == null ? "glDrawArraysInstanced" : null,
+            _glVertexAttribDivisor == null ? "glVertexAttribDivisor" : null,
+        ];
+        var missingNames = string.Join(", ", missing.Where(s => s != null));
+        if (missingNames.Length > 0)
+        {
+            var ctxInfo = $"GL {gl.ContextInfo.Version.Type} {gl.ContextInfo.Version.Major}.{gl.ContextInfo.Version.Minor}";
+            RaiseError($"GL procs missing on this context ({ctxInfo}): {missingNames}");
+        }
 
         _heightProgram = CreateProgram(gl, vsPreamble + VertexShaderBody, fsPreamble + FragmentShaderBody);
         _uMvp      = gl.GetUniformLocationString(_heightProgram, "uMVP");
@@ -243,6 +268,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _uWaterMvp = gl.GetUniformLocationString(_waterProgram, "uMVP");
         _waterVao = gl.GenVertexArray();
         _waterVbo = gl.GenBuffer();
+        _waterEbo = gl.GenBuffer();
 
         _billboardProgram = CreateProgram(gl, vsPreamble + BillboardVertexShaderBody, fsPreamble + BillboardFragmentShaderBody);
         _uBillboardMvp = gl.GetUniformLocationString(_billboardProgram, "uMVP");
@@ -280,6 +306,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (_texArray != 0)      { gl.DeleteTexture(_texArray); _texArray = 0; }
         if (_waterProgram != 0)  { gl.DeleteProgram(_waterProgram); _waterProgram = 0; }
         if (_waterVbo != 0)      { gl.DeleteBuffer(_waterVbo); _waterVbo = 0; }
+        if (_waterEbo != 0)      { gl.DeleteBuffer(_waterEbo); _waterEbo = 0; }
         if (_waterVao != 0)      { gl.DeleteVertexArray(_waterVao); _waterVao = 0; }
         if (_billboardProgram != 0)     { gl.DeleteProgram(_billboardProgram); _billboardProgram = 0; }
         if (_billboardQuadVbo != 0)     { gl.DeleteBuffer(_billboardQuadVbo); _billboardQuadVbo = 0; }
@@ -375,16 +402,22 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (_entityCount == 0) return;
         if (_glVertexAttribDivisor == null) return;
 
-        // Per instance: pos.xyz + color.rgba
+        // Per instance: pos.xyz + color.rgba.
+        // AoMR stores entity X/Z in half-tile units (1 tile = 2 stored units).
+        // The stored axes are swapped relative to the terrain mesh: a unit
+        // placed in-game at the same corner as a terrain feature comes out
+        // mirrored across the (0,0)-to-(mapX,mapZ) diagonal. Swapping X<->Z
+        // keeps the (0,0) corner fixed (Ajax stays put) while putting other
+        // units on the matching screen-side of the diamond.
         const int floatsPerInstance = 7;
         var inst = new float[_entityCount * floatsPerInstance];
         for (int i = 0; i < _entityCount; i++)
         {
             var m = data.Entities[i];
             int o = i * floatsPerInstance;
-            inst[o + 0] = m.Position.X;
+            inst[o + 0] = m.Position.Z * 0.5f;
             inst[o + 1] = m.Position.Y;
-            inst[o + 2] = m.Position.Z;
+            inst[o + 2] = m.Position.X * 0.5f;
             var (r, g, b, a) = PlayerColor(m.PlayerId);
             inst[o + 3] = r; inst[o + 4] = g; inst[o + 5] = b; inst[o + 6] = a;
         }
@@ -453,31 +486,31 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     unsafe void DrawWater(GlInterface gl, Matrix4x4 mvpCopy)
     {
+        if (_waterIndexCount == 0) return;
         gl.Enable(GL_BLEND);
         if (_glBlendFunc != null) _glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         gl.UseProgram(_waterProgram);
         gl.UniformMatrix4fv(_uWaterMvp, 1, false, &mvpCopy.M11);
         gl.BindVertexArray(_waterVao);
-        gl.DrawArrays(GL_TRIANGLES, 0, 6);
+        gl.DrawElements(GL_TRIANGLES, _waterIndexCount, GL_UNSIGNED_INT_TYPE, IntPtr.Zero);
         gl.Disable(GL_BLEND);
     }
 
     unsafe void UploadWaterMesh(GlInterface gl, ScenarioPreviewData data)
     {
         var w = data.WaterMesh!;
-        var verts = new float[]
-        {
-            0,           w.Height, 0,
-            w.MapSizeX,  w.Height, 0,
-            0,           w.Height, w.MapSizeZ,
-            w.MapSizeX,  w.Height, 0,
-            w.MapSizeX,  w.Height, w.MapSizeZ,
-            0,           w.Height, w.MapSizeZ,
-        };
+        _waterIndexCount = w.IndexCount;
+        if (_waterIndexCount == 0) return;
+
         gl.BindVertexArray(_waterVao);
         gl.BindBuffer(GL_ARRAY_BUFFER, _waterVbo);
-        fixed (float* p = verts)
-            gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(verts.Length * sizeof(float)), (IntPtr)p, GL_DYNAMIC_DRAW);
+        fixed (float* p = w.Vertices)
+            gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(w.Vertices.Length * sizeof(float)), (IntPtr)p, GL_DYNAMIC_DRAW);
+
+        gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, _waterEbo);
+        fixed (uint* p = w.Indices)
+            gl.BufferData(GL_ELEMENT_ARRAY_BUFFER, (IntPtr)(w.Indices.Length * sizeof(uint)), (IntPtr)p, GL_DYNAMIC_DRAW);
+
         gl.EnableVertexAttribArray(0);
         gl.VertexAttribPointer(0, 3, GL_FLOAT_TYPE, 0, 3 * sizeof(float), IntPtr.Zero);
         gl.BindVertexArray(0);
@@ -517,7 +550,11 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.BindTexture(GL_TEXTURE_2D_ARRAY, _texArray);
         gl.TexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
         gl.TexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        gl.TexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        // GL_LINEAR (not _MIPMAP_LINEAR): texture array slices are 256x256 already
+        // and the heightmap has no minification beyond that on a typical map. Avoids
+        // a per-slice glGenerateMipmap during streaming, and dodges the silent
+        // sampler-returns-zero failure mode if the mipmap proc isn't available.
+        gl.TexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         gl.TexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
         // Fill every slice with the placeholder so the heightmap is visible
@@ -542,9 +579,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
                     _glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, s, SliceSize, SliceSize, 1, GL_RGBA, GL_UNSIGNED_BYTE, p);
             }
         }
-
-        if (_glGenerateMipmap != null)
-            _glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
 
         _allocatedSlices = slices;
     }
@@ -583,9 +617,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.BindTexture(GL_TEXTURE_2D_ARRAY, _texArray);
         fixed (byte* p = rgba)
             _glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, sliceIndex, SliceSize, SliceSize, 1, GL_RGBA, GL_UNSIGNED_BYTE, p);
-
-        if (_glGenerateMipmap != null)
-            _glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
 
         RequestNextFrameRendering();
     }
@@ -667,19 +698,14 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (t < 0) { sub(null); return; }
         var hit = nearW + dir * t;
 
-        // Mesh is rendered with X negated (LH -> RH), so the unprojected ray
-        // hits at -tileX. Invert back to game-tile coords.
-        float gameX = -hit.X;
-        float gameZ = hit.Z;
-
         int mapX = _data.Terrain.MapSizeX;
         int mapZ = _data.Terrain.MapSizeZ;
-        if (gameX < 0 || gameX > mapX || gameZ < 0 || gameZ > mapZ) { sub(null); return; }
+        if (hit.X < 0 || hit.X > mapX || hit.Z < 0 || hit.Z > mapZ) { sub(null); return; }
 
-        int tileX = Math.Clamp((int)MathF.Floor(gameX), 0, mapX - 1);
-        int tileZ = Math.Clamp((int)MathF.Floor(gameZ), 0, mapZ - 1);
-        int vertexX = Math.Clamp((int)MathF.Round(gameX), 0, mapX);
-        int vertexZ = Math.Clamp((int)MathF.Round(gameZ), 0, mapZ);
+        int tileX = Math.Clamp((int)MathF.Floor(hit.X), 0, mapX - 1);
+        int tileZ = Math.Clamp((int)MathF.Floor(hit.Z), 0, mapZ - 1);
+        int vertexX = Math.Clamp((int)MathF.Round(hit.X), 0, mapX);
+        int vertexZ = Math.Clamp((int)MathF.Round(hit.Z), 0, mapZ);
 
         int vIdx = vertexZ * (mapX + 1) + vertexX;
         float height = vIdx < _data.Terrain.Heights.Length ? _data.Terrain.Heights[vIdx] : 0f;
