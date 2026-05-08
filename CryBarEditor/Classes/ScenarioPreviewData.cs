@@ -13,14 +13,7 @@ public sealed class ScenarioPreviewData : IDisposable
     public WaterMesh? WaterMesh { get; init; }
     public required EntityMarker[] Entities { get; init; }
 
-    // GL handles populated by GlScenarioPreviewControl after upload (0 = unallocated).
-    public int VertexBuffer;
-    public int IndexBuffer;
-    public int VertexArray;
-    public int TextureArray;
-    public int TextureSlicesUploaded;
-
-    // SliceReady[i] flips true once slice i has been uploaded; null entries render with grass-green placeholder.
+    // SliceReady[i] flips true once slice i has been uploaded; false entries render with the grass-green placeholder.
     public bool[] SliceReady = [];
 
     public CancellationTokenSource Cancellation { get; } = new();

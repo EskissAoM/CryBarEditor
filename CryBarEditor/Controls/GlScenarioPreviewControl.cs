@@ -17,8 +17,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 {
     // Constants Avalonia's GlConsts doesn't surface
     const int GL_TRIANGLES            = 0x0004;
-    const int GL_LESS                 = 0x0201;
-    const int GL_DEPTH_COMPONENT      = 0x1902;
     const int GL_DYNAMIC_DRAW         = 0x88E8;
     const int GL_TEXTURE0             = 0x84C0;
     const int GL_TEXTURE_2D_ARRAY     = 0x8C1A;
@@ -40,8 +38,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     bool ICustomHitTest.HitTest(Point point) => Bounds.Contains(point);
 
-    // Grass-green placeholder color until real terrain textures upload.
-    // Matches the user's "default tile is green grass" guidance.
+    // Grass-green; visible until ScenarioTextureLoader replaces a slice.
     const byte PlaceholderR = 0x4E, PlaceholderG = 0x6B, PlaceholderB = 0x33, PlaceholderA = 0xFF;
 
     const int SliceSize = 256;
@@ -78,7 +75,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     readonly ConcurrentQueue<Action<GlInterface>> _glActionQueue = new();
 
     // Function pointers for GL calls Avalonia's GlInterface doesn't expose.
-    // Loaded once in OnOpenGlInit, like the pattern in GlPreviewControl.
     unsafe delegate* unmanaged<int, int, int, int, int, int, int, int, int, void*, void> _glTexImage3D;
     unsafe delegate* unmanaged<int, int, int, int, int, int, int, int, int, int, void*, void> _glTexSubImage3D;
     unsafe delegate* unmanaged<int, void> _glGenerateMipmap;
@@ -192,10 +188,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             // Tile-local UV from world XZ. fract gives [0,1) inside each tile.
             vec2 uv = fract(vWorld.xz);
 
-            // Slice indices are linearly interpolated across the triangle. Round to
-            // nearest integer so each fragment samples whole slices (proper bilinear
-            // blending across tile boundaries needs flat-shaded slices + 4-vert
-            // unshared mesh, scheduled as a follow-up).
+            // Round interpolated slice index so each fragment samples whole slices;
+            // smooth cross-tile blending would need flat-shaded slices + unshared verts.
             float sA = max(floor(vSlices.x + 0.5), 0.0);
             float sB = max(floor(vSlices.y + 0.5), 0.0);
             float sC = max(floor(vSlices.z + 0.5), 0.0);
@@ -258,7 +252,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     unsafe void InitBillboardQuad(GlInterface gl)
     {
-        // 6 vertices, two CCW triangles, each vertex = (qx, qy) in [-1,1]
         var quad = new float[]
         {
             -1f, -1f,   1f, -1f,   -1f,  1f,
@@ -368,14 +361,13 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (_entityCount == 0) return;
         if (_glVertexAttribDivisor == null) return;
 
-        // Per-instance: 3 floats world pos + 4 floats RGBA color = 7 floats per entity
+        // Per instance: pos.xyz + color.rgba
         const int floatsPerInstance = 7;
         var inst = new float[_entityCount * floatsPerInstance];
         for (int i = 0; i < _entityCount; i++)
         {
             var m = data.Entities[i];
             int o = i * floatsPerInstance;
-            // Game stores entity position as (x, y_height, z); pass through unchanged.
             inst[o + 0] = m.Position.X;
             inst[o + 1] = m.Position.Y;
             inst[o + 2] = m.Position.Z;
@@ -385,7 +377,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
         gl.BindVertexArray(_billboardVao);
 
-        // Reuse the static quad VBO bound by InitBillboardQuad on attrib 0.
         gl.BindBuffer(GL_ARRAY_BUFFER, _billboardQuadVbo);
         gl.EnableVertexAttribArray(0);
         gl.VertexAttribPointer(0, 2, GL_FLOAT_TYPE, 0, 2 * sizeof(float), IntPtr.Zero);
@@ -435,13 +426,11 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     public event Action<WorldRayHit?>? CursorHit;
 
-    public readonly record struct LoadProgress(int Resolved, int Decoded, int Uploaded, int Total);
-
-    public event Action<LoadProgress>? LoadProgressChanged;
+    public event Action<ScenarioTextureLoader.LoadProgress>? LoadProgressChanged;
     public event Action<string?>? ErrorChanged;
 
-    public void RaiseLoadProgress(int resolved, int decoded, int uploaded, int total)
-        => LoadProgressChanged?.Invoke(new LoadProgress(resolved, decoded, uploaded, total));
+    public void RaiseLoadProgress(ScenarioTextureLoader.LoadProgress progress)
+        => LoadProgressChanged?.Invoke(progress);
 
     public void RaiseError(string? message) => ErrorChanged?.Invoke(message);
 
@@ -459,7 +448,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     unsafe void UploadWaterMesh(GlInterface gl, ScenarioPreviewData data)
     {
         var w = data.WaterMesh!;
-        // Two CCW triangles covering the map extent at the median water height.
         var verts = new float[]
         {
             0,           w.Height, 0,
@@ -503,10 +491,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.VertexAttribPointer(3, 3, GL_FLOAT_TYPE, 0, stride, new IntPtr(9 * sizeof(float)));
 
         gl.BindVertexArray(0);
-
-        data.VertexBuffer = _heightVbo;
-        data.IndexBuffer = _heightEbo;
-        data.VertexArray = _heightVao;
     }
 
     unsafe void EnsureTextureArrayAllocated(GlInterface gl, ScenarioPreviewData data)
@@ -519,8 +503,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.TexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         gl.TexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-        // Fill every slice with grass-green so the heightmap is visible immediately;
-        // real textures will replace slices via UploadSliceAsync (Task 15).
+        // Fill every slice with the placeholder so the heightmap is visible
+        // before ScenarioTextureLoader has streamed any real DDTs.
         if (_glTexImage3D != null)
             _glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, SliceSize, SliceSize, slices, 0, GL_RGBA, GL_UNSIGNED_BYTE, null);
 
@@ -546,14 +530,10 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             _glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
 
         _allocatedSlices = slices;
-        data.TextureArray = _texArray;
     }
 
     // Replaces slice `sliceIndex` in the texture array with `rgba` (256x256x4 bytes).
     // Returns a task that completes once the upload has executed on the GL thread.
-    // Per-call mipmap regeneration is acceptable here -- typical scenarios have
-    // ~20 slices, so the overhead is bounded; switching to a single batched
-    // regenerate-on-completion pass is a follow-up if profiling demands it.
     public Task UploadSliceAsync(int sliceIndex, byte[] rgba)
     {
         if (rgba is null || rgba.Length != SliceBytes)
@@ -664,8 +644,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         var farW  = new Vector3(farH.X  / farH.W,  farH.Y  / farH.W,  farH.Z  / farH.W);
         var dir = Vector3.Normalize(farW - nearW);
 
-        // Plane intersect at y = avg height -- accurate enough for an HUD readout
-        // until per-vertex heightmap raycast is added.
+        // Plane intersect at y = avg height; cheap proxy for a real heightmap raycast.
         if (MathF.Abs(dir.Y) < 1e-5f) { sub(null); return; }
         float t = (_avgHeight - nearW.Y) / dir.Y;
         if (t < 0) { sub(null); return; }
