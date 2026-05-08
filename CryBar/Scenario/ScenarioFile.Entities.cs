@@ -535,7 +535,7 @@ public partial class ScenarioFile
         return new ScenarioSection(marker, data);
     }
 
-    static List<string> ReadTmStrings(byte[] data)
+    internal static List<string> ReadTmStrings(byte[] data)
     {
         if (data.Length < 8) return [];
         var span = data.AsSpan();

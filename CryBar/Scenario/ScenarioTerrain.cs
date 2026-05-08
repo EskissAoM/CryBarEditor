@@ -1,0 +1,187 @@
+using System.Buffers.Binary;
+
+namespace CryBar.Scenario;
+
+public sealed class TerrainTextureGroup
+{
+    public required string Name { get; init; }
+    public required string[] Textures { get; init; }
+}
+
+public sealed class ScenarioTerrain
+{
+    public required int MapSizeX { get; init; }
+    public required int MapSizeZ { get; init; }
+    public required float[] Heights { get; init; }
+    public required float[] WaterHeights { get; init; }
+    public required float[] UnkHeights { get; init; }
+    public required byte[] TileGroups { get; init; }
+    public required ushort[] TileSubs { get; init; }
+    public required byte[] TilePt { get; init; }
+    public required TerrainTextureGroup[] TerrainGroups { get; init; }
+
+    public static ScenarioTerrain? TryParse(ScenarioFile scenario)
+    {
+        if (scenario is null || !scenario.Parsed) return null;
+
+        var j1 = scenario.GetJ1();
+        if (j1 is null || !j1.Parsed) return null;
+
+        ScenarioSection? tn = null;
+        foreach (var sub in j1.Sections!) if (sub.Marker == "TN") { tn = sub; break; }
+        if (tn is null) return null;
+
+        return ParseTn(tn.Data.AsSpan());
+    }
+
+    static ScenarioTerrain? ParseTn(ReadOnlySpan<byte> data)
+    {
+        if (data.Length < 2) return null;
+        int off = 0;
+        if (data[off++] == 0) return null; // hasT3 must be set
+
+        if (off + 6 > data.Length) return null;
+        off += 2; // 'T3'
+        var t3Size = BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(off));
+        off += 4;
+        if (off + (int)t3Size > data.Length) return null;
+        var t3 = data.Slice(off, (int)t3Size);
+
+        return ParseT3(t3);
+    }
+
+    static ScenarioTerrain? ParseT3(ReadOnlySpan<byte> t3)
+    {
+        int off = 0;
+        if (off + 4 > t3.Length) return null;
+        off += 4; // t3Magic
+
+        // TT terrain groups sub-section
+        if (off + 6 > t3.Length) return null;
+        off += 2; // 'TT'
+        var ttSize = (int)BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off));
+        off += 4;
+        if (off + ttSize > t3.Length) return null;
+        var groups = ParseTerrainGroups(t3.Slice(off, ttSize));
+        off += ttSize;
+
+        // map_size_x, map_size_z
+        if (off + 8 > t3.Length) return null;
+        var mapX = (int)BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off));
+        var mapZ = (int)BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off + 4));
+        off += 8;
+
+        // 2 unknown floats
+        if (off + 8 > t3.Length) return null;
+        off += 8;
+
+        var tileGroups = ReadByteList(t3, ref off);
+        var tileSubs = ReadUShortList(t3, ref off);
+        var tilePt = ReadByteList(t3, ref off);
+
+        // Skip WaterColors, WaterNames, WaterType
+        SkipSizeSection(t3, ref off);
+        SkipSizeSection(t3, ref off);
+        SkipSizeSection(t3, ref off);
+
+        if (off + 4 > t3.Length) return null;
+        var heightCount = (int)BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off));
+        off += 4;
+        var heights = ReadFloats(t3, ref off, heightCount);
+        var waterHeights = ReadFloats(t3, ref off, heightCount);
+        var unkHeights = ReadFloats(t3, ref off, heightCount);
+
+        return new ScenarioTerrain
+        {
+            MapSizeX = mapX,
+            MapSizeZ = mapZ,
+            Heights = heights,
+            WaterHeights = waterHeights,
+            UnkHeights = unkHeights,
+            TileGroups = tileGroups,
+            TileSubs = tileSubs,
+            TilePt = tilePt,
+            TerrainGroups = groups
+        };
+    }
+
+    static TerrainTextureGroup[] ParseTerrainGroups(ReadOnlySpan<byte> data)
+    {
+        if (data.Length < 8) return [];
+        int off = 4; // skip ttMagic
+        var count = BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(off));
+        off += 4;
+
+        var result = new TerrainTextureGroup[count];
+        for (uint g = 0; g < count; g++)
+        {
+            if (!ScenarioFile.TryReadUTF16(data, off, out var name, out off))
+                return result.AsSpan(0, (int)g).ToArray();
+            if (off + 4 > data.Length)
+                return result.AsSpan(0, (int)g).ToArray();
+            var texCount = BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(off));
+            off += 4;
+
+            var textures = new string[texCount];
+            uint actualTex = 0;
+            for (uint t = 0; t < texCount; t++)
+            {
+                if (!ScenarioFile.TryReadUTF16(data, off, out var tex, out off)) break;
+                textures[t] = tex;
+                actualTex++;
+            }
+            if (actualTex < texCount)
+                textures = textures.AsSpan(0, (int)actualTex).ToArray();
+
+            result[g] = new TerrainTextureGroup { Name = name, Textures = textures };
+        }
+        return result;
+    }
+
+    static byte[] ReadByteList(ReadOnlySpan<byte> data, ref int off)
+    {
+        if (off + 6 > data.Length) return [];
+        off += 2;
+        var size = (int)BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(off));
+        off += 4;
+        if (off + size > data.Length || size < 4) { off += size; return []; }
+        var count = (int)BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(off));
+        var elements = data.Slice(off + 4, Math.Min(count, size - 4)).ToArray();
+        off += size;
+        return elements;
+    }
+
+    static ushort[] ReadUShortList(ReadOnlySpan<byte> data, ref int off)
+    {
+        if (off + 6 > data.Length) return [];
+        off += 2;
+        var size = (int)BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(off));
+        off += 4;
+        if (off + size > data.Length || size < 4) { off += size; return []; }
+        var count = (int)BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(off));
+        var bytes = data.Slice(off + 4, Math.Min(count * 2, size - 4));
+        var result = new ushort[count];
+        for (int i = 0; i < count && i * 2 + 2 <= bytes.Length; i++)
+            result[i] = BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(i * 2));
+        off += size;
+        return result;
+    }
+
+    static void SkipSizeSection(ReadOnlySpan<byte> data, ref int off)
+    {
+        if (off + 6 > data.Length) return;
+        off += 2;
+        var size = (int)BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(off));
+        off += 4 + size;
+    }
+
+    static float[] ReadFloats(ReadOnlySpan<byte> data, ref int off, int count)
+    {
+        var result = new float[count];
+        var available = Math.Min(count * 4, data.Length - off);
+        for (int i = 0; i < count && i * 4 + 4 <= available; i++)
+            result[i] = BitConverter.ToSingle(data.Slice(off + i * 4, 4));
+        off += available;
+        return result;
+    }
+}
