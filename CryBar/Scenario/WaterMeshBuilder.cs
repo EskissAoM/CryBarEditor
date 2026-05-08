@@ -1,21 +1,39 @@
+using System.Buffers;
+
 namespace CryBar.Scenario;
 
 public static class WaterMeshBuilder
 {
     public static WaterMesh? Build(ScenarioTerrain terrain)
     {
-        if (terrain.WaterHeights.Length == 0) return null;
+        var heights = terrain.WaterHeights;
+        if (heights.Length == 0) return null;
 
-        var sorted = terrain.WaterHeights.Where(h => h > 0).OrderBy(h => h).ToArray();
-        if (sorted.Length == 0) return null;
-
-        float median = sorted[sorted.Length / 2];
-
-        return new WaterMesh
+        var pool = ArrayPool<float>.Shared;
+        var buf = pool.Rent(heights.Length);
+        try
         {
-            MapSizeX = terrain.MapSizeX,
-            MapSizeZ = terrain.MapSizeZ,
-            Height = median
-        };
+            int count = 0;
+            for (int i = 0; i < heights.Length; i++)
+            {
+                var h = heights[i];
+                if (h > 0) buf[count++] = h;
+            }
+            if (count == 0) return null;
+
+            Array.Sort(buf, 0, count);
+            float median = buf[count / 2];
+
+            return new WaterMesh
+            {
+                MapSizeX = terrain.MapSizeX,
+                MapSizeZ = terrain.MapSizeZ,
+                Height = median
+            };
+        }
+        finally
+        {
+            pool.Return(buf);
+        }
     }
 }

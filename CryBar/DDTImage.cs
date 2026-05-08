@@ -402,25 +402,33 @@ public class DDTImage
         int srcW = p.Width;
         int srcH = p.Height;
 
-        var srcBytes = new byte[srcW * srcH * 4];
-        for (int y = 0; y < srcH; y++)
-        {
-            var row = p.Span.GetRowSpan(y);
-            var rowBytes = MemoryMarshal.AsBytes(row);
-            rowBytes.CopyTo(srcBytes.AsSpan(y * srcW * 4));
-        }
+        var dst = new byte[targetSize * targetSize * 4];
 
         if (srcW == targetSize && srcH == targetSize)
-            return srcBytes;
+        {
+            if (p.TryGetMemory(out var contiguous))
+            {
+                MemoryMarshal.AsBytes(contiguous.Span).CopyTo(dst);
+            }
+            else
+            {
+                for (int y = 0; y < srcH; y++)
+                    MemoryMarshal.AsBytes(p.Span.GetRowSpan(y)).CopyTo(dst.AsSpan(y * srcW * 4));
+            }
+            return dst;
+        }
 
-        return ResampleBilinearRgba8(srcBytes, srcW, srcH, targetSize, targetSize);
+        ResampleBilinearRgba8(p, dst, targetSize, targetSize);
+        return dst;
     }
 
-    static byte[] ResampleBilinearRgba8(byte[] src, int srcW, int srcH, int dstW, int dstH)
+    static void ResampleBilinearRgba8(Memory2D<ColorRgba32> src, byte[] dst, int dstW, int dstH)
     {
-        var dst = new byte[dstW * dstH * 4];
+        int srcW = src.Width;
+        int srcH = src.Height;
         float scaleX = (float)srcW / dstW;
         float scaleY = (float)srcH / dstH;
+        var srcSpan = src.Span;
 
         for (int y = 0; y < dstH; y++)
         {
@@ -429,6 +437,11 @@ public class DDTImage
             float wy = fy - y0;
             if (y0 < 0) y0 = 0; if (y1 >= srcH) y1 = srcH - 1;
 
+            var row0 = MemoryMarshal.AsBytes(srcSpan.GetRowSpan(y0));
+            var row1 = MemoryMarshal.AsBytes(srcSpan.GetRowSpan(y1));
+            int dstRow = y * dstW * 4;
+            float iwy = 1 - wy;
+
             for (int x = 0; x < dstW; x++)
             {
                 float fx = (x + 0.5f) * scaleX - 0.5f;
@@ -436,22 +449,19 @@ public class DDTImage
                 float wx = fx - x0;
                 if (x0 < 0) x0 = 0; if (x1 >= srcW) x1 = srcW - 1;
 
-                int p00 = (y0 * srcW + x0) * 4;
-                int p10 = (y0 * srcW + x1) * 4;
-                int p01 = (y1 * srcW + x0) * 4;
-                int p11 = (y1 * srcW + x1) * 4;
-                int dp = (y * dstW + x) * 4;
+                int p0 = x0 * 4, p1 = x1 * 4, dp = dstRow + x * 4;
+                float iwx = 1 - wx;
 
-                for (int c = 0; c < 4; c++)
-                {
-                    float v00 = src[p00 + c]; float v10 = src[p10 + c];
-                    float v01 = src[p01 + c]; float v11 = src[p11 + c];
-                    float top = v00 * (1 - wx) + v10 * wx;
-                    float bot = v01 * (1 - wx) + v11 * wx;
-                    dst[dp + c] = (byte)Math.Clamp(top * (1 - wy) + bot * wy, 0, 255);
-                }
+                float r = (row0[p0]     * iwx + row0[p1]     * wx) * iwy + (row1[p0]     * iwx + row1[p1]     * wx) * wy;
+                float g = (row0[p0 + 1] * iwx + row0[p1 + 1] * wx) * iwy + (row1[p0 + 1] * iwx + row1[p1 + 1] * wx) * wy;
+                float b = (row0[p0 + 2] * iwx + row0[p1 + 2] * wx) * iwy + (row1[p0 + 2] * iwx + row1[p1 + 2] * wx) * wy;
+                float a = (row0[p0 + 3] * iwx + row0[p1 + 3] * wx) * iwy + (row1[p0 + 3] * iwx + row1[p1 + 3] * wx) * wy;
+
+                dst[dp]     = (byte)Math.Clamp(r, 0, 255);
+                dst[dp + 1] = (byte)Math.Clamp(g, 0, 255);
+                dst[dp + 2] = (byte)Math.Clamp(b, 0, 255);
+                dst[dp + 3] = (byte)Math.Clamp(a, 0, 255);
             }
         }
-        return dst;
     }
 }

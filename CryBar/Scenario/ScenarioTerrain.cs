@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 
 namespace CryBar.Scenario;
 
@@ -144,7 +145,7 @@ public sealed class ScenarioTerrain
         off += 2;
         var size = (int)BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(off));
         off += 4;
-        if (off + size > data.Length || size < 4) { off += size; return []; }
+        if (off + size > data.Length || size < 4) return [];
         var count = (int)BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(off));
         var elements = data.Slice(off + 4, Math.Min(count, size - 4)).ToArray();
         off += size;
@@ -157,12 +158,12 @@ public sealed class ScenarioTerrain
         off += 2;
         var size = (int)BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(off));
         off += 4;
-        if (off + size > data.Length || size < 4) { off += size; return []; }
+        if (off + size > data.Length || size < 4) return [];
         var count = (int)BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(off));
         var bytes = data.Slice(off + 4, Math.Min(count * 2, size - 4));
         var result = new ushort[count];
-        for (int i = 0; i < count && i * 2 + 2 <= bytes.Length; i++)
-            result[i] = BinaryPrimitives.ReadUInt16LittleEndian(bytes.Slice(i * 2));
+        var src = MemoryMarshal.Cast<byte, ushort>(bytes);
+        src.Slice(0, Math.Min(src.Length, count)).CopyTo(result);
         off += size;
         return result;
     }
@@ -179,8 +180,11 @@ public sealed class ScenarioTerrain
     {
         var result = new float[count];
         var available = Math.Min(count * 4, data.Length - off);
-        for (int i = 0; i < count && i * 4 + 4 <= available; i++)
-            result[i] = BitConverter.ToSingle(data.Slice(off + i * 4, 4));
+        if (available >= 4)
+        {
+            var src = MemoryMarshal.Cast<byte, float>(data.Slice(off, available & ~3));
+            src.CopyTo(result);
+        }
         off += available;
         return result;
     }

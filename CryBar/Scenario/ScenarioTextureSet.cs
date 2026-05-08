@@ -21,15 +21,12 @@ public sealed class ScenarioTextureSet
         {
             var g = terrain.TileGroups[i];
             var s = terrain.TileSubs[i];
-            var key = (g, s);
-            if (indices.ContainsKey(key)) continue;
-
             if (g >= terrain.TerrainGroups.Length) continue;
             var group = terrain.TerrainGroups[g];
             if (s >= group.Textures.Length) continue;
 
-            indices[key] = names.Count;
-            names.Add(group.Textures[s]);
+            if (indices.TryAdd((g, s), names.Count))
+                names.Add(group.Textures[s]);
         }
 
         return new ScenarioTextureSet(names, indices);

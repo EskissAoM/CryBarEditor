@@ -9,8 +9,21 @@ public static class TerrainMeshBuilder
         int vCols = mapX + 1;
         int vRows = mapZ + 1;
         int vertexCount = vCols * vRows;
+        int tileCount = mapX * mapZ;
+
+        var tileGroups = terrain.TileGroups;
+        var tileSubs = terrain.TileSubs;
+        var sliceMap = textures.SliceIndices;
+
+        var slices = new int[tileCount];
+        int validTiles = Math.Min(Math.Min(tileGroups.Length, tileSubs.Length), tileCount);
+        for (int t = 0; t < validTiles; t++)
+            slices[t] = sliceMap.TryGetValue((tileGroups[t], tileSubs[t]), out var s) ? s : -1;
+        for (int t = validTiles; t < tileCount; t++)
+            slices[t] = -1;
 
         var verts = new float[vertexCount * TerrainMesh.VertexStrideFloats];
+        var heights = terrain.Heights;
 
         for (int vz = 0; vz < vRows; vz++)
         for (int vx = 0; vx < vCols; vx++)
@@ -18,18 +31,17 @@ public static class TerrainMeshBuilder
             int vIdx = vz * vCols + vx;
             int off = vIdx * TerrainMesh.VertexStrideFloats;
 
-            float y = vIdx < terrain.Heights.Length ? terrain.Heights[vIdx] : 0f;
+            float y = vIdx < heights.Length ? heights[vIdx] : 0f;
             verts[off + 0] = vx;
             verts[off + 1] = y;
             verts[off + 2] = vz;
             verts[off + 3] = 0f;
             verts[off + 4] = 0f;
 
-            // Four neighbor tiles meeting at vertex (vx, vz)
-            int sliceA = SliceAt(vx - 1, vz - 1, mapX, mapZ, terrain, textures);
-            int sliceB = SliceAt(vx,     vz - 1, mapX, mapZ, terrain, textures);
-            int sliceC = SliceAt(vx - 1, vz,     mapX, mapZ, terrain, textures);
-            int sliceD = SliceAt(vx,     vz,     mapX, mapZ, terrain, textures);
+            int sliceA = SliceAt(vx - 1, vz - 1, mapX, mapZ, slices);
+            int sliceB = SliceAt(vx,     vz - 1, mapX, mapZ, slices);
+            int sliceC = SliceAt(vx - 1, vz,     mapX, mapZ, slices);
+            int sliceD = SliceAt(vx,     vz,     mapX, mapZ, slices);
 
             verts[off + 5] = sliceA;
             verts[off + 6] = sliceB;
@@ -51,7 +63,7 @@ public static class TerrainMeshBuilder
             // wD is implicit: 1 - (wA + wB + wC)
         }
 
-        var indices = new uint[mapX * mapZ * 6];
+        var indices = new uint[tileCount * 6];
         int ii = 0;
         for (int tz = 0; tz < mapZ; tz++)
         for (int tx = 0; tx < mapX; tx++)
@@ -79,12 +91,9 @@ public static class TerrainMeshBuilder
         };
     }
 
-    static int SliceAt(int tx, int tz, int mapX, int mapZ, ScenarioTerrain terrain, ScenarioTextureSet textures)
+    static int SliceAt(int tx, int tz, int mapX, int mapZ, int[] slices)
     {
-        if (tx < 0 || tz < 0 || tx >= mapX || tz >= mapZ) return -1;
-        int tIdx = tz * mapX + tx;
-        if (tIdx >= terrain.TileGroups.Length || tIdx >= terrain.TileSubs.Length) return -1;
-        var key = (terrain.TileGroups[tIdx], terrain.TileSubs[tIdx]);
-        return textures.SliceIndices.TryGetValue(key, out var slice) ? slice : -1;
+        if ((uint)tx >= (uint)mapX || (uint)tz >= (uint)mapZ) return -1;
+        return slices[tz * mapX + tx];
     }
 }
