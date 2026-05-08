@@ -61,7 +61,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     int _billboardProgram;
     int _billboardVao, _billboardQuadVbo, _billboardInstanceVbo;
-    int _uBillboardMvp, _uBillboardSize, _uBillboardCamPos, _uBillboardFadeNear, _uBillboardFadeFar, _uBillboardSelected, _uBillboardYScale;
+    int _uBillboardView, _uBillboardProj, _uBillboardSize, _uBillboardCamPos, _uBillboardFadeNear, _uBillboardFadeFar, _uBillboardSelected, _uBillboardYScale;
     int _selectedEntityIndex = -1;
     bool _entitiesUploaded;
     int _entityCount;
@@ -154,7 +154,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         layout(location = 0) in vec2 aQuad;
         layout(location = 1) in vec3 aWorldPos;
         layout(location = 2) in vec4 aColor;
-        uniform mat4 uMVP;
+        uniform mat4 uView;
+        uniform mat4 uProj;
         uniform float uSize;
         uniform vec3 uCamPos;
         uniform float uFadeNear;
@@ -170,9 +171,12 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             vec3 wp = vec3(aWorldPos.x, aWorldPos.y * uYScale + 0.4, aWorldPos.z);
             // Selected entity gets a 50% bigger disc so it stands out at any zoom.
             float sizeMul = (gl_InstanceID == uSelectedIdx) ? 1.5 : 1.0;
-            vec4 clip = uMVP * vec4(wp, 1.0);
-            clip.xy += aQuad * uSize * sizeMul * clip.w;
-            gl_Position = clip;
+            // World-anchored billboard: offset in view-space (X right, Y up relative
+            // to camera) so the disc has a constant world radius and zooms naturally
+            // with the terrain instead of staying fixed-pixel.
+            vec4 viewPos = uView * vec4(wp, 1.0);
+            viewPos.xy += aQuad * uSize * sizeMul;
+            gl_Position = uProj * viewPos;
             vUv = aQuad;
             vColor = aColor;
             float d = distance(uCamPos, wp);
@@ -309,7 +313,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _waterEbo = gl.GenBuffer();
 
         _billboardProgram = CreateProgram(gl, vsPreamble + BillboardVertexShaderBody, fsPreamble + BillboardFragmentShaderBody);
-        _uBillboardMvp      = gl.GetUniformLocationString(_billboardProgram, "uMVP");
+        _uBillboardView     = gl.GetUniformLocationString(_billboardProgram, "uView");
+        _uBillboardProj     = gl.GetUniformLocationString(_billboardProgram, "uProj");
         _uBillboardSize     = gl.GetUniformLocationString(_billboardProgram, "uSize");
         _uBillboardCamPos   = gl.GetUniformLocationString(_billboardProgram, "uCamPos");
         _uBillboardFadeNear = gl.GetUniformLocationString(_billboardProgram, "uFadeNear");
@@ -433,7 +438,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             _entitiesUploaded = true;
         }
         if (_entityCount > 0)
-            DrawEntities(gl, mvpCopy, eyePos);
+            DrawEntities(gl, view, proj, eyePos);
 
         gl.BindVertexArray(0);
         gl.UseProgram(0);
@@ -488,9 +493,10 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.BindVertexArray(0);
     }
 
-    // Half-size of the marker quad in NDC, so the formula `clip.xy += aQuad * uSize * clip.w`
-    // resolves to a screen-stable billboard ~3% of the viewport wide.
-    const float BillboardHalfSizeNdc = 0.015f;
+    // World-space half-radius of the marker disc. Anchored to world units so the
+    // disc zooms naturally with terrain (one tile = 1.0 world unit). 0.4 puts the
+    // disc at slightly under half a tile -- visible without dominating the cell.
+    const float BillboardHalfSizeWorld = 0.4f;
 
     // Visual scale applied to terrain Y so peaks sit at game-comparable heights.
     // Raw scenario heights render ~2x too tall in our viewport vs the in-game
@@ -498,7 +504,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     // the game renders the same data.
     const float HeightScale = 0.5f;
 
-    unsafe void DrawEntities(GlInterface gl, Matrix4x4 mvpCopy, Vector3 eyePos)
+    unsafe void DrawEntities(GlInterface gl, Matrix4x4 view, Matrix4x4 proj, Vector3 eyePos)
     {
         if (_glDrawArraysInstanced == null) return;
         if (_data is null) return;
@@ -515,8 +521,9 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (_glBlendFunc != null) _glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         gl.UseProgram(_billboardProgram);
-        gl.UniformMatrix4fv(_uBillboardMvp, 1, false, &mvpCopy.M11);
-        gl.Uniform1f(_uBillboardSize, BillboardHalfSizeNdc);
+        gl.UniformMatrix4fv(_uBillboardView, 1, false, &view.M11);
+        gl.UniformMatrix4fv(_uBillboardProj, 1, false, &proj.M11);
+        gl.Uniform1f(_uBillboardSize, BillboardHalfSizeWorld);
         if (_glUniform3f != null)
             _glUniform3f(_uBillboardCamPos, eyePos.X, eyePos.Y, eyePos.Z);
         gl.Uniform1f(_uBillboardFadeNear, fadeNear);
@@ -761,33 +768,39 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         float aspect = (float)(bounds.Width / bounds.Height);
         var view = _camera.GetViewMatrix();
         var proj = _camera.GetProjectionMatrix(aspect);
-        var mvp = view * proj;
 
-        // Billboards are screen-stable so do the test in screen pixels:
-        // project each entity to NDC, convert to window-space, pick the
-        // closest within the rendered disc radius (allow a 1.5x margin).
-        float halfPx = (float)(BillboardHalfSizeNdc * bounds.Height * 0.5);
-        float maxPx = halfPx * 1.5f;
-        float bestDistSq = maxPx * maxPx;
+        // Billboards are world-anchored, so the screen radius shrinks with distance.
+        // For each entity we project both its center and a +X view-space offset
+        // matching the rendered half-radius, then measure the resulting pixel gap.
         int best = -1;
+        float bestDistSq = float.MaxValue;
         for (int i = 0; i < _entityCount; i++)
         {
             var m = _data.Entities[i];
             // Mirror the X<->Z swap, Y scale, and lift used in UploadEntities + the vertex shader.
             var wp = new Vector4(m.Position.Z * 0.5f, m.Position.Y * HeightScale + 0.4f, m.Position.X * 0.5f, 1f);
-            var clip = Vector4.Transform(wp, mvp);
-            if (clip.W <= 0) continue;
-            float ndcX = clip.X / clip.W;
-            float ndcY = clip.Y / clip.W;
-            // Off-screen? skip.
+            var viewPos = Vector4.Transform(wp, view);
+            var centerClip = Vector4.Transform(viewPos, proj);
+            if (centerClip.W <= 0) continue;
+            float ndcX = centerClip.X / centerClip.W;
+            float ndcY = centerClip.Y / centerClip.W;
             if (ndcX < -1 || ndcX > 1 || ndcY < -1 || ndcY > 1) continue;
+
+            var edgeView = viewPos; edgeView.X += BillboardHalfSizeWorld;
+            var edgeClip = Vector4.Transform(edgeView, proj);
+            float ndcEdgeX = edgeClip.X / edgeClip.W;
+            float ndcRadius = MathF.Abs(ndcEdgeX - ndcX);
 
             float screenX = (float)((ndcX * 0.5 + 0.5) * bounds.Width);
             float screenY = (float)((1.0 - (ndcY * 0.5 + 0.5)) * bounds.Height);
+            float pxRadius = ndcRadius * (float)bounds.Width * 0.5f;
+            float maxPx = pxRadius * 1.2f;
+            float maxPxSq = maxPx * maxPx;
+
             float dx = (float)(screenX - pos.X);
             float dy = (float)(screenY - pos.Y);
             float distSq = dx * dx + dy * dy;
-            if (distSq < bestDistSq)
+            if (distSq < maxPxSq && distSq < bestDistSq)
             {
                 bestDistSq = distSq;
                 best = i;
