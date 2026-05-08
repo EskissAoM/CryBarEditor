@@ -6,6 +6,7 @@
 		xmlns:cbar="using:CryBar.Bar"
 		xmlns:ce="using:CryBarEditor"
 		xmlns:cc="using:CryBarEditor.Classes"
+		xmlns:controls="using:CryBarEditor.Controls"
 		xmlns:converters="using:CryBarEditor.Converters"
 		xmlns:micons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
 		mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="450"
@@ -493,6 +494,50 @@
 									<Grid>
 										<Border x:Name="_3dViewContainer" Background="#0a0a0a" />
 										<Canvas x:Name="_3dLabelCanvas" IsHitTestVisible="False" />
+									</Grid>
+								</DockPanel>
+							</TabItem>
+						</TabControl>
+
+						<!-- Tabbed preview for mythscn scenario files -->
+						<TabControl x:Name="_scenarioTabControl" IsVisible="False">
+							<TabItem Header="XML">
+								<ae:TextEditor x:Name="_scenarioXmlEditor"
+									IsReadOnly="True"
+									ShowLineNumbers="True"
+									FontFamily="Cascadia Code,Consolas,Menlo,Monospace"
+									Background="#1c1c1c"/>
+							</TabItem>
+							<TabItem Header="3D View">
+								<DockPanel>
+									<controls:ScenarioInspectorPanel x:Name="_scenarioInspector"
+																	 DockPanel.Dock="Right"/>
+									<Grid>
+										<Border x:Name="_scenarioCanvasContainer" Background="#0a0a0a"/>
+										<Border x:Name="_scenarioErrorPanel"
+												IsVisible="False"
+												Background="#0a0a0a"
+												HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+											<StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10">
+												<TextBlock x:Name="_scenarioErrorText"
+														   Foreground="#ddd"
+														   FontSize="14"
+														   HorizontalAlignment="Center"/>
+											</StackPanel>
+										</Border>
+										<Border x:Name="_scenarioProgressOverlay"
+												IsVisible="False"
+												Background="#a0000000"
+												HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+											<StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6">
+												<TextBlock x:Name="_scenarioProgressText"
+														   Foreground="#ddd"
+														   HorizontalAlignment="Center"/>
+												<ProgressBar x:Name="_scenarioProgressBar"
+															 Width="240" Height="6"
+															 Minimum="0" Maximum="1"/>
+											</StackPanel>
+										</Border>
 									</Grid>
 								</DockPanel>
 							</TabItem>
