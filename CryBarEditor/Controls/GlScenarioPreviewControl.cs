@@ -435,6 +435,16 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     public event Action<WorldRayHit?>? CursorHit;
 
+    public readonly record struct LoadProgress(int Resolved, int Decoded, int Uploaded, int Total);
+
+    public event Action<LoadProgress>? LoadProgressChanged;
+    public event Action<string?>? ErrorChanged;
+
+    public void RaiseLoadProgress(int resolved, int decoded, int uploaded, int total)
+        => LoadProgressChanged?.Invoke(new LoadProgress(resolved, decoded, uploaded, total));
+
+    public void RaiseError(string? message) => ErrorChanged?.Invoke(message);
+
     unsafe void DrawWater(GlInterface gl, Matrix4x4 mvpCopy)
     {
         gl.Enable(GL_BLEND);
