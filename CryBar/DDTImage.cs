@@ -359,4 +359,99 @@ public class DDTImage
 
         return levels;
     }
+
+    /// <summary>
+    /// Fast path for terrain tile textures: decodes only the closest mip to <paramref name="targetSize"/>
+    /// and resamples to exact targetSize x targetSize RGBA8. Skips other DDT layers entirely (terrain
+    /// callers point at *_basecolor.ddt; normals/PBR are separate files).
+    /// </summary>
+    public static async Task<byte[]?> DecodeBaseColorOnlyAsync(
+        ReadOnlyMemory<byte> ddtBytes,
+        int targetSize,
+        CancellationToken ct = default)
+    {
+        var img = new DDTImage(ddtBytes);
+        if (!img.ParseHeader()) return null;
+        if (img.MipmapOffsets!.Length == 0) return null;
+
+        // Pick smallest mip with width >= targetSize, otherwise largest available
+        int chosen = 0;
+        ushort chosenW = 0;
+        for (int i = 0; i < img.MipmapOffsets.Length; i++)
+        {
+            var (_, _, w, _) = img.MipmapOffsets[i];
+            if (w >= targetSize)
+            {
+                if (chosenW == 0 || w < chosenW) { chosen = i; chosenW = w; }
+            }
+        }
+        if (chosenW == 0)
+        {
+            // No mip >= targetSize; pick the largest one
+            for (int i = 0; i < img.MipmapOffsets.Length; i++)
+            {
+                var (_, _, w, _) = img.MipmapOffsets[i];
+                if (w > chosenW) { chosen = i; chosenW = w; }
+            }
+        }
+
+        var pixels = await img.DecodeMipmap(chosen, ct);
+        if (!pixels.HasValue) return null;
+
+        var p = pixels.Value;
+        int srcW = p.Width;
+        int srcH = p.Height;
+
+        var srcBytes = new byte[srcW * srcH * 4];
+        for (int y = 0; y < srcH; y++)
+        {
+            var row = p.Span.GetRowSpan(y);
+            var rowBytes = MemoryMarshal.AsBytes(row);
+            rowBytes.CopyTo(srcBytes.AsSpan(y * srcW * 4));
+        }
+
+        if (srcW == targetSize && srcH == targetSize)
+            return srcBytes;
+
+        return ResampleBilinearRgba8(srcBytes, srcW, srcH, targetSize, targetSize);
+    }
+
+    static byte[] ResampleBilinearRgba8(byte[] src, int srcW, int srcH, int dstW, int dstH)
+    {
+        var dst = new byte[dstW * dstH * 4];
+        float scaleX = (float)srcW / dstW;
+        float scaleY = (float)srcH / dstH;
+
+        for (int y = 0; y < dstH; y++)
+        {
+            float fy = (y + 0.5f) * scaleY - 0.5f;
+            int y0 = (int)MathF.Floor(fy); int y1 = y0 + 1;
+            float wy = fy - y0;
+            if (y0 < 0) y0 = 0; if (y1 >= srcH) y1 = srcH - 1;
+
+            for (int x = 0; x < dstW; x++)
+            {
+                float fx = (x + 0.5f) * scaleX - 0.5f;
+                int x0 = (int)MathF.Floor(fx); int x1 = x0 + 1;
+                float wx = fx - x0;
+                if (x0 < 0) x0 = 0; if (x1 >= srcW) x1 = srcW - 1;
+
+                int p00 = (y0 * srcW + x0) * 4;
+                int p10 = (y0 * srcW + x1) * 4;
+                int p01 = (y1 * srcW + x0) * 4;
+                int p11 = (y1 * srcW + x1) * 4;
+                int dp = (y * dstW + x) * 4;
+
+                for (int c = 0; c < 4; c++)
+                {
+                    float v00 = src[p00 + c]; float v10 = src[p10 + c];
+                    float v01 = src[p01 + c]; float v11 = src[p11 + c];
+                    float top = v00 * (1 - wx) + v10 * wx;
+                    float bot = v01 * (1 - wx) + v11 * wx;
+                    dst[dp + c] = (byte)Math.Clamp(top * (1 - wy) + bot * wy, 0, 255);
+                }
+            }
+        }
+        return dst;
+    }
 }
