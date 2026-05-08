@@ -34,6 +34,9 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     const int GL_UNSIGNED_BYTE        = 0x1401;
     const int GL_FLOAT_TYPE           = 0x1406;
     const int GL_UNSIGNED_INT_TYPE    = 0x1405;
+    const int GL_BLEND                = 0x0BE2;
+    const int GL_SRC_ALPHA            = 0x0302;
+    const int GL_ONE_MINUS_SRC_ALPHA  = 0x0303;
 
     bool ICustomHitTest.HitTest(Point point) => Bounds.Contains(point);
 
@@ -52,6 +55,11 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     int _heightVao, _heightVbo, _heightEbo;
     int _uMvp, _uTexArray;
 
+    int _waterProgram;
+    int _waterVao, _waterVbo;
+    int _uWaterMvp;
+    bool _waterUploaded;
+
     int _texArray;
     int _allocatedSlices;
 
@@ -67,6 +75,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     unsafe delegate* unmanaged<int, int, int, int, int, int, int, int, int, void*, void> _glTexImage3D;
     unsafe delegate* unmanaged<int, int, int, int, int, int, int, int, int, int, void*, void> _glTexSubImage3D;
     unsafe delegate* unmanaged<int, void> _glGenerateMipmap;
+    unsafe delegate* unmanaged<uint, uint, void> _glBlendFunc;
 
     public void QueueGlAction(Action<GlInterface> action)
     {
@@ -78,6 +87,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     {
         _data = data;
         _meshUploaded = false;
+        _waterUploaded = false;
         if (data is not null)
         {
             float cx = data.Terrain.MapSizeX * 0.5f;
@@ -108,6 +118,17 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             float w4 = clamp(1.0 - aWeights.x - aWeights.y - aWeights.z, 0.0, 1.0);
             vWeights = vec4(aWeights, w4);
         }
+        """;
+
+    const string WaterVertexShaderBody = """
+        layout(location = 0) in vec3 aPos;
+        uniform mat4 uMVP;
+        void main() { gl_Position = uMVP * vec4(aPos, 1.0); }
+        """;
+
+    const string WaterFragmentShaderBody = """
+        out vec4 fragColor;
+        void main() { fragColor = vec4(0.20, 0.40, 0.55, 0.55); }
         """;
 
     const string FragmentShaderBody = """
@@ -157,6 +178,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _glTexImage3D    = (delegate* unmanaged<int, int, int, int, int, int, int, int, int, void*, void>)gl.GetProcAddress("glTexImage3D");
         _glTexSubImage3D = (delegate* unmanaged<int, int, int, int, int, int, int, int, int, int, void*, void>)gl.GetProcAddress("glTexSubImage3D");
         _glGenerateMipmap = (delegate* unmanaged<int, void>)gl.GetProcAddress("glGenerateMipmap");
+        _glBlendFunc = (delegate* unmanaged<uint, uint, void>)gl.GetProcAddress("glBlendFunc");
 
         _heightProgram = CreateProgram(gl, vsPreamble + VertexShaderBody, fsPreamble + FragmentShaderBody);
         _uMvp      = gl.GetUniformLocationString(_heightProgram, "uMVP");
@@ -168,6 +190,11 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
         _texArray = gl.GenTexture();
 
+        _waterProgram = CreateProgram(gl, vsPreamble + WaterVertexShaderBody, fsPreamble + WaterFragmentShaderBody);
+        _uWaterMvp = gl.GetUniformLocationString(_waterProgram, "uMVP");
+        _waterVao = gl.GenVertexArray();
+        _waterVbo = gl.GenBuffer();
+
         _glInitialized = true;
     }
 
@@ -178,9 +205,13 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (_heightEbo != 0)     { gl.DeleteBuffer(_heightEbo); _heightEbo = 0; }
         if (_heightVao != 0)     { gl.DeleteVertexArray(_heightVao); _heightVao = 0; }
         if (_texArray != 0)      { gl.DeleteTexture(_texArray); _texArray = 0; }
+        if (_waterProgram != 0)  { gl.DeleteProgram(_waterProgram); _waterProgram = 0; }
+        if (_waterVbo != 0)      { gl.DeleteBuffer(_waterVbo); _waterVbo = 0; }
+        if (_waterVao != 0)      { gl.DeleteVertexArray(_waterVao); _waterVao = 0; }
 
         _glInitialized = false;
         _meshUploaded = false;
+        _waterUploaded = false;
         _allocatedSlices = 0;
     }
 
@@ -227,9 +258,52 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.BindVertexArray(_heightVao);
         gl.DrawElements(GL_TRIANGLES, _data.TerrainMesh.Indices.Length, GL_UNSIGNED_INT_TYPE, IntPtr.Zero);
 
+        if (_data.WaterMesh is not null)
+        {
+            if (!_waterUploaded)
+            {
+                UploadWaterMesh(gl, _data);
+                _waterUploaded = true;
+            }
+            DrawWater(gl, mvpCopy);
+        }
+
         gl.BindVertexArray(0);
         gl.UseProgram(0);
         gl.Disable(GL_DEPTH_TEST);
+    }
+
+    unsafe void DrawWater(GlInterface gl, Matrix4x4 mvpCopy)
+    {
+        gl.Enable(GL_BLEND);
+        if (_glBlendFunc != null) _glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        gl.UseProgram(_waterProgram);
+        gl.UniformMatrix4fv(_uWaterMvp, 1, false, &mvpCopy.M11);
+        gl.BindVertexArray(_waterVao);
+        gl.DrawArrays(GL_TRIANGLES, 0, 6);
+        gl.Disable(GL_BLEND);
+    }
+
+    unsafe void UploadWaterMesh(GlInterface gl, ScenarioPreviewData data)
+    {
+        var w = data.WaterMesh!;
+        // Two CCW triangles covering the map extent at the median water height.
+        var verts = new float[]
+        {
+            0,           w.Height, 0,
+            w.MapSizeX,  w.Height, 0,
+            0,           w.Height, w.MapSizeZ,
+            w.MapSizeX,  w.Height, 0,
+            w.MapSizeX,  w.Height, w.MapSizeZ,
+            0,           w.Height, w.MapSizeZ,
+        };
+        gl.BindVertexArray(_waterVao);
+        gl.BindBuffer(GL_ARRAY_BUFFER, _waterVbo);
+        fixed (float* p = verts)
+            gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(verts.Length * sizeof(float)), (IntPtr)p, GL_DYNAMIC_DRAW);
+        gl.EnableVertexAttribArray(0);
+        gl.VertexAttribPointer(0, 3, GL_FLOAT_TYPE, 0, 3 * sizeof(float), IntPtr.Zero);
+        gl.BindVertexArray(0);
     }
 
     unsafe void UploadMesh(GlInterface gl, ScenarioPreviewData data)
