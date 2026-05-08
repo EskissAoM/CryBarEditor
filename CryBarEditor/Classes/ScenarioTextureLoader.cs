@@ -57,6 +57,63 @@ public sealed class ScenarioTextureLoader
     }
 
     public sealed record SliceBuffer(int SliceIndex, byte[] Rgba);
+    public sealed record LoadProgress(int Resolved, int Decoded, int Uploaded, int Total);
+
+    // Top-level pipeline:
+    //   1) sequentially resolve names to DDT byte buffers via FileIndex
+    //   2) decode all resolved buffers to RGBA8 in parallel
+    //   3) upload each decoded slice via the GL-thread callback in encounter order
+    public static async Task LoadAllAsync(
+        ScenarioPreviewData data,
+        NameResolver resolver,
+        Func<int, byte[], Task> uploadSliceAsync,
+        Action<LoadProgress>? onProgress,
+        CancellationToken ct)
+    {
+        var names = data.TextureSet.Names;
+        int total = names.Count;
+
+        var resolved = new byte[]?[total];
+        for (int i = 0; i < total; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            resolved[i] = await resolver.TryResolveAsync(names[i], ct);
+            onProgress?.Invoke(new LoadProgress(i + 1, 0, 0, total));
+        }
+
+        int decodedSoFar = 0;
+        var buffers = new SliceBuffer?[total];
+        await Parallel.ForAsync(0, total, new ParallelOptions
+        {
+            CancellationToken = ct,
+            MaxDegreeOfParallelism = Environment.ProcessorCount
+        }, async (i, innerCt) =>
+        {
+            innerCt.ThrowIfCancellationRequested();
+            var bytes = resolved[i];
+            if (bytes is not null && bytes.Length > 0)
+            {
+                var rgba = await DDTImage.DecodeBaseColorOnlyAsync(bytes, TargetSize, innerCt);
+                if (rgba is not null) buffers[i] = new SliceBuffer(i, rgba);
+            }
+            var n = Interlocked.Increment(ref decodedSoFar);
+            onProgress?.Invoke(new LoadProgress(total, n, 0, total));
+        });
+
+        int uploaded = 0;
+        for (int i = 0; i < total; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var buf = buffers[i];
+            if (buf is not null)
+            {
+                await uploadSliceAsync(buf.SliceIndex, buf.Rgba);
+                data.SliceReady[buf.SliceIndex] = true;
+            }
+            uploaded++;
+            onProgress?.Invoke(new LoadProgress(total, total, uploaded, total));
+        }
+    }
 
     // Decode resolved DDT byte buffers into 256x256 RGBA8 in parallel.
     // resolvedBytes[i] == null means slice i was unresolved -- output[i] stays null.
