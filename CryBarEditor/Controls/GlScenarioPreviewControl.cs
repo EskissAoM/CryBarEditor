@@ -125,8 +125,11 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         out vec4 vWeights;
 
         void main() {
-            gl_Position = uMVP * vec4(aPos, 1.0);
-            vWorld = aPos;
+            // Game space is Y-up Left-Handed; OpenGL is Y-up Right-Handed -- single X negation
+            // matches the convention used by GlbExporter / TmmWriter / PreviewMeshData.
+            vec3 p = vec3(-aPos.x, aPos.y, aPos.z);
+            gl_Position = uMVP * vec4(p, 1.0);
+            vWorld = p;
             vSlices = aSlices;
             // 4th weight is implicit so the data fits in 12 floats per vertex
             float w4 = clamp(1.0 - aWeights.x - aWeights.y - aWeights.z, 0.0, 1.0);
@@ -143,8 +146,10 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         out vec2 vUv;
         out vec4 vColor;
         void main() {
-            vec4 clip = uMVP * vec4(aWorldPos, 1.0);
-            // Pixel-stable size: aQuad is in [-1,1], scaled by uSize in clip space
+            // Match the heightmap shader's X-negation so entities sit at the
+            // correct game-space tile.
+            vec4 clip = uMVP * vec4(-aWorldPos.x, aWorldPos.y, aWorldPos.z, 1.0);
+            // Screen-stable size: aQuad is in [-1,1], scaled by uSize in NDC
             clip.xy += aQuad * uSize * clip.w;
             gl_Position = clip;
             vUv = aQuad;
@@ -167,7 +172,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     const string WaterVertexShaderBody = """
         layout(location = 0) in vec3 aPos;
         uniform mat4 uMVP;
-        void main() { gl_Position = uMVP * vec4(aPos, 1.0); }
+        void main() { gl_Position = uMVP * vec4(-aPos.x, aPos.y, aPos.z, 1.0); }
         """;
 
     const string WaterFragmentShaderBody = """
@@ -291,9 +296,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     protected override unsafe void OnOpenGlRender(GlInterface gl, int fb)
     {
-        while (_glActionQueue.TryDequeue(out var pending))
-            pending(gl);
-
         gl.BindFramebuffer(GL_FRAMEBUFFER, fb);
 
         var scaling = TopLevel.GetTopLevel(this)?.RenderScaling ?? 1.0;
@@ -305,14 +307,26 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.ClearColor(0.05f, 0.06f, 0.08f, 1.0f);
         gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        if (_data is null || !_glInitialized) return;
+        if (_data is null || !_glInitialized)
+        {
+            // Drop pending uploads if there's no scenario; they'd have nothing to write to.
+            while (_glActionQueue.TryDequeue(out _)) { }
+            return;
+        }
 
+        // Allocate before draining the queue so queued slice uploads find the
+        // texture array storage ready. Without this, any TexSubImage3D arriving
+        // before the first render's TexImage3D writes to undefined storage and
+        // is silently lost.
         if (!_meshUploaded)
         {
             UploadMesh(gl, _data);
             EnsureTextureArrayAllocated(gl, _data);
             _meshUploaded = true;
         }
+
+        while (_glActionQueue.TryDequeue(out var pending))
+            pending(gl);
 
         gl.Enable(GL_DEPTH_TEST);
 
@@ -653,14 +667,19 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (t < 0) { sub(null); return; }
         var hit = nearW + dir * t;
 
+        // Mesh is rendered with X negated (LH -> RH), so the unprojected ray
+        // hits at -tileX. Invert back to game-tile coords.
+        float gameX = -hit.X;
+        float gameZ = hit.Z;
+
         int mapX = _data.Terrain.MapSizeX;
         int mapZ = _data.Terrain.MapSizeZ;
-        if (hit.X < 0 || hit.X > mapX || hit.Z < 0 || hit.Z > mapZ) { sub(null); return; }
+        if (gameX < 0 || gameX > mapX || gameZ < 0 || gameZ > mapZ) { sub(null); return; }
 
-        int tileX = Math.Clamp((int)MathF.Floor(hit.X), 0, mapX - 1);
-        int tileZ = Math.Clamp((int)MathF.Floor(hit.Z), 0, mapZ - 1);
-        int vertexX = Math.Clamp((int)MathF.Round(hit.X), 0, mapX);
-        int vertexZ = Math.Clamp((int)MathF.Round(hit.Z), 0, mapZ);
+        int tileX = Math.Clamp((int)MathF.Floor(gameX), 0, mapX - 1);
+        int tileZ = Math.Clamp((int)MathF.Floor(gameZ), 0, mapZ - 1);
+        int vertexX = Math.Clamp((int)MathF.Round(gameX), 0, mapX);
+        int vertexZ = Math.Clamp((int)MathF.Round(gameZ), 0, mapZ);
 
         int vIdx = vertexZ * (mapX + 1) + vertexX;
         float height = vIdx < _data.Terrain.Heights.Length ? _data.Terrain.Heights[vIdx] : 0f;

@@ -1,8 +1,8 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Controls;
 using Avalonia.Threading;
-using AvaloniaEdit.Document;
 using CryBar.Scenario;
 using CryBarEditor.Classes;
 using CryBarEditor.Controls;
@@ -23,7 +23,13 @@ public partial class MainWindow
         _flatPreview.IsVisible = false;
         _scenarioTabControl.IsVisible = true;
 
-        _scenarioXmlEditor.Document = new TextDocument(ScenarioFile.StripBinaryForPreview(scenario.ToXml()));
+        // Reparent the main editor into the XML tab so the scenario view reuses
+        // the existing TextMate grammar, folding manager, and large-doc cache.
+        if (_txtEditor.Parent is Panel panel)
+            panel.Children.Remove(_txtEditor);
+        _scenarioXmlHost.Content = _txtEditor;
+        _txtEditor.IsVisible = true;
+        _ = SetEditorText(".xml", ScenarioFile.StripBinaryForPreview(scenario.ToXml()));
 
         var data = ScenarioPreviewData.TryBuild(scenario);
         if (data is null)
@@ -110,6 +116,14 @@ public partial class MainWindow
         {
             _scenarioTabControl.IsVisible = false;
             _flatPreview.IsVisible = true;
+
+            // Move the editor back to the flat preview panel so other dispatchers can use it.
+            if (ReferenceEquals(_scenarioXmlHost.Content, _txtEditor))
+            {
+                _scenarioXmlHost.Content = null;
+                if (!_flatPreview.Children.Contains(_txtEditor))
+                    _flatPreview.Children.Add(_txtEditor);
+            }
         }
         _scenarioProgressOverlay.IsVisible = false;
         _scenarioErrorPanel.IsVisible = false;

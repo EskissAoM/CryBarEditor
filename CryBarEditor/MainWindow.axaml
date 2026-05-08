@@ -502,11 +502,10 @@
 						<!-- Tabbed preview for mythscn scenario files -->
 						<TabControl x:Name="_scenarioTabControl" IsVisible="False">
 							<TabItem Header="XML">
-								<ae:TextEditor x:Name="_scenarioXmlEditor"
-									IsReadOnly="True"
-									ShowLineNumbers="True"
-									FontFamily="Cascadia Code,Consolas,Menlo,Monospace"
-									Background="#1c1c1c"/>
+								<!-- Hosts the main _txtEditor (reparented in ShowScenarioPreview)
+									 so the scenario XML view reuses the optimized large-doc pipeline,
+									 TextMate grammar, and folding manager already wired to _txtEditor. -->
+								<ContentControl x:Name="_scenarioXmlHost" Background="#1c1c1c"/>
 							</TabItem>
 							<TabItem Header="3D View">
 								<DockPanel>
