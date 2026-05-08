@@ -10,7 +10,10 @@ using SixLabors.ImageSharp.PixelFormats;
 
 using System.Text;
 using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using System.Diagnostics.CodeAnalysis;
 using CryBar.Utilities;
 
@@ -53,6 +56,12 @@ public enum DDTFormat : byte
 
 public class DDTImage
 {
+    /// Master switch for SIMD paths (bilinear resample, BC1 decode). Set false
+    /// to force the scalar reference if a regression is suspected.
+    public static bool UseSimd { get; set; } = true;
+
+    static bool IsBc1Format(DDTFormat f) => f == DDTFormat.DXT1 || f == DDTFormat.DXT1Alpha;
+
     public DDTVersion Version { get; private set; }
     public bool HeaderParsed { get; private set; }
 
@@ -67,19 +76,30 @@ public class DDTImage
 
     public (int, int, ushort, ushort)[]? MipmapOffsets { get; private set; }
 
-    readonly byte[] _data;
+    readonly ReadOnlyMemory<byte> _data;
 
-    public DDTImage(ReadOnlyMemory<byte> data)
+    /// Pass copyData=false only when the caller guarantees `data`'s backing
+    /// storage outlives this DDTImage and any ReadOnlyMemory slices it returns
+    /// (ColorTable, ReadMipmap). Skipping the copy matters for short-lived
+    /// terrain-tile decodes where the memcpy dominates wall time.
+    public DDTImage(ReadOnlyMemory<byte> data, bool copyData = true)
     {
-        // we must have this copy
-        _data = new byte[data.Length];
-        data.CopyTo(_data);
+        if (copyData)
+        {
+            var copy = new byte[data.Length];
+            data.CopyTo(copy);
+            _data = copy;
+        }
+        else
+        {
+            _data = data;
+        }
     }
 
     [MemberNotNullWhen(true, nameof(MipmapOffsets))]
     public bool ParseHeader()
     {
-        var data = _data.AsSpan();
+        var data = _data.Span;
         if (data.Length < 16) return false;
 
         var rts4 = data is [0x52, 0x54, 0x53, 0x34, ..];
@@ -111,7 +131,7 @@ public class DDTImage
         if (rts4)
         {
             int color_table_size = BinaryPrimitives.ReadInt32LittleEndian(data.Slice(offset, 4)); offset += 4;
-            var color_table = _data.AsMemory(offset, color_table_size); offset += color_table_size;
+            var color_table = _data.Slice(offset, color_table_size); offset += color_table_size;
             ColorTable = color_table;
         }
 
@@ -139,15 +159,38 @@ public class DDTImage
         if (index >= MipmapOffsets!.Length) throw new IndexOutOfRangeException("Mipmap index out of range");
 
         var (offset, length, m_width, m_height) = MipmapOffsets[index];
-        var image_data = _data.AsMemory(offset, length);
+        var image_data = _data.Slice(offset, length);
 
         width = m_width;
         height = m_height;
         return image_data;
     }
 
-    public async Task<Memory2D<ColorRgba32>?> DecodeMipmap(int mipmap_index = 0, CancellationToken token = default)
+    /// Zero-alloc BC1/BC1Alpha decode into a caller-supplied buffer. Returns
+    /// false (without writing) for non-BC1 formats or when SIMD is unavailable;
+    /// callers should fall back to DecodeMipmap. width/height are populated
+    /// regardless so the caller can size a pooled scratch buffer.
+    public bool TryDecodeMipmapInto(int mipmap_index, Span<byte> output, out int width, out int height)
     {
+        var mipmap_data = ReadMipmap(mipmap_index, out var w, out var h);
+        width = w;
+        height = h;
+
+        if (!UseSimd || !SimdBc1Decoder.IsHardwareAccelerated) return false;
+        if (!IsBc1Format(FormatFlag)) return false;
+
+        SimdBc1Decoder.DecodeImage(mipmap_data.Span, output, w, h, FormatFlag == DDTFormat.DXT1Alpha);
+        return true;
+    }
+
+    public Task<Memory2D<ColorRgba32>?> DecodeMipmap(int mipmap_index = 0, CancellationToken token = default)
+    {
+        // Pre-check at entry instead of forwarding to BcDecoder: its per-block
+        // ThrowIfCancellationRequested raises a first-chance OCE on the worker
+        // that paused the debugger even when caught downstream.
+        if (token.IsCancellationRequested)
+            return Task.FromResult<Memory2D<ColorRgba32>?>(null);
+
         var mipmap_data = ReadMipmap(mipmap_index, out var width, out var height);
 
         // NOTE:
@@ -157,39 +200,49 @@ public class DDTImage
         // - When Alpha = 1, format is usually 1 (Bgra)
         // - When Alpha = 0 and Usage = 4, format is usually 3
 
+        if (UseSimd && SimdBc1Decoder.IsHardwareAccelerated && IsBc1Format(FormatFlag))
+        {
+            var pixels = SimdBc1Decoder.DecodeImage(mipmap_data.Span, width, height, FormatFlag == DDTFormat.DXT1Alpha);
+            return Task.FromResult<Memory2D<ColorRgba32>?>(pixels.AsMemory().AsMemory2D(height, width));
+        }
+
+        return DecodeMipmapVendored(mipmap_data, width, height, token);
+    }
+
+    async Task<Memory2D<ColorRgba32>?> DecodeMipmapVendored(ReadOnlyMemory<byte> mipmap_data, ushort width, ushort height, CancellationToken token)
+    {
+        // Token is intentionally NOT forwarded to BcDecoder.DecodeRaw2DAsync -
+        // see DecodeMipmap entry for the OCE-on-debugger rationale. Non-BC1
+        // formats here are rare; the few ms of wasted work on cancel is fine.
         try
         {
+            if (token.IsCancellationRequested) return null;
+
             var decoder = new BcDecoder();
             Memory2D<ColorRgba32> decoded_pixels;
             switch (FormatFlag)
             {
                 case DDTFormat.DXT1:
-                    // DXT1 - CompressionFormat.Bc1
-                    decoded_pixels = await decoder.DecodeRaw2DAsync(mipmap_data, width, height, CompressionFormat.Bc1, token);
+                    decoded_pixels = await decoder.DecodeRaw2DAsync(mipmap_data, width, height, CompressionFormat.Bc1);
                     break;
                 case DDTFormat.DXT1Alpha:
-                    // DXT1 with Transparency - CompressionFormat.Bc1WithAlpha
-                    decoded_pixels = await decoder.DecodeRaw2DAsync(mipmap_data, width, height, CompressionFormat.Bc1WithAlpha, token);
+                    decoded_pixels = await decoder.DecodeRaw2DAsync(mipmap_data, width, height, CompressionFormat.Bc1WithAlpha);
                     break;
                 case DDTFormat.Grey:
-                    // Grey - CompressionFormat.R
-                    decoded_pixels = await decoder.DecodeRaw2DAsync(mipmap_data, width, height, CompressionFormat.R, token);
+                    decoded_pixels = await decoder.DecodeRaw2DAsync(mipmap_data, width, height, CompressionFormat.R);
                     break;
                 case DDTFormat.DXT3:
-                    // DXT3 - CompressionFormat.Bc2
-                    decoded_pixels = await decoder.DecodeRaw2DAsync(mipmap_data, width, height, CompressionFormat.Bc2, token);
+                    decoded_pixels = await decoder.DecodeRaw2DAsync(mipmap_data, width, height, CompressionFormat.Bc2);
                     break;
                 case DDTFormat.DXT5:
-                    // DXT5 - CompressionFormat.Bc3
-                    decoded_pixels = await decoder.DecodeRaw2DAsync(mipmap_data, width, height, CompressionFormat.Bc3, token);
+                    decoded_pixels = await decoder.DecodeRaw2DAsync(mipmap_data, width, height, CompressionFormat.Bc3);
                     break;
                 default:
-                    // CompressionFormat.Bgra
-                    decoded_pixels = await decoder.DecodeRaw2DAsync(mipmap_data, width, height, CompressionFormat.Bgra, token);
+                    decoded_pixels = await decoder.DecodeRaw2DAsync(mipmap_data, width, height, CompressionFormat.Bgra);
                     break;
             }
 
-            return decoded_pixels;
+            return token.IsCancellationRequested ? null : decoded_pixels;
         }
         catch (OperationCanceledException) { return null; }
     }
@@ -360,19 +413,38 @@ public class DDTImage
         return levels;
     }
 
-    /// <summary>
-    /// Fast path for terrain tile textures: decodes only the closest mip to <paramref name="targetSize"/>
-    /// and resamples to exact targetSize x targetSize RGBA8. Skips other DDT layers entirely (terrain
-    /// callers point at *_basecolor.ddt; normals/PBR are separate files).
-    /// </summary>
+    /// Fast path for terrain tile textures: decodes the closest mip to
+    /// targetSize and resamples to exact targetSize x targetSize RGBA8.
+    /// Allocating overload; prefer the buffer overload below for hot paths.
     public static async Task<byte[]?> DecodeBaseColorOnlyAsync(
         ReadOnlyMemory<byte> ddtBytes,
         int targetSize,
         CancellationToken ct = default)
     {
-        var img = new DDTImage(ddtBytes);
-        if (!img.ParseHeader()) return null;
-        if (img.MipmapOffsets!.Length == 0) return null;
+        var dst = new byte[targetSize * targetSize * 4];
+        if (!await DecodeBaseColorOnlyIntoAsync(ddtBytes, targetSize, dst, ct))
+            return null;
+        return dst;
+    }
+
+    /// Zero-alloc terrain-tile fast path. Writes targetSize*targetSize*4 bytes
+    /// of RGBA8 into dst. BC1/BC1Alpha sources are fully zero-alloc; non-BC1
+    /// falls through to the vendored decoder which allocates internally.
+    public static async Task<bool> DecodeBaseColorOnlyIntoAsync(
+        ReadOnlyMemory<byte> ddtBytes,
+        int targetSize,
+        Memory<byte> dst,
+        CancellationToken ct = default)
+    {
+        int dstByteCount = targetSize * targetSize * 4;
+        if (dst.Length < dstByteCount)
+            throw new ArgumentException($"Destination too small: have {dst.Length}, need {dstByteCount}", nameof(dst));
+
+        // No-copy: ddtBytes outlives this method via the await chain (the caller
+        // owns the buffer and keeps it alive until DecodeBaseColorOnlyIntoAsync returns).
+        var img = new DDTImage(ddtBytes, copyData: false);
+        if (!img.ParseHeader()) return false;
+        if (img.MipmapOffsets!.Length == 0) return false;
 
         // Pick smallest mip with width >= targetSize, otherwise largest available
         int chosen = 0;
@@ -387,7 +459,6 @@ public class DDTImage
         }
         if (chosenW == 0)
         {
-            // No mip >= targetSize; pick the largest one
             for (int i = 0; i < img.MipmapOffsets.Length; i++)
             {
                 var (_, _, w, _) = img.MipmapOffsets[i];
@@ -395,34 +466,114 @@ public class DDTImage
             }
         }
 
-        var pixels = await img.DecodeMipmap(chosen, ct);
-        if (!pixels.HasValue) return null;
+        var (_, _, mipW, mipH) = img.MipmapOffsets[chosen];
 
-        var p = pixels.Value;
-        int srcW = p.Width;
-        int srcH = p.Height;
-
-        var dst = new byte[targetSize * targetSize * 4];
-
-        if (srcW == targetSize && srcH == targetSize)
+        if (UseSimd && SimdBc1Decoder.IsHardwareAccelerated && IsBc1Format(img.FormatFlag))
         {
-            if (p.TryGetMemory(out var contiguous))
-            {
-                MemoryMarshal.AsBytes(contiguous.Span).CopyTo(dst);
-            }
-            else
-            {
-                for (int y = 0; y < srcH; y++)
-                    MemoryMarshal.AsBytes(p.Span.GetRowSpan(y)).CopyTo(dst.AsSpan(y * srcW * 4));
-            }
-            return dst;
+            if (mipW == targetSize && mipH == targetSize)
+                return img.TryDecodeMipmapInto(chosen, dst.Span.Slice(0, dstByteCount), out _, out _);
+
+            using var scratch = new PooledBuffer(mipW * mipH * 4);
+            if (!img.TryDecodeMipmapInto(chosen, scratch.Span, out _, out _)) return false;
+            ResampleBilinearRgba8(scratch.Span.Slice(0, mipW * mipH * 4), mipW, mipH,
+                dst.Span.Slice(0, dstByteCount), targetSize, targetSize);
+            return true;
         }
 
-        ResampleBilinearRgba8(p, dst, targetSize, targetSize);
-        return dst;
+        var pixels = await img.DecodeMipmap(chosen, ct);
+        if (!pixels.HasValue) return false;
+
+        var p = pixels.Value;
+        var dstSpan = dst.Span;
+        if (p.Width == targetSize && p.Height == targetSize)
+        {
+            if (p.TryGetMemory(out var contiguous))
+                MemoryMarshal.AsBytes(contiguous.Span).CopyTo(dstSpan);
+            else
+                for (int y = 0; y < p.Height; y++)
+                    MemoryMarshal.AsBytes(p.Span.GetRowSpan(y)).CopyTo(dstSpan.Slice(y * p.Width * 4));
+            return true;
+        }
+
+        ResampleBilinearRgba8(p, dst.Span, targetSize, targetSize);
+        return true;
     }
 
-    static void ResampleBilinearRgba8(Memory2D<ColorRgba32> src, byte[] dst, int dstW, int dstH)
+    internal static void ResampleBilinearRgba8(Memory2D<ColorRgba32> src, Span<byte> dst, int dstW, int dstH)
+    {
+        if (src.TryGetMemory(out var contiguous))
+        {
+            ResampleBilinearRgba8(MemoryMarshal.AsBytes(contiguous.Span), src.Width, src.Height, dst, dstW, dstH);
+            return;
+        }
+        // Strided fallback for the rare non-contiguous Memory2D.
+        if (UseSimd && Sse2.IsSupported && Vector128.IsHardwareAccelerated)
+            ResampleBilinearRgba8SimdFromMemory2D(src, dst, dstW, dstH);
+        else
+            ResampleBilinearRgba8ScalarFromMemory2D(src, dst, dstW, dstH);
+    }
+
+    internal static void ResampleBilinearRgba8(ReadOnlySpan<byte> src, int srcW, int srcH, Span<byte> dst, int dstW, int dstH)
+    {
+        if (UseSimd && Sse2.IsSupported && Vector128.IsHardwareAccelerated)
+            ResampleBilinearRgba8Simd(src, srcW, srcH, dst, dstW, dstH);
+        else
+            ResampleBilinearRgba8Scalar(src, srcW, srcH, dst, dstW, dstH);
+    }
+
+    internal static void ResampleBilinearRgba8Scalar(Memory2D<ColorRgba32> src, byte[] dst, int dstW, int dstH)
+    {
+        if (src.TryGetMemory(out var contiguous))
+        {
+            ResampleBilinearRgba8Scalar(MemoryMarshal.AsBytes(contiguous.Span), src.Width, src.Height, dst, dstW, dstH);
+            return;
+        }
+        ResampleBilinearRgba8ScalarFromMemory2D(src, dst, dstW, dstH);
+    }
+
+    internal static void ResampleBilinearRgba8Scalar(ReadOnlySpan<byte> src, int srcW, int srcH, Span<byte> dst, int dstW, int dstH)
+    {
+        int strideBytes = srcW * 4;
+        float scaleX = (float)srcW / dstW;
+        float scaleY = (float)srcH / dstH;
+
+        for (int y = 0; y < dstH; y++)
+        {
+            float fy = (y + 0.5f) * scaleY - 0.5f;
+            int y0 = (int)MathF.Floor(fy); int y1 = y0 + 1;
+            float wy = fy - y0;
+            if (y0 < 0) y0 = 0; if (y1 >= srcH) y1 = srcH - 1;
+
+            var row0 = src.Slice(y0 * strideBytes, strideBytes);
+            var row1 = src.Slice(y1 * strideBytes, strideBytes);
+            int dstRow = y * dstW * 4;
+            float iwy = 1 - wy;
+
+            for (int x = 0; x < dstW; x++)
+            {
+                float fx = (x + 0.5f) * scaleX - 0.5f;
+                int x0 = (int)MathF.Floor(fx); int x1 = x0 + 1;
+                float wx = fx - x0;
+                if (x0 < 0) x0 = 0; if (x1 >= srcW) x1 = srcW - 1;
+
+                int p0 = x0 * 4, p1 = x1 * 4, dp = dstRow + x * 4;
+                float iwx = 1 - wx;
+
+                float r = (row0[p0]     * iwx + row0[p1]     * wx) * iwy + (row1[p0]     * iwx + row1[p1]     * wx) * wy;
+                float g = (row0[p0 + 1] * iwx + row0[p1 + 1] * wx) * iwy + (row1[p0 + 1] * iwx + row1[p1 + 1] * wx) * wy;
+                float b = (row0[p0 + 2] * iwx + row0[p1 + 2] * wx) * iwy + (row1[p0 + 2] * iwx + row1[p1 + 2] * wx) * wy;
+                float a = (row0[p0 + 3] * iwx + row0[p1 + 3] * wx) * iwy + (row1[p0 + 3] * iwx + row1[p1 + 3] * wx) * wy;
+
+                dst[dp]     = (byte)Math.Clamp(r, 0, 255);
+                dst[dp + 1] = (byte)Math.Clamp(g, 0, 255);
+                dst[dp + 2] = (byte)Math.Clamp(b, 0, 255);
+                dst[dp + 3] = (byte)Math.Clamp(a, 0, 255);
+            }
+        }
+    }
+
+    /// Strided-Memory2D fallback for the rare case where TryGetMemory returns false.
+    static void ResampleBilinearRgba8ScalarFromMemory2D(Memory2D<ColorRgba32> src, Span<byte> dst, int dstW, int dstH)
     {
         int srcW = src.Width;
         int srcH = src.Height;
@@ -463,5 +614,151 @@ public class DDTImage
                 dst[dp + 3] = (byte)Math.Clamp(a, 0, 255);
             }
         }
+    }
+
+    internal static void ResampleBilinearRgba8Simd(Memory2D<ColorRgba32> src, byte[] dst, int dstW, int dstH)
+    {
+        if (src.TryGetMemory(out var contiguous))
+        {
+            ResampleBilinearRgba8Simd(MemoryMarshal.AsBytes(contiguous.Span), src.Width, src.Height, dst, dstW, dstH);
+            return;
+        }
+        ResampleBilinearRgba8SimdFromMemory2D(src, dst, dstW, dstH);
+    }
+
+    /// SSE2 bilinear. Float ops follow the scalar evaluation order
+    /// (top = c00*iwx + c01*wx; bot = c10*iwx + c11*wx; out = top*iwy + bot*wy)
+    /// to stay bit-identical to the scalar path; clamp via PackSignedSaturate
+    /// / PackUnsignedSaturate is identity for in-range values.
+    internal static void ResampleBilinearRgba8Simd(ReadOnlySpan<byte> src, int srcW, int srcH, Span<byte> dst, int dstW, int dstH)
+    {
+        int strideBytes = srcW * 4;
+        float scaleX = (float)srcW / dstW;
+        float scaleY = (float)srcH / dstH;
+
+        var vMax = Vector128.Create(255f);
+        var vZero = Vector128<float>.Zero;
+
+        for (int y = 0; y < dstH; y++)
+        {
+            float fy = (y + 0.5f) * scaleY - 0.5f;
+            int y0 = (int)MathF.Floor(fy); int y1 = y0 + 1;
+            float wy = fy - y0;
+            if (y0 < 0) y0 = 0; if (y1 >= srcH) y1 = srcH - 1;
+
+            var row0 = src.Slice(y0 * strideBytes, strideBytes);
+            var row1 = src.Slice(y1 * strideBytes, strideBytes);
+            int dstRow = y * dstW * 4;
+            float iwy = 1 - wy;
+            var vWy = Vector128.Create(wy);
+            var vIwy = Vector128.Create(iwy);
+
+            for (int x = 0; x < dstW; x++)
+            {
+                float fx = (x + 0.5f) * scaleX - 0.5f;
+                int x0 = (int)MathF.Floor(fx); int x1 = x0 + 1;
+                float wx = fx - x0;
+                if (x0 < 0) x0 = 0; if (x1 >= srcW) x1 = srcW - 1;
+
+                int p0 = x0 * 4, p1 = x1 * 4, dp = dstRow + x * 4;
+                var vWx = Vector128.Create(wx);
+                var vIwx = Vector128.Create(1 - wx);
+
+                var c00 = LoadPixelToFloat(row0, p0);
+                var c01 = LoadPixelToFloat(row0, p1);
+                var c10 = LoadPixelToFloat(row1, p0);
+                var c11 = LoadPixelToFloat(row1, p1);
+
+                var top = Vector128.Add(Vector128.Multiply(c00, vIwx), Vector128.Multiply(c01, vWx));
+                var bot = Vector128.Add(Vector128.Multiply(c10, vIwx), Vector128.Multiply(c11, vWx));
+                var blended = Vector128.Add(Vector128.Multiply(top, vIwy), Vector128.Multiply(bot, vWy));
+
+                var clamped = Vector128.Min(Vector128.Max(blended, vZero), vMax);
+                var asInt32 = Sse2.ConvertToVector128Int32WithTruncation(clamped);
+                var asInt16 = Sse2.PackSignedSaturate(asInt32, asInt32);
+                var asByte = Sse2.PackUnsignedSaturate(asInt16, asInt16);
+                uint packed = asByte.AsUInt32().GetElement(0);
+                Unsafe.WriteUnaligned(ref dst[dp], packed);
+            }
+        }
+    }
+
+    /// Strided-Memory2D SIMD fallback for the rare case where TryGetMemory returns false.
+    static void ResampleBilinearRgba8SimdFromMemory2D(Memory2D<ColorRgba32> src, Span<byte> dst, int dstW, int dstH)
+    {
+        int srcW = src.Width;
+        int srcH = src.Height;
+        float scaleX = (float)srcW / dstW;
+        float scaleY = (float)srcH / dstH;
+        var srcSpan = src.Span;
+
+        var vMax = Vector128.Create(255f);
+        var vZero = Vector128<float>.Zero;
+
+        for (int y = 0; y < dstH; y++)
+        {
+            float fy = (y + 0.5f) * scaleY - 0.5f;
+            int y0 = (int)MathF.Floor(fy); int y1 = y0 + 1;
+            float wy = fy - y0;
+            if (y0 < 0) y0 = 0; if (y1 >= srcH) y1 = srcH - 1;
+
+            var row0 = MemoryMarshal.AsBytes(srcSpan.GetRowSpan(y0));
+            var row1 = MemoryMarshal.AsBytes(srcSpan.GetRowSpan(y1));
+            int dstRow = y * dstW * 4;
+            float iwy = 1 - wy;
+            var vWy = Vector128.Create(wy);
+            var vIwy = Vector128.Create(iwy);
+
+            for (int x = 0; x < dstW; x++)
+            {
+                float fx = (x + 0.5f) * scaleX - 0.5f;
+                int x0 = (int)MathF.Floor(fx); int x1 = x0 + 1;
+                float wx = fx - x0;
+                if (x0 < 0) x0 = 0; if (x1 >= srcW) x1 = srcW - 1;
+
+                int p0 = x0 * 4, p1 = x1 * 4, dp = dstRow + x * 4;
+                var vWx = Vector128.Create(wx);
+                var vIwx = Vector128.Create(1 - wx);
+
+                var c00 = LoadPixelToFloat(row0, p0);
+                var c01 = LoadPixelToFloat(row0, p1);
+                var c10 = LoadPixelToFloat(row1, p0);
+                var c11 = LoadPixelToFloat(row1, p1);
+
+                var top = Vector128.Add(Vector128.Multiply(c00, vIwx), Vector128.Multiply(c01, vWx));
+                var bot = Vector128.Add(Vector128.Multiply(c10, vIwx), Vector128.Multiply(c11, vWx));
+                var blended = Vector128.Add(Vector128.Multiply(top, vIwy), Vector128.Multiply(bot, vWy));
+
+                var clamped = Vector128.Min(Vector128.Max(blended, vZero), vMax);
+                var asInt32 = Sse2.ConvertToVector128Int32WithTruncation(clamped);
+                var asInt16 = Sse2.PackSignedSaturate(asInt32, asInt32);
+                var asByte = Sse2.PackUnsignedSaturate(asInt16, asInt16);
+                uint packed = asByte.AsUInt32().GetElement(0);
+                Unsafe.WriteUnaligned(ref dst[dp], packed);
+            }
+        }
+    }
+
+    /// Loads 4 packed RGBA bytes and zero-extends to one float per channel.
+    /// Byte-to-float is lossless for [0,255] so the SSE4.1 and SSE2 paths
+    /// produce identical floats.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    static Vector128<float> LoadPixelToFloat(ReadOnlySpan<byte> row, int offset)
+    {
+        uint packed = Unsafe.ReadUnaligned<uint>(ref Unsafe.AsRef(in row[offset]));
+        Vector128<int> asInt32;
+        if (Sse41.IsSupported)
+        {
+            asInt32 = Sse41.ConvertToVector128Int32(Vector128.CreateScalar(packed).AsByte());
+        }
+        else
+        {
+            asInt32 = Vector128.Create(
+                (int)(packed & 0xFF),
+                (int)((packed >> 8) & 0xFF),
+                (int)((packed >> 16) & 0xFF),
+                (int)((packed >> 24) & 0xFF));
+        }
+        return Sse2.ConvertToVector128Single(asInt32);
     }
 }
