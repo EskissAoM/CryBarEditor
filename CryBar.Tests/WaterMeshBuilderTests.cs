@@ -56,9 +56,9 @@ public class WaterMeshBuilderTests
 
         var water = WaterMeshBuilder.Build(NewTerrain(2, 2, heights))!;
 
-        // ZBias 0.3 -> emitted Y = 5 - 0.3 = 4.7
+        // ZBias 0.7 -> emitted Y = 5 - 0.7 = 4.3
         for (int i = 0; i < water.VertexCount; i++)
-            Assert.Equal(4.7f, water.Vertices[i * 3 + 1], 4);
+            Assert.Equal(4.3f, water.Vertices[i * 3 + 1], 4);
     }
 
     static ScenarioTerrain NewTerrain(int mapX, int mapZ, float[] waterHeights)

@@ -3,11 +3,11 @@ namespace CryBar.Scenario;
 public static class WaterMeshBuilder
 {
     // Bias water level down so shore terrain wins the depth race (avoids the
-    // green/blue flicker on co-planar surfaces). Larger than a tiny epsilon so
-    // mip-noise and float rounding can't put water surface above ground level
-    // mid-fragment. Visually water is 0.3 below the median data height -- small
-    // on a 128-tile map but big enough to suppress flicker reliably.
-    const float ZBias = 0.3f;
+    // green/blue flicker on co-planar surfaces). The renderer scales Y by ~0.5
+    // for visual parity with the in-game camera, so this raw-unit bias has to
+    // be roughly 2x what the viewport "feels" -- 0.7 here lands water visibly
+    // below shore without exposing terrain seams.
+    const float ZBias = 0.7f;
 
     public static WaterMesh? Build(ScenarioTerrain terrain)
     {
