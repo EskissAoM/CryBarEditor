@@ -226,6 +226,7 @@
 							 SelectionMode="Multiple"
 							 SelectedItems="{Binding SelectedRootFileEntries, Mode=TwoWay}"
 							 SelectedItem="{Binding SelectedRootFileEntry, Mode=TwoWay}"
+							 Tapped="RootListBox_Tapped"
 							 ContextMenu="{StaticResource SharedContextMenu}">
 						<ListBox.ItemTemplate>
 							<DataTemplate x:DataType="cc:RootFileEntry">
@@ -306,6 +307,7 @@
 								SelectionMode="Multiple"
 								SelectedItems="{Binding SelectedBarFileEntries, Mode=TwoWay}"
 								SelectedItem="{Binding SelectedBarEntry, Mode=TwoWay}"
+								Tapped="BarListBox_Tapped"
 								ContextMenu="{StaticResource SharedContextMenu}">
 							<ListBox.ItemTemplate>
 								<DataTemplate x:DataType="cbar:BarFileEntry">

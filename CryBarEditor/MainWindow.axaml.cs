@@ -61,6 +61,10 @@ public partial class MainWindow : SimpleWindow
     BarFileEntry? _selectedBarEntry = null;
     FMODEvent? _selectedBankEntry = null;
     RootFileEntry? _selectedRootFileEntry = null;
+    // Currently-rendered preview item; can differ from SelectedRoot/Bar when the
+    // other panel previewed something since. Compared by reference, so the choice
+    // of `object` over a sealed union is fine.
+    object? _currentlyPreviewedItem = null;
     List<RootFileEntry>? _loadedRootFiles = null;
     public int TotalRootFileCount => _loadedRootFiles?.Count ?? 0;
 

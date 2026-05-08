@@ -67,6 +67,9 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     public event Action<IReadOnlyList<MarkerLabel>>? MarkersProjected;
     readonly List<MarkerLabel> _markerLabelBuffer = new();
 
+    // Fires when the GL context tears down; hosts must drop cached GL handles here.
+    public event Action? GlContextLost;
+
     // Gizmo GL resources
     int _gizmoProgram;
     int _gizmoVao, _gizmoVbo;
@@ -542,6 +545,9 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     protected override void OnOpenGlDeinit(GlInterface gl)
     {
         if (!_glInitialized) return;
+
+        // Notify hosts first so they drop their GL-bound caches before tear-down.
+        GlContextLost?.Invoke();
 
         gl.BindBuffer(GL_ARRAY_BUFFER, 0);
         gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
