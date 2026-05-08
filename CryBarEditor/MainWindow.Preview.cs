@@ -335,17 +335,20 @@ public partial class MainWindow
                     await SetImagePreview(null);
 
                     var mem = data.Memory;
-                    var (scenText, scenExt, scenNote) = await Task.Run(() =>
+                    var scenario = await Task.Run(() => new ScenarioFile(mem));
+                    if (scenario.Parsed)
                     {
-                        var scenario = new ScenarioFile(mem);
-                        if (scenario.Parsed)
-                            return (ScenarioFile.StripBinaryForPreview(scenario.ToXml()), ".xml", "(AoM Scenario, converted to XML)");
-                        return ("Failed to parse scenario file", ".txt", "");
-                    });
-                    PreviewedFileNote = scenNote;
-                    ShowExperimentalWarning = scenExt == ".xml";
-                    text = scenText;
-                    ext = scenExt;
+                        ShowScenarioPreview(scenario);
+                        PreviewedFileNote = "(AoM Scenario, 3D + XML)";
+                        ShowExperimentalWarning = true;
+                        // Tab control owns the preview now; skip the legacy text-editor path.
+                        return;
+                    }
+
+                    HideScenarioPreview();
+                    text = "Failed to parse scenario file";
+                    ext = ".txt";
+                    PreviewedFileNote = "";
                 }
                 else if (ext == ".trg")
                 {
@@ -656,6 +659,12 @@ public partial class MainWindow
         _tmmTabControl.IsVisible = false;
         _flatPreview.IsVisible = true;
         _meshConversionCts?.Cancel();
+
+        // Scenario tab is also a structured preview; hide it whenever the editor
+        // is switching back to flat-text mode so call sites don't need to know
+        // which structured panel was visible before.
+        if (_scenarioTabControl is not null && _scenarioTabControl.IsVisible)
+            HideScenarioPreview();
     }
 
     void Update3DStatus(string text)
