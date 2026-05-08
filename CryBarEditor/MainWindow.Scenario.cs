@@ -61,6 +61,8 @@ public partial class MainWindow
         var gl = new GlScenarioPreviewControl();
         gl.CursorHit += hit =>
             Dispatcher.UIThread.Post(() => _scenarioInspector.SetCursor(hit, _scenarioData));
+        gl.EntitySelected += entity =>
+            Dispatcher.UIThread.Post(() => _scenarioInspector.SetEntity(entity));
         gl.LoadProgressChanged += p =>
             Dispatcher.UIThread.Post(() => UpdateScenarioProgress(p));
         gl.ErrorChanged += msg =>

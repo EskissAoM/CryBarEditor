@@ -51,17 +51,18 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     int _heightProgram;
     int _heightVao, _heightVbo, _heightEbo;
-    int _uMvp, _uTexArray;
+    int _uMvp, _uTexArray, _uYScale;
 
     int _waterProgram;
     int _waterVao, _waterVbo, _waterEbo;
-    int _uWaterMvp;
+    int _uWaterMvp, _uWaterYScale;
     int _waterIndexCount;
     bool _waterUploaded;
 
     int _billboardProgram;
     int _billboardVao, _billboardQuadVbo, _billboardInstanceVbo;
-    int _uBillboardMvp, _uBillboardSize, _uBillboardCamPos, _uBillboardFadeNear, _uBillboardFadeFar;
+    int _uBillboardMvp, _uBillboardSize, _uBillboardCamPos, _uBillboardFadeNear, _uBillboardFadeFar, _uBillboardSelected, _uBillboardYScale;
+    int _selectedEntityIndex = -1;
     bool _entitiesUploaded;
     int _entityCount;
     float _avgHeight;
@@ -72,7 +73,9 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     bool _glInitialized;
 
     bool _leftDragging, _rightDragging;
+    bool _leftDragMoved;
     Avalonia.Point _lastPointerPos;
+    Avalonia.Point _leftPressPos;
 
     readonly ConcurrentQueue<Action<GlInterface>> _glActionQueue = new();
 
@@ -96,6 +99,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _meshUploaded = false;
         _waterUploaded = false;
         _entitiesUploaded = false;
+        _selectedEntityIndex = -1;
         if (data is not null)
         {
             float cx = data.Terrain.MapSizeX * 0.5f;
@@ -126,6 +130,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         layout(location = 3) in vec3 aWeights;
 
         uniform mat4 uMVP;
+        uniform float uYScale;
 
         out vec3 vWorld;
         // Slice indices use flat interpolation -- linear interpolation produces
@@ -135,8 +140,9 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         out vec4 vWeights;
 
         void main() {
-            gl_Position = uMVP * vec4(aPos, 1.0);
-            vWorld = aPos;
+            vec3 p = vec3(aPos.x, aPos.y * uYScale, aPos.z);
+            gl_Position = uMVP * vec4(p, 1.0);
+            vWorld = p;
             vSlices = aSlices;
             // 4th weight is implicit so the data fits in 12 floats per vertex
             float w4 = clamp(1.0 - aWeights.x - aWeights.y - aWeights.z, 0.0, 1.0);
@@ -153,20 +159,25 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         uniform vec3 uCamPos;
         uniform float uFadeNear;
         uniform float uFadeFar;
+        uniform int uSelectedIdx;
+        uniform float uYScale;
         out vec2 vUv;
         out vec4 vColor;
         out float vFade;
+        flat out int vSelected;
         void main() {
-            // Lift the marker above the terrain so slope tiles don't slice the disc.
-            vec3 wp = aWorldPos + vec3(0.0, 0.4, 0.0);
+            // Apply the same Y scale as terrain, then lift above the (already scaled) ground.
+            vec3 wp = vec3(aWorldPos.x, aWorldPos.y * uYScale + 0.4, aWorldPos.z);
+            // Selected entity gets a 50% bigger disc so it stands out at any zoom.
+            float sizeMul = (gl_InstanceID == uSelectedIdx) ? 1.5 : 1.0;
             vec4 clip = uMVP * vec4(wp, 1.0);
-            // Screen-stable size: aQuad is in [-1,1], scaled by uSize in NDC
-            clip.xy += aQuad * uSize * clip.w;
+            clip.xy += aQuad * uSize * sizeMul * clip.w;
             gl_Position = clip;
             vUv = aQuad;
             vColor = aColor;
             float d = distance(uCamPos, wp);
             vFade = 1.0 - smoothstep(uFadeNear, uFadeFar, d);
+            vSelected = (gl_InstanceID == uSelectedIdx) ? 1 : 0;
         }
         """;
 
@@ -174,14 +185,21 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         in vec2 vUv;
         in vec4 vColor;
         in float vFade;
+        flat in int vSelected;
         out vec4 fragColor;
         void main() {
             float r = length(vUv);
             if (r > 1.0) discard;
             float edge = smoothstep(0.92, 1.0, r);
             vec4 col = mix(vColor, vec4(0.0, 0.0, 0.0, 1.0), edge);
-            // Distance fade: closer entities are opaque, far ones drop toward 0.35.
             col.a *= mix(0.35, 1.0, clamp(vFade, 0.0, 1.0));
+            if (vSelected == 1) {
+                // Bright white ring at the disc edge + fade override so the
+                // selection stays readable even on far entities.
+                float ring = smoothstep(0.78, 0.92, r) * (1.0 - smoothstep(0.92, 1.0, r));
+                col.rgb = mix(col.rgb, vec3(1.0, 1.0, 1.0), ring);
+                col.a = max(col.a, 0.95);
+            }
             fragColor = col;
         }
         """;
@@ -189,7 +207,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     const string WaterVertexShaderBody = """
         layout(location = 0) in vec3 aPos;
         uniform mat4 uMVP;
-        void main() { gl_Position = uMVP * vec4(aPos, 1.0); }
+        uniform float uYScale;
+        void main() { gl_Position = uMVP * vec4(aPos.x, aPos.y * uYScale, aPos.z, 1.0); }
         """;
 
     const string WaterFragmentShaderBody = """
@@ -271,6 +290,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _heightProgram = CreateProgram(gl, vsPreamble + VertexShaderBody, fsPreamble + FragmentShaderBody);
         _uMvp      = gl.GetUniformLocationString(_heightProgram, "uMVP");
         _uTexArray = gl.GetUniformLocationString(_heightProgram, "uTexArray");
+        _uYScale   = gl.GetUniformLocationString(_heightProgram, "uYScale");
 
         _heightVao = gl.GenVertexArray();
         _heightVbo = gl.GenBuffer();
@@ -279,7 +299,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _texArray = gl.GenTexture();
 
         _waterProgram = CreateProgram(gl, vsPreamble + WaterVertexShaderBody, fsPreamble + WaterFragmentShaderBody);
-        _uWaterMvp = gl.GetUniformLocationString(_waterProgram, "uMVP");
+        _uWaterMvp    = gl.GetUniformLocationString(_waterProgram, "uMVP");
+        _uWaterYScale = gl.GetUniformLocationString(_waterProgram, "uYScale");
         _waterVao = gl.GenVertexArray();
         _waterVbo = gl.GenBuffer();
         _waterEbo = gl.GenBuffer();
@@ -290,6 +311,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _uBillboardCamPos   = gl.GetUniformLocationString(_billboardProgram, "uCamPos");
         _uBillboardFadeNear = gl.GetUniformLocationString(_billboardProgram, "uFadeNear");
         _uBillboardFadeFar  = gl.GetUniformLocationString(_billboardProgram, "uFadeFar");
+        _uBillboardSelected = gl.GetUniformLocationString(_billboardProgram, "uSelectedIdx");
+        _uBillboardYScale   = gl.GetUniformLocationString(_billboardProgram, "uYScale");
         _billboardVao = gl.GenVertexArray();
         _billboardQuadVbo = gl.GenBuffer();
         _billboardInstanceVbo = gl.GenBuffer();
@@ -382,6 +405,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
         gl.UseProgram(_heightProgram);
         gl.UniformMatrix4fv(_uMvp, 1, false, &mvpCopy.M11);
+        gl.Uniform1f(_uYScale, HeightScale);
 
         gl.ActiveTexture(GL_TEXTURE0);
         gl.BindTexture(GL_TEXTURE_2D_ARRAY, _texArray);
@@ -465,6 +489,12 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     // resolves to a screen-stable billboard ~3% of the viewport wide.
     const float BillboardHalfSizeNdc = 0.015f;
 
+    // Visual scale applied to terrain Y so peaks sit at game-comparable heights.
+    // Raw scenario heights render ~2x too tall in our viewport vs the in-game
+    // camera projection; 0.5 lines up the example mountain footprint with how
+    // the game renders the same data.
+    const float HeightScale = 0.5f;
+
     unsafe void DrawEntities(GlInterface gl, Matrix4x4 mvpCopy, Vector3 eyePos)
     {
         if (_glDrawArraysInstanced == null) return;
@@ -488,6 +518,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             _glUniform3f(_uBillboardCamPos, eyePos.X, eyePos.Y, eyePos.Z);
         gl.Uniform1f(_uBillboardFadeNear, fadeNear);
         gl.Uniform1f(_uBillboardFadeFar, fadeFar);
+        gl.Uniform1i(_uBillboardSelected, _selectedEntityIndex);
+        gl.Uniform1f(_uBillboardYScale, HeightScale);
         gl.BindVertexArray(_billboardVao);
         _glDrawArraysInstanced(GL_TRIANGLES, 0, 6, _entityCount);
         gl.BindVertexArray(0);
@@ -512,6 +544,9 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     public event Action<WorldRayHit?>? CursorHit;
 
+    /// <summary>Fires when the user clicks an entity billboard (or empty space, with `null`).</summary>
+    public event Action<EntityMarker?>? EntitySelected;
+
     public event Action<ScenarioTextureLoader.LoadProgress>? LoadProgressChanged;
     public event Action<string?>? ErrorChanged;
 
@@ -527,6 +562,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (_glBlendFunc != null) _glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         gl.UseProgram(_waterProgram);
         gl.UniformMatrix4fv(_uWaterMvp, 1, false, &mvpCopy.M11);
+        gl.Uniform1f(_uWaterYScale, HeightScale);
         gl.BindVertexArray(_waterVao);
         gl.DrawElements(GL_TRIANGLES, _waterIndexCount, GL_UNSIGNED_INT_TYPE, IntPtr.Zero);
         gl.Disable(GL_BLEND);
@@ -662,7 +698,12 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         base.OnPointerPressed(e);
         var props = e.GetCurrentPoint(this).Properties;
         _lastPointerPos = e.GetPosition(this);
-        if (props.IsLeftButtonPressed) _leftDragging = true;
+        if (props.IsLeftButtonPressed)
+        {
+            _leftDragging = true;
+            _leftDragMoved = false;
+            _leftPressPos = _lastPointerPos;
+        }
         if (props.IsRightButtonPressed) _rightDragging = true;
         e.Handled = true;
     }
@@ -671,8 +712,11 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     {
         base.OnPointerReleased(e);
         var props = e.GetCurrentPoint(this).Properties;
+        bool wasLeftDown = _leftDragging;
         if (!props.IsLeftButtonPressed) _leftDragging = false;
         if (!props.IsRightButtonPressed) _rightDragging = false;
+        if (wasLeftDown && !_leftDragMoved)
+            PickEntity(e.GetPosition(this));
         e.Handled = true;
     }
 
@@ -686,6 +730,9 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
         if (_leftDragging)
         {
+            // Treat as drag once movement crosses a small dead-zone.
+            double moved = Math.Abs(pos.X - _leftPressPos.X) + Math.Abs(pos.Y - _leftPressPos.Y);
+            if (moved > 4) _leftDragMoved = true;
             _camera.Rotate(-dx * 0.3f, dy * 0.3f);
             RequestNextFrameRendering();
             e.Handled = true;
@@ -700,6 +747,60 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         {
             EmitCursorHit(pos);
         }
+    }
+
+    void PickEntity(Avalonia.Point pos)
+    {
+        if (_data is null || _entityCount == 0) { SetSelected(null); return; }
+        var bounds = Bounds;
+        if (bounds.Width <= 0 || bounds.Height <= 0) { SetSelected(null); return; }
+
+        float aspect = (float)(bounds.Width / bounds.Height);
+        var view = _camera.GetViewMatrix();
+        var proj = _camera.GetProjectionMatrix(aspect);
+        var mvp = view * proj;
+
+        // Billboards are screen-stable so do the test in screen pixels:
+        // project each entity to NDC, convert to window-space, pick the
+        // closest within the rendered disc radius (allow a 1.5x margin).
+        float halfPx = (float)(BillboardHalfSizeNdc * bounds.Height * 0.5);
+        float maxPx = halfPx * 1.5f;
+        float bestDistSq = maxPx * maxPx;
+        int best = -1;
+        for (int i = 0; i < _entityCount; i++)
+        {
+            var m = _data.Entities[i];
+            // Mirror the X<->Z swap, Y scale, and lift used in UploadEntities + the vertex shader.
+            var wp = new Vector4(m.Position.Z * 0.5f, m.Position.Y * HeightScale + 0.4f, m.Position.X * 0.5f, 1f);
+            var clip = Vector4.Transform(wp, mvp);
+            if (clip.W <= 0) continue;
+            float ndcX = clip.X / clip.W;
+            float ndcY = clip.Y / clip.W;
+            // Off-screen? skip.
+            if (ndcX < -1 || ndcX > 1 || ndcY < -1 || ndcY > 1) continue;
+
+            float screenX = (float)((ndcX * 0.5 + 0.5) * bounds.Width);
+            float screenY = (float)((1.0 - (ndcY * 0.5 + 0.5)) * bounds.Height);
+            float dx = (float)(screenX - pos.X);
+            float dy = (float)(screenY - pos.Y);
+            float distSq = dx * dx + dy * dy;
+            if (distSq < bestDistSq)
+            {
+                bestDistSq = distSq;
+                best = i;
+            }
+        }
+
+        SetSelected(best);
+    }
+
+    void SetSelected(int? index)
+    {
+        int newIdx = index ?? -1;
+        if (newIdx == _selectedEntityIndex) return;
+        _selectedEntityIndex = newIdx;
+        EntitySelected?.Invoke(newIdx >= 0 && _data is not null ? _data.Entities[newIdx] : null);
+        RequestNextFrameRendering();
     }
 
     void EmitCursorHit(Avalonia.Point pos)
@@ -729,8 +830,9 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         var dir = Vector3.Normalize(farW - nearW);
 
         // Plane intersect at y = avg height; cheap proxy for a real heightmap raycast.
+        // The rendered terrain is scaled by HeightScale, so the plane Y has to match.
         if (MathF.Abs(dir.Y) < 1e-5f) { sub(null); return; }
-        float t = (_avgHeight - nearW.Y) / dir.Y;
+        float t = (_avgHeight * HeightScale - nearW.Y) / dir.Y;
         if (t < 0) { sub(null); return; }
         var hit = nearW + dir * t;
 

@@ -79,19 +79,18 @@ public static class EntityOverlayBuilder
     static bool TryParseH1(ReadOnlySpan<byte> h1, out Vector3 pos, out int playerId, out int protoIndex)
     {
         pos = default; playerId = 0; protoIndex = -1;
-        if (h1.Length < 22) return false;
 
-        var enSize = (int)BinaryPrimitives.ReadUInt32LittleEndian(h1.Slice(2));
-        if (6 + enSize > h1.Length || enSize < 52) return false;
+        if (!ScenarioFile.GetEntityOffsets(h1, out int posOff, out _, out int enEnd))
+            return false;
 
-        protoIndex = BinaryPrimitives.ReadInt32LittleEndian(h1.Slice(6));
-        playerId = BinaryPrimitives.ReadInt32LittleEndian(h1.Slice(14));
+        // playerId is a single byte at offset 14, NOT an int32 -- reading 4 bytes
+        // here used to pull garbage in for high values, breaking color/team grouping.
+        playerId = h1[14];
 
-        var unk2Len = (int)BinaryPrimitives.ReadUInt32LittleEndian(h1.Slice(18));
-        if (unk2Len < 0 || unk2Len > 1000) return false;
-
-        int posOff = 22 + unk2Len;
-        if (posOff + 12 > h1.Length) return false;
+        // protoIndex lives in the P1 sub-section (new format) or inline immediately
+        // after EN end (old format). The unitIdCopy at offset 6 is unrelated.
+        if (ScenarioFile.TryReadProtoIndex(h1, enEnd, out var pi))
+            protoIndex = (int)pi;
 
         pos = new Vector3(
             BitConverter.ToSingle(h1.Slice(posOff, 4)),
