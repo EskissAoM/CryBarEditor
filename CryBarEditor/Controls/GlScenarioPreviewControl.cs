@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Numerics;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.OpenGL;
@@ -300,6 +301,50 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
         _allocatedSlices = slices;
         data.TextureArray = _texArray;
+    }
+
+    // Replaces slice `sliceIndex` in the texture array with `rgba` (256x256x4 bytes).
+    // Returns a task that completes once the upload has executed on the GL thread.
+    // Per-call mipmap regeneration is acceptable here -- typical scenarios have
+    // ~20 slices, so the overhead is bounded; switching to a single batched
+    // regenerate-on-completion pass is a follow-up if profiling demands it.
+    public Task UploadSliceAsync(int sliceIndex, byte[] rgba)
+    {
+        if (rgba is null || rgba.Length != SliceBytes)
+            return Task.CompletedTask;
+        if (sliceIndex < 0)
+            return Task.CompletedTask;
+
+        var tcs = new TaskCompletionSource();
+        QueueGlAction(gl =>
+        {
+            try
+            {
+                if (!_glInitialized || _texArray == 0 || sliceIndex >= _allocatedSlices)
+                {
+                    tcs.SetResult();
+                    return;
+                }
+                UploadSliceCore(gl, sliceIndex, rgba);
+                tcs.SetResult();
+            }
+            catch (Exception ex) { tcs.SetException(ex); }
+        });
+        return tcs.Task;
+    }
+
+    unsafe void UploadSliceCore(GlInterface gl, int sliceIndex, byte[] rgba)
+    {
+        if (_glTexSubImage3D == null) return;
+
+        gl.BindTexture(GL_TEXTURE_2D_ARRAY, _texArray);
+        fixed (byte* p = rgba)
+            _glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, sliceIndex, SliceSize, SliceSize, 1, GL_RGBA, GL_UNSIGNED_BYTE, p);
+
+        if (_glGenerateMipmap != null)
+            _glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+
+        RequestNextFrameRendering();
     }
 
     protected override void OnPointerPressed(Avalonia.Input.PointerPressedEventArgs e)
