@@ -63,6 +63,12 @@ public static class TerrainMeshBuilder
             // wD is implicit: 1 - (wA + wB + wC)
         }
 
+        // Split each tile along the v00<->v11 diagonal and arrange both triangles
+        // to end with v00. Under OpenGL's default GL_LAST_VERTEX_CONVENTION the
+        // last vertex is the provoking vertex for flat-qualified varyings, so both
+        // halves of a tile see the same vSlices array (= the 4 tiles meeting at
+        // v00). This eliminates the diagonal in-tile hatch caused by the two halves
+        // sampling different slice neighborhoods.
         var indices = new uint[tileCount * 6];
         int ii = 0;
         for (int tz = 0; tz < mapZ; tz++)
@@ -73,13 +79,13 @@ public static class TerrainMeshBuilder
             uint v01 = v00 + (uint)vCols;
             uint v11 = v01 + 1;
 
-            indices[ii++] = v00;
-            indices[ii++] = v01;
-            indices[ii++] = v10;
-
-            indices[ii++] = v10;
             indices[ii++] = v01;
             indices[ii++] = v11;
+            indices[ii++] = v00;
+
+            indices[ii++] = v11;
+            indices[ii++] = v10;
+            indices[ii++] = v00;
         }
 
         return new TerrainMesh

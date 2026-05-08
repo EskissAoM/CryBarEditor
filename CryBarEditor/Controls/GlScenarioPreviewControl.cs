@@ -226,8 +226,11 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         out vec4 fragColor;
 
         void main() {
-            // Tile-local UV from world XZ. fract gives [0,1) inside each tile.
-            vec2 uv = fract(vWorld.xz);
+            // Texture repeats every TileScale tiles. AoMR scales textures to span
+            // multiple tiles so the same data isn't visibly tiled per cell; 0.25
+            // (=> 4 tiles per repeat) reads close to the in-game grain.
+            const float TileScale = 0.25;
+            vec2 uv = fract(vWorld.xz * TileScale);
 
             // Round interpolated slice index so each fragment samples whole slices;
             // smooth cross-tile blending would need flat-shaded slices + unshared verts.
