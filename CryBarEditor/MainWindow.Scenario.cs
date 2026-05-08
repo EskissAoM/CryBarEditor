@@ -63,8 +63,6 @@ public partial class MainWindow
             Dispatcher.UIThread.Post(() => _scenarioInspector.SetCursor(hit, _scenarioData));
         gl.EntitySelected += entity =>
             Dispatcher.UIThread.Post(() => _scenarioInspector.SetEntity(entity));
-        gl.LoadProgressChanged += p =>
-            Dispatcher.UIThread.Post(() => UpdateScenarioProgress(p));
         gl.ErrorChanged += msg =>
             Dispatcher.UIThread.Post(() =>
             {

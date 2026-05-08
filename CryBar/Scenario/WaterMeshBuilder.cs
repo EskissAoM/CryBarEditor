@@ -27,8 +27,12 @@ public static class WaterMeshBuilder
         // value is a "no-water override" the editor uses to carve dry holes
         // out of low-lying terrain.
         var isWater = new bool[tileCount];
+        int waterTiles = 0;
         for (int i = 0; i < tileCount && i < waterType.Length; i++)
-            isWater[i] = waterType[i] == 0;
+        {
+            if (waterType[i] == 0) { isWater[i] = true; waterTiles++; }
+        }
+        if (waterTiles == 0) return null;
 
         // Flood-fill water tiles into connected components. A scenario can
         // have several water bodies at different elevations (e.g. a lake at
@@ -40,17 +44,16 @@ public static class WaterMeshBuilder
         int compCount = AssignComponents(isWater, component, mapX, mapZ);
         if (compCount == 0) return null;
 
-        // Per-component median water level over the vertices touching its
-        // tiles. Median (vs mean) shrugs off shore vertices that dip below
-        // the surface.
         var compY = new float[compCount];
         ComputeComponentLevels(component, waterH, compY, mapX, mapZ, vCols);
 
-        var verts = new List<float>(64 * 3);
-        var indices = new List<uint>(64);
+        // Worst-case sizing: every water tile contributes 4 verts / 6 indices
+        // (no sharing between components; sharing inside a component shrinks it).
+        var verts = new List<float>(waterTiles * 4 * 3);
+        var indices = new List<uint>(waterTiles * 6);
         // Vertex map keyed by (component, vertex grid index): two abutting
         // bodies must not share a corner vertex because their y differs.
-        var vertexMap = new Dictionary<long, int>();
+        var vertexMap = new Dictionary<long, int>(waterTiles * 4);
 
         for (int tz = 0; tz < mapZ; tz++)
         for (int tx = 0; tx < mapX; tx++)
@@ -122,37 +125,56 @@ public static class WaterMeshBuilder
         int tileCount = mapX * mapZ;
         int compCount = compY.Length;
 
-        // Collect each component's vertex set. HashSet dedupes the four
-        // corners every tile contributes.
-        var compVerts = new HashSet<int>[compCount];
-        for (int i = 0; i < compCount; i++) compVerts[i] = new HashSet<int>();
+        // Tile count per component sizes each per-component sample buffer
+        // (worst case 4 corners per tile).
+        var tilesPerComp = new int[compCount];
         for (int t = 0; t < tileCount; t++)
         {
             int c = component[t];
-            if (c < 0) continue;
-            int tx = t % mapX, tz = t / mapX;
-            var set = compVerts[c];
-            set.Add(tz       * vCols + tx);
-            set.Add(tz       * vCols + tx + 1);
-            set.Add((tz + 1) * vCols + tx);
-            set.Add((tz + 1) * vCols + tx + 1);
+            if (c >= 0) tilesPerComp[c]++;
         }
 
+        // Pooled per-component sample arrays. Sampling each tile's 4 corners
+        // without dedupe over-weights interior vertices (4 samples vs 1 at the
+        // shore corner) -- which is what we want, since shore corners can dip
+        // below the true surface and interior is authoritative.
         var pool = System.Buffers.ArrayPool<float>.Shared;
+        var samples = new float[compCount][];
+        var sampleCounts = new int[compCount];
         for (int c = 0; c < compCount; c++)
+            samples[c] = pool.Rent(tilesPerComp[c] * 4);
+
+        try
         {
-            var verts = compVerts[c];
-            var buf = pool.Rent(verts.Count);
-            try
+            for (int t = 0; t < tileCount; t++)
             {
-                int n = 0;
-                foreach (int v in verts)
-                    if (waterH[v] > 0) buf[n++] = waterH[v];
-                if (n == 0) { compY[c] = float.NaN; continue; }
-                Array.Sort(buf, 0, n);
-                compY[c] = buf[n / 2] - ZBias;
+                int c = component[t];
+                if (c < 0) continue;
+                int tx = t % mapX, tz = t / mapX;
+                var arr = samples[c];
+                int n = sampleCounts[c];
+                float h00 = waterH[tz       * vCols + tx];
+                float h10 = waterH[tz       * vCols + tx + 1];
+                float h01 = waterH[(tz + 1) * vCols + tx];
+                float h11 = waterH[(tz + 1) * vCols + tx + 1];
+                if (h00 > 0) arr[n++] = h00;
+                if (h10 > 0) arr[n++] = h10;
+                if (h01 > 0) arr[n++] = h01;
+                if (h11 > 0) arr[n++] = h11;
+                sampleCounts[c] = n;
             }
-            finally { pool.Return(buf); }
+
+            for (int c = 0; c < compCount; c++)
+            {
+                int n = sampleCounts[c];
+                if (n == 0) { compY[c] = float.NaN; continue; }
+                Array.Sort(samples[c], 0, n);
+                compY[c] = samples[c][n / 2] - ZBias;
+            }
+        }
+        finally
+        {
+            for (int c = 0; c < compCount; c++) pool.Return(samples[c]);
         }
     }
 

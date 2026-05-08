@@ -565,11 +565,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     /// <summary>Fires when the user clicks an entity billboard (or empty space, with `null`).</summary>
     public event Action<EntityMarker?>? EntitySelected;
 
-    public event Action<ScenarioTextureLoader.LoadProgress>? LoadProgressChanged;
     public event Action<string?>? ErrorChanged;
-
-    public void RaiseLoadProgress(ScenarioTextureLoader.LoadProgress progress)
-        => LoadProgressChanged?.Invoke(progress);
 
     public void RaiseError(string? message) => ErrorChanged?.Invoke(message);
 

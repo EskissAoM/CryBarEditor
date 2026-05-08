@@ -88,16 +88,16 @@ public sealed class ScenarioTerrain
         if (off + 8 > t3.Length) return null;
         off += 8;
 
-        var tileGroups = ReadByteList(t3, ref off);
-        var tileSubs = ReadUShortList(t3, ref off);
-        var tilePt = ReadByteList(t3, ref off);
+        var tileGroups = ReadList<byte>(t3, ref off);
+        var tileSubs = ReadList<ushort>(t3, ref off);
+        var tilePt = ReadList<byte>(t3, ref off);
 
         // Skip WaterColors and WaterNames (cosmetic metadata for the water palette).
         SkipSizeSection(t3, ref off);
         SkipSizeSection(t3, ref off);
 
         // WaterType is per-tile: 0 = no water, non-zero = index into WaterNames.
-        var waterType = ReadByteList(t3, ref off);
+        var waterType = ReadList<byte>(t3, ref off);
 
         if (off + 4 > t3.Length) return null;
         var heightCount = (int)BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off));
@@ -154,7 +154,7 @@ public sealed class ScenarioTerrain
         return result;
     }
 
-    static byte[] ReadByteList(ReadOnlySpan<byte> data, ref int off)
+    static unsafe T[] ReadList<T>(ReadOnlySpan<byte> data, ref int off) where T : unmanaged
     {
         if (off + 6 > data.Length) return [];
         off += 2;
@@ -162,22 +162,9 @@ public sealed class ScenarioTerrain
         off += 4;
         if (off + size > data.Length || size < 4) return [];
         var count = (int)BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(off));
-        var elements = data.Slice(off + 4, Math.Min(count, size - 4)).ToArray();
-        off += size;
-        return elements;
-    }
-
-    static ushort[] ReadUShortList(ReadOnlySpan<byte> data, ref int off)
-    {
-        if (off + 6 > data.Length) return [];
-        off += 2;
-        var size = (int)BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(off));
-        off += 4;
-        if (off + size > data.Length || size < 4) return [];
-        var count = (int)BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(off));
-        var bytes = data.Slice(off + 4, Math.Min(count * 2, size - 4));
-        var result = new ushort[count];
-        var src = MemoryMarshal.Cast<byte, ushort>(bytes);
+        int payloadBytes = Math.Min(count * sizeof(T), size - 4);
+        var src = MemoryMarshal.Cast<byte, T>(data.Slice(off + 4, payloadBytes));
+        var result = new T[count];
         src.Slice(0, Math.Min(src.Length, count)).CopyTo(result);
         off += size;
         return result;

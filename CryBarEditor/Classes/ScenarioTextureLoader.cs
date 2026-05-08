@@ -1,10 +1,8 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using CryBar;
-using CryBar.Bar;
 using CryBar.Indexing;
 using CryBar.Utilities;
 
@@ -60,7 +58,8 @@ public sealed class ScenarioTextureLoader
     public sealed record LoadProgress(int Resolved, int Decoded, int Uploaded, int Total);
 
     // Top-level pipeline:
-    //   1) sequentially resolve names to DDT byte buffers via FileIndex
+    //   1) resolve names to DDT byte buffers via FileIndex (parallel; CachedBarFile
+    //      serializes per-stream access internally)
     //   2) decode all resolved buffers to RGBA8 in parallel
     //   3) upload each decoded slice via the GL-thread callback in encounter order
     public static async Task LoadAllAsync(
@@ -74,12 +73,17 @@ public sealed class ScenarioTextureLoader
         int total = names.Count;
 
         var resolved = new byte[]?[total];
-        for (int i = 0; i < total; i++)
+        int resolvedSoFar = 0;
+        await Parallel.ForAsync(0, total, new ParallelOptions
         {
-            ct.ThrowIfCancellationRequested();
-            resolved[i] = await resolver.TryResolveAsync(names[i], ct);
-            onProgress?.Invoke(new LoadProgress(i + 1, 0, 0, total));
-        }
+            CancellationToken = ct,
+            MaxDegreeOfParallelism = Environment.ProcessorCount
+        }, async (i, innerCt) =>
+        {
+            resolved[i] = await resolver.TryResolveAsync(names[i], innerCt);
+            var n = Interlocked.Increment(ref resolvedSoFar);
+            onProgress?.Invoke(new LoadProgress(n, 0, 0, total));
+        });
 
         int decodedSoFar = 0;
         var buffers = new SliceBuffer?[total];
@@ -113,31 +117,5 @@ public sealed class ScenarioTextureLoader
             uploaded++;
             onProgress?.Invoke(new LoadProgress(total, total, uploaded, total));
         }
-    }
-
-    // Decode resolved DDT byte buffers into 256x256 RGBA8 in parallel.
-    // resolvedBytes[i] == null means slice i was unresolved -- output[i] stays null.
-    public static async Task<SliceBuffer?[]> DecodeAllAsync(
-        IReadOnlyList<byte[]?> resolvedBytes,
-        CancellationToken ct)
-    {
-        var buffers = new SliceBuffer?[resolvedBytes.Count];
-
-        await Parallel.ForAsync(0, resolvedBytes.Count, new ParallelOptions
-        {
-            CancellationToken = ct,
-            MaxDegreeOfParallelism = Environment.ProcessorCount
-        }, async (i, innerCt) =>
-        {
-            innerCt.ThrowIfCancellationRequested();
-            var bytes = resolvedBytes[i];
-            if (bytes is null || bytes.Length == 0) return;
-
-            var rgba = await DDTImage.DecodeBaseColorOnlyAsync(bytes, TargetSize, innerCt);
-            if (rgba is not null)
-                buffers[i] = new SliceBuffer(i, rgba);
-        });
-
-        return buffers;
     }
 }
