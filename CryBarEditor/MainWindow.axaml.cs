@@ -832,6 +832,8 @@ public partial class MainWindow : SimpleWindow
         _exportWatcher.Dispose();
         _barStream?.Dispose();
         _fmodBank?.Dispose();
+        // Clear before nulling _glPreview so eviction can still queue GL deletion.
+        _textureCache?.Clear();
         _glPreview = null;
         _meshCache.Clear();
         _docCache.Clear();

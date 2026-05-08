@@ -774,6 +774,9 @@ public partial class MainWindow
         var matCount = tmmMatNames.Length;
         var matBaseImages = new Image<Rgba32>?[matCount];
         var matNormalImages = new Image<Rgba32>?[matCount];
+        // Skip same-role duplicates (e.g. BaseColor + Diffuse) - parallel writes would race and leak the loser.
+        var baseQueued = new bool[matCount];
+        var normalQueued = new bool[matCount];
 
         // Decode all DDTs in parallel - each DDTImage is independent and the BCn decode is CPU-bound.
         var decodeTasks = new List<Task>();
@@ -787,6 +790,16 @@ public partial class MainWindow
                 bool isBase = MaterialExporter.IsBaseColorRole(texName);
                 bool isNormal = !isBase && MaterialExporter.IsNormalRole(texName);
                 if (!isBase && !isNormal) continue;
+                if (isBase)
+                {
+                    if (baseQueued[matIndex]) continue;
+                    baseQueued[matIndex] = true;
+                }
+                else
+                {
+                    if (normalQueued[matIndex]) continue;
+                    normalQueued[matIndex] = true;
+                }
 
                 var ddtBytes = info.DdtData;
                 decodeTasks.Add(Task.Run(async () =>
