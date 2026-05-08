@@ -60,6 +60,13 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     int _uWaterMvp;
     bool _waterUploaded;
 
+    int _billboardProgram;
+    int _billboardVao, _billboardQuadVbo, _billboardInstanceVbo;
+    int _uBillboardMvp, _uBillboardSize;
+    bool _entitiesUploaded;
+    int _entityCount;
+    float _avgHeight;
+
     int _texArray;
     int _allocatedSlices;
 
@@ -76,6 +83,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     unsafe delegate* unmanaged<int, int, int, int, int, int, int, int, int, int, void*, void> _glTexSubImage3D;
     unsafe delegate* unmanaged<int, void> _glGenerateMipmap;
     unsafe delegate* unmanaged<uint, uint, void> _glBlendFunc;
+    unsafe delegate* unmanaged<uint, uint, void> _glVertexAttribDivisor;
+    unsafe delegate* unmanaged<uint, int, int, int, void> _glDrawArraysInstanced;
 
     public void QueueGlAction(Action<GlInterface> action)
     {
@@ -88,12 +97,21 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _data = data;
         _meshUploaded = false;
         _waterUploaded = false;
+        _entitiesUploaded = false;
         if (data is not null)
         {
             float cx = data.Terrain.MapSizeX * 0.5f;
             float cz = data.Terrain.MapSizeZ * 0.5f;
             float radius = MathF.Max(data.Terrain.MapSizeX, data.Terrain.MapSizeZ) * 0.55f;
             _camera.FitToSphere(cx, 0f, cz, radius);
+
+            double sum = 0;
+            for (int i = 0; i < data.Terrain.Heights.Length; i++) sum += data.Terrain.Heights[i];
+            _avgHeight = data.Terrain.Heights.Length > 0 ? (float)(sum / data.Terrain.Heights.Length) : 0f;
+        }
+        else
+        {
+            _avgHeight = 0f;
         }
         RequestNextFrameRendering();
     }
@@ -117,6 +135,36 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             // 4th weight is implicit so the data fits in 12 floats per vertex
             float w4 = clamp(1.0 - aWeights.x - aWeights.y - aWeights.z, 0.0, 1.0);
             vWeights = vec4(aWeights, w4);
+        }
+        """;
+
+    const string BillboardVertexShaderBody = """
+        layout(location = 0) in vec2 aQuad;
+        layout(location = 1) in vec3 aWorldPos;
+        layout(location = 2) in vec4 aColor;
+        uniform mat4 uMVP;
+        uniform float uSize;
+        out vec2 vUv;
+        out vec4 vColor;
+        void main() {
+            vec4 clip = uMVP * vec4(aWorldPos, 1.0);
+            // Pixel-stable size: aQuad is in [-1,1], scaled by uSize in clip space
+            clip.xy += aQuad * uSize * clip.w;
+            gl_Position = clip;
+            vUv = aQuad;
+            vColor = aColor;
+        }
+        """;
+
+    const string BillboardFragmentShaderBody = """
+        in vec2 vUv;
+        in vec4 vColor;
+        out vec4 fragColor;
+        void main() {
+            float r = length(vUv);
+            if (r > 1.0) discard;
+            float edge = smoothstep(0.92, 1.0, r);
+            fragColor = mix(vColor, vec4(0.0, 0.0, 0.0, 1.0), edge);
         }
         """;
 
@@ -179,6 +227,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _glTexSubImage3D = (delegate* unmanaged<int, int, int, int, int, int, int, int, int, int, void*, void>)gl.GetProcAddress("glTexSubImage3D");
         _glGenerateMipmap = (delegate* unmanaged<int, void>)gl.GetProcAddress("glGenerateMipmap");
         _glBlendFunc = (delegate* unmanaged<uint, uint, void>)gl.GetProcAddress("glBlendFunc");
+        _glVertexAttribDivisor = (delegate* unmanaged<uint, uint, void>)gl.GetProcAddress("glVertexAttribDivisor");
+        _glDrawArraysInstanced = (delegate* unmanaged<uint, int, int, int, void>)gl.GetProcAddress("glDrawArraysInstanced");
 
         _heightProgram = CreateProgram(gl, vsPreamble + VertexShaderBody, fsPreamble + FragmentShaderBody);
         _uMvp      = gl.GetUniformLocationString(_heightProgram, "uMVP");
@@ -195,7 +245,32 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _waterVao = gl.GenVertexArray();
         _waterVbo = gl.GenBuffer();
 
+        _billboardProgram = CreateProgram(gl, vsPreamble + BillboardVertexShaderBody, fsPreamble + BillboardFragmentShaderBody);
+        _uBillboardMvp = gl.GetUniformLocationString(_billboardProgram, "uMVP");
+        _uBillboardSize = gl.GetUniformLocationString(_billboardProgram, "uSize");
+        _billboardVao = gl.GenVertexArray();
+        _billboardQuadVbo = gl.GenBuffer();
+        _billboardInstanceVbo = gl.GenBuffer();
+        InitBillboardQuad(gl);
+
         _glInitialized = true;
+    }
+
+    unsafe void InitBillboardQuad(GlInterface gl)
+    {
+        // 6 vertices, two CCW triangles, each vertex = (qx, qy) in [-1,1]
+        var quad = new float[]
+        {
+            -1f, -1f,   1f, -1f,   -1f,  1f,
+             1f, -1f,   1f,  1f,   -1f,  1f,
+        };
+        gl.BindVertexArray(_billboardVao);
+        gl.BindBuffer(GL_ARRAY_BUFFER, _billboardQuadVbo);
+        fixed (float* p = quad)
+            gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(quad.Length * sizeof(float)), (IntPtr)p, GL_STATIC_DRAW);
+        gl.EnableVertexAttribArray(0);
+        gl.VertexAttribPointer(0, 2, GL_FLOAT_TYPE, 0, 2 * sizeof(float), IntPtr.Zero);
+        gl.BindVertexArray(0);
     }
 
     protected override void OnOpenGlDeinit(GlInterface gl)
@@ -208,10 +283,16 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (_waterProgram != 0)  { gl.DeleteProgram(_waterProgram); _waterProgram = 0; }
         if (_waterVbo != 0)      { gl.DeleteBuffer(_waterVbo); _waterVbo = 0; }
         if (_waterVao != 0)      { gl.DeleteVertexArray(_waterVao); _waterVao = 0; }
+        if (_billboardProgram != 0)     { gl.DeleteProgram(_billboardProgram); _billboardProgram = 0; }
+        if (_billboardQuadVbo != 0)     { gl.DeleteBuffer(_billboardQuadVbo); _billboardQuadVbo = 0; }
+        if (_billboardInstanceVbo != 0) { gl.DeleteBuffer(_billboardInstanceVbo); _billboardInstanceVbo = 0; }
+        if (_billboardVao != 0)         { gl.DeleteVertexArray(_billboardVao); _billboardVao = 0; }
 
         _glInitialized = false;
         _meshUploaded = false;
         _waterUploaded = false;
+        _entitiesUploaded = false;
+        _entityCount = 0;
         _allocatedSlices = 0;
     }
 
@@ -268,10 +349,91 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             DrawWater(gl, mvpCopy);
         }
 
+        if (!_entitiesUploaded)
+        {
+            UploadEntities(gl, _data);
+            _entitiesUploaded = true;
+        }
+        if (_entityCount > 0)
+            DrawEntities(gl, mvpCopy, MathF.Max(_data.Terrain.MapSizeX, _data.Terrain.MapSizeZ));
+
         gl.BindVertexArray(0);
         gl.UseProgram(0);
         gl.Disable(GL_DEPTH_TEST);
     }
+
+    unsafe void UploadEntities(GlInterface gl, ScenarioPreviewData data)
+    {
+        _entityCount = data.Entities.Length;
+        if (_entityCount == 0) return;
+        if (_glVertexAttribDivisor == null) return;
+
+        // Per-instance: 3 floats world pos + 4 floats RGBA color = 7 floats per entity
+        const int floatsPerInstance = 7;
+        var inst = new float[_entityCount * floatsPerInstance];
+        for (int i = 0; i < _entityCount; i++)
+        {
+            var m = data.Entities[i];
+            int o = i * floatsPerInstance;
+            // Game stores entity position as (x, y_height, z); pass through unchanged.
+            inst[o + 0] = m.Position.X;
+            inst[o + 1] = m.Position.Y;
+            inst[o + 2] = m.Position.Z;
+            var (r, g, b, a) = PlayerColor(m.PlayerId);
+            inst[o + 3] = r; inst[o + 4] = g; inst[o + 5] = b; inst[o + 6] = a;
+        }
+
+        gl.BindVertexArray(_billboardVao);
+
+        // Reuse the static quad VBO bound by InitBillboardQuad on attrib 0.
+        gl.BindBuffer(GL_ARRAY_BUFFER, _billboardQuadVbo);
+        gl.EnableVertexAttribArray(0);
+        gl.VertexAttribPointer(0, 2, GL_FLOAT_TYPE, 0, 2 * sizeof(float), IntPtr.Zero);
+        _glVertexAttribDivisor(0, 0);
+
+        gl.BindBuffer(GL_ARRAY_BUFFER, _billboardInstanceVbo);
+        fixed (float* p = inst)
+            gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(inst.Length * sizeof(float)), (IntPtr)p, GL_DYNAMIC_DRAW);
+
+        int stride = floatsPerInstance * sizeof(float);
+        gl.EnableVertexAttribArray(1);
+        gl.VertexAttribPointer(1, 3, GL_FLOAT_TYPE, 0, stride, IntPtr.Zero);
+        _glVertexAttribDivisor(1, 1);
+        gl.EnableVertexAttribArray(2);
+        gl.VertexAttribPointer(2, 4, GL_FLOAT_TYPE, 0, stride, new IntPtr(3 * sizeof(float)));
+        _glVertexAttribDivisor(2, 1);
+
+        gl.BindVertexArray(0);
+    }
+
+    unsafe void DrawEntities(GlInterface gl, Matrix4x4 mvpCopy, float mapExtent)
+    {
+        if (_glDrawArraysInstanced == null) return;
+        gl.UseProgram(_billboardProgram);
+        gl.UniformMatrix4fv(_uBillboardMvp, 1, false, &mvpCopy.M11);
+        // Marker radius scales with map extent so it stays visible from default zoom.
+        gl.Uniform1f(_uBillboardSize, mapExtent * 0.005f);
+        gl.BindVertexArray(_billboardVao);
+        _glDrawArraysInstanced(GL_TRIANGLES, 0, 6, _entityCount);
+        gl.BindVertexArray(0);
+    }
+
+    static (float r, float g, float b, float a) PlayerColor(int playerId) => playerId switch
+    {
+        0 => (0.50f, 0.50f, 0.50f, 1f),  // Gaia / neutral
+        1 => (0.30f, 0.50f, 1.00f, 1f),  // Blue
+        2 => (1.00f, 0.20f, 0.20f, 1f),  // Red
+        3 => (0.20f, 0.85f, 0.30f, 1f),  // Green
+        4 => (1.00f, 0.85f, 0.20f, 1f),  // Yellow
+        5 => (0.20f, 0.85f, 0.85f, 1f),  // Cyan
+        6 => (0.85f, 0.40f, 0.10f, 1f),  // Orange
+        7 => (0.55f, 0.30f, 0.85f, 1f),  // Purple
+        _ => (1.00f, 0.40f, 0.85f, 1f),  // Pink (catch-all)
+    };
+
+    public readonly record struct WorldRayHit(int TileX, int TileZ, int VertexX, int VertexZ, float Height);
+
+    public event Action<WorldRayHit?>? CursorHit;
 
     unsafe void DrawWater(GlInterface gl, Matrix4x4 mvpCopy)
     {
@@ -460,6 +622,58 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             RequestNextFrameRendering();
             e.Handled = true;
         }
+        else
+        {
+            EmitCursorHit(pos);
+        }
+    }
+
+    void EmitCursorHit(Avalonia.Point pos)
+    {
+        var sub = CursorHit;
+        if (sub is null) return;
+        if (_data is null) { sub(null); return; }
+
+        var bounds = Bounds;
+        if (bounds.Width <= 0 || bounds.Height <= 0) { sub(null); return; }
+
+        // NDC from window-space pointer; Y inverted because Avalonia is top-down.
+        float ndcX = (float)(2.0 * pos.X / bounds.Width - 1.0);
+        float ndcY = (float)(1.0 - 2.0 * pos.Y / bounds.Height);
+
+        float aspect = (float)(bounds.Width / bounds.Height);
+        var view = _camera.GetViewMatrix();
+        var proj = _camera.GetProjectionMatrix(aspect);
+        var mvp = view * proj;
+        if (!Matrix4x4.Invert(mvp, out var invMvp)) { sub(null); return; }
+
+        var nearH = Vector4.Transform(new Vector4(ndcX, ndcY, -1f, 1f), invMvp);
+        var farH  = Vector4.Transform(new Vector4(ndcX, ndcY,  1f, 1f), invMvp);
+        if (nearH.W == 0 || farH.W == 0) { sub(null); return; }
+        var nearW = new Vector3(nearH.X / nearH.W, nearH.Y / nearH.W, nearH.Z / nearH.W);
+        var farW  = new Vector3(farH.X  / farH.W,  farH.Y  / farH.W,  farH.Z  / farH.W);
+        var dir = Vector3.Normalize(farW - nearW);
+
+        // Plane intersect at y = avg height -- accurate enough for an HUD readout
+        // until per-vertex heightmap raycast is added.
+        if (MathF.Abs(dir.Y) < 1e-5f) { sub(null); return; }
+        float t = (_avgHeight - nearW.Y) / dir.Y;
+        if (t < 0) { sub(null); return; }
+        var hit = nearW + dir * t;
+
+        int mapX = _data.Terrain.MapSizeX;
+        int mapZ = _data.Terrain.MapSizeZ;
+        if (hit.X < 0 || hit.X > mapX || hit.Z < 0 || hit.Z > mapZ) { sub(null); return; }
+
+        int tileX = Math.Clamp((int)MathF.Floor(hit.X), 0, mapX - 1);
+        int tileZ = Math.Clamp((int)MathF.Floor(hit.Z), 0, mapZ - 1);
+        int vertexX = Math.Clamp((int)MathF.Round(hit.X), 0, mapX);
+        int vertexZ = Math.Clamp((int)MathF.Round(hit.Z), 0, mapZ);
+
+        int vIdx = vertexZ * (mapX + 1) + vertexX;
+        float height = vIdx < _data.Terrain.Heights.Length ? _data.Terrain.Heights[vIdx] : 0f;
+
+        sub(new WorldRayHit(tileX, tileZ, vertexX, vertexZ, height));
     }
 
     protected override void OnPointerWheelChanged(Avalonia.Input.PointerWheelEventArgs e)
