@@ -91,6 +91,12 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     int _tileSelectVertexCount;
     bool _tileSelectDirty;
 
+    int _entitySelectProgram;
+    int _entitySelectVao, _entitySelectQuadVbo, _entitySelectInstanceVbo;
+    int _uEntitySelectView, _uEntitySelectProj, _uEntitySelectSize, _uEntitySelectYScale;
+    int _entitySelectInstanceCount;
+    bool _entitySelectDirty;
+
     int _billboardProgram;
     int _billboardVao, _billboardQuadVbo, _billboardInstanceVbo;
     int _uBillboardView, _uBillboardProj, _uBillboardSize, _uBillboardCamPos, _uBillboardFadeNear, _uBillboardFadeFar, _uBillboardYScale;
@@ -136,6 +142,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _waterUploaded = false;
         _entitiesUploaded = false;
         _tileSelectDirty = true;
+        _entitySelectDirty = true;
         if (data is not null)
         {
             data.Selection.Changed += OnSelectionChanged;
@@ -160,6 +167,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     void OnSelectionChanged()
     {
         _tileSelectDirty = true;
+        _entitySelectDirty = true;
         RequestNextFrameRendering();
     }
 
@@ -376,6 +384,62 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _tileSelectVao = gl.GenVertexArray();
         _tileSelectVbo = gl.GenBuffer();
 
+        const string EntitySelectVsBody = """
+            layout(location = 0) in vec2 aQuad;
+            layout(location = 1) in vec3 aInstancePos;
+            layout(location = 2) in vec4 aInstanceColor;
+            uniform mat4 uView;
+            uniform mat4 uProj;
+            uniform float uSize;
+            uniform float uYScale;
+            out vec2 vQuad;
+            out vec4 vColor;
+            void main()
+            {
+                vec3 wp = vec3(aInstancePos.x, aInstancePos.y * uYScale + 0.4, aInstancePos.z);
+                vec4 vp = uView * vec4(wp, 1.0);
+                // Slightly larger than the billboard half-radius for a visible ring.
+                vp.xy += aQuad * uSize * 1.35;
+                gl_Position = uProj * vp;
+                vQuad = aQuad;
+                vColor = aInstanceColor;
+            }
+            """;
+        const string EntitySelectFsBody = """
+            in vec2 vQuad;
+            in vec4 vColor;
+            out vec4 fragColor;
+            void main()
+            {
+                float r = length(vQuad);
+                // Ring band: outer 1.00, inner 0.82, with smooth AA edges.
+                float outer = 1.00, inner = 0.82;
+                if (r > outer || r < inner) discard;
+                float aa = smoothstep(outer, outer - 0.04, r) * smoothstep(inner, inner + 0.04, r);
+                fragColor = vec4(vColor.rgb, vColor.a * aa);
+            }
+            """;
+        _entitySelectProgram = CreateProgram(gl, vsPreamble + EntitySelectVsBody, fsPreamble + EntitySelectFsBody);
+        _uEntitySelectView   = gl.GetUniformLocationString(_entitySelectProgram, "uView");
+        _uEntitySelectProj   = gl.GetUniformLocationString(_entitySelectProgram, "uProj");
+        _uEntitySelectSize   = gl.GetUniformLocationString(_entitySelectProgram, "uSize");
+        _uEntitySelectYScale = gl.GetUniformLocationString(_entitySelectProgram, "uYScale");
+
+        _entitySelectVao = gl.GenVertexArray();
+        _entitySelectQuadVbo = gl.GenBuffer();
+        _entitySelectInstanceVbo = gl.GenBuffer();
+
+        // Quad vertices: same -1..1 NDC quad (6 verts, two triangles) used for the billboard.
+        unsafe
+        {
+            var quad = new float[] { -1, -1,  1, -1,  1, 1,  -1, -1,  1, 1,  -1, 1 };
+            gl.BindVertexArray(_entitySelectVao);
+            gl.BindBuffer(GL_ARRAY_BUFFER, _entitySelectQuadVbo);
+            fixed (float* p = quad)
+                gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(quad.Length * sizeof(float)), (IntPtr)p, GL_STATIC_DRAW);
+            gl.BindVertexArray(0);
+        }
+
         _billboardProgram = CreateProgram(gl, vsPreamble + BillboardVertexShaderBody, fsPreamble + BillboardFragmentShaderBody);
         _uBillboardView     = gl.GetUniformLocationString(_billboardProgram, "uView");
         _uBillboardProj     = gl.GetUniformLocationString(_billboardProgram, "uProj");
@@ -427,6 +491,12 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (_tileSelectVao != 0)     { gl.DeleteVertexArray(_tileSelectVao); _tileSelectVao = 0; }
         _tileSelectVertexCount = 0;
         _tileSelectDirty = false;
+        if (_entitySelectProgram != 0)      { gl.DeleteProgram(_entitySelectProgram); _entitySelectProgram = 0; }
+        if (_entitySelectQuadVbo != 0)      { gl.DeleteBuffer(_entitySelectQuadVbo); _entitySelectQuadVbo = 0; }
+        if (_entitySelectInstanceVbo != 0)  { gl.DeleteBuffer(_entitySelectInstanceVbo); _entitySelectInstanceVbo = 0; }
+        if (_entitySelectVao != 0)          { gl.DeleteVertexArray(_entitySelectVao); _entitySelectVao = 0; }
+        _entitySelectInstanceCount = 0;
+        _entitySelectDirty = false;
         if (_billboardProgram != 0)     { gl.DeleteProgram(_billboardProgram); _billboardProgram = 0; }
         if (_billboardQuadVbo != 0)     { gl.DeleteBuffer(_billboardQuadVbo); _billboardQuadVbo = 0; }
         if (_billboardInstanceVbo != 0) { gl.DeleteBuffer(_billboardInstanceVbo); _billboardInstanceVbo = 0; }
@@ -527,6 +597,13 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             }
             if (_entityCount > 0)
                 DrawEntities(gl, view, proj, eyePos);
+
+            if (_entitySelectDirty)
+            {
+                UploadEntitySelectionMesh(gl);
+                _entitySelectDirty = false;
+            }
+            DrawEntitySelection(gl, view, proj);
         }
 
         gl.BindVertexArray(0);
@@ -615,6 +692,75 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.Uniform1f(_uBillboardYScale, HeightScale);
         gl.BindVertexArray(_billboardVao);
         _glDrawArraysInstanced(GL_TRIANGLES, 0, 6, _entityCount);
+        gl.BindVertexArray(0);
+
+        gl.Disable(GL_BLEND);
+    }
+
+    unsafe void UploadEntitySelectionMesh(GlInterface gl)
+    {
+        if (_data is null || _glVertexAttribDivisor == null) { _entitySelectInstanceCount = 0; return; }
+        var sel = _data.Selection;
+        int count = sel.Entities.Count;
+        if (count == 0) { _entitySelectInstanceCount = 0; return; }
+
+        const int floatsPerInstance = 7;
+        var inst = new float[count * floatsPerInstance];
+        int o = 0;
+        // Build a fast id->index lookup once per upload to avoid quadratic scans.
+        var idToIdx = new System.Collections.Generic.Dictionary<uint, int>(_data.Entities.Length);
+        for (int i = 0; i < _data.Entities.Length; i++)
+            idToIdx[_data.Entities[i].EntityId] = i;
+        foreach (uint id in sel.Entities)
+        {
+            if (!idToIdx.TryGetValue(id, out int idx)) continue;
+            var m = _data.Entities[idx];
+            inst[o + 0] = m.Position.X * 0.5f;
+            inst[o + 1] = m.Position.Y;
+            inst[o + 2] = m.Position.Z * 0.5f;
+            // Bright yellow ring; distinct from per-player billboard color.
+            inst[o + 3] = 1.0f; inst[o + 4] = 0.82f; inst[o + 5] = 0.30f; inst[o + 6] = 1.0f;
+            o += floatsPerInstance;
+        }
+        int instanceCount = o / floatsPerInstance;
+
+        gl.BindVertexArray(_entitySelectVao);
+
+        gl.BindBuffer(GL_ARRAY_BUFFER, _entitySelectQuadVbo);
+        gl.EnableVertexAttribArray(0);
+        gl.VertexAttribPointer(0, 2, GL_FLOAT_TYPE, 0, 2 * sizeof(float), IntPtr.Zero);
+        _glVertexAttribDivisor(0, 0);
+
+        gl.BindBuffer(GL_ARRAY_BUFFER, _entitySelectInstanceVbo);
+        fixed (float* p = inst)
+            gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(o * sizeof(float)), (IntPtr)p, GL_DYNAMIC_DRAW);
+
+        int stride = floatsPerInstance * sizeof(float);
+        gl.EnableVertexAttribArray(1);
+        gl.VertexAttribPointer(1, 3, GL_FLOAT_TYPE, 0, stride, IntPtr.Zero);
+        _glVertexAttribDivisor(1, 1);
+        gl.EnableVertexAttribArray(2);
+        gl.VertexAttribPointer(2, 4, GL_FLOAT_TYPE, 0, stride, new IntPtr(3 * sizeof(float)));
+        _glVertexAttribDivisor(2, 1);
+
+        gl.BindVertexArray(0);
+        _entitySelectInstanceCount = instanceCount;
+    }
+
+    unsafe void DrawEntitySelection(GlInterface gl, Matrix4x4 view, Matrix4x4 proj)
+    {
+        if (_entitySelectInstanceCount == 0 || _glDrawArraysInstanced == null) return;
+
+        gl.Enable(GL_BLEND);
+        if (_glBlendFunc != null) _glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        gl.UseProgram(_entitySelectProgram);
+        gl.UniformMatrix4fv(_uEntitySelectView, 1, false, &view.M11);
+        gl.UniformMatrix4fv(_uEntitySelectProj, 1, false, &proj.M11);
+        gl.Uniform1f(_uEntitySelectSize, BillboardHalfSizeWorld);
+        gl.Uniform1f(_uEntitySelectYScale, HeightScale);
+        gl.BindVertexArray(_entitySelectVao);
+        _glDrawArraysInstanced(GL_TRIANGLES, 0, 6, _entitySelectInstanceCount);
         gl.BindVertexArray(0);
 
         gl.Disable(GL_BLEND);
