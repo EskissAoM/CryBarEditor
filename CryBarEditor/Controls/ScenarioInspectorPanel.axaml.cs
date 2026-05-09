@@ -60,7 +60,7 @@ public partial class ScenarioInspectorPanel : UserControl
             $"Entity ID: {marker.EntityId}";
     }
 
-    public void UpdateAfterLoad(ScenarioPreviewData? data, string? manualBarPath)
+    public void UpdateAfterLoad(ScenarioPreviewData? data)
     {
         if (data is null)
         {
@@ -104,11 +104,6 @@ public partial class ScenarioInspectorPanel : UserControl
             _warningsRow.IsVisible = false;
             _selectBarButton.IsVisible = false;
         }
-
-        // Null path leaves the caption alone so a prior "Failed to load"
-        // status survives this post-load refresh until the user picks again.
-        if (manualBarPath is not null)
-            SetManualBarStatus(manualBarPath, loadFailed: false);
     }
 
     public void SetManualBarStatus(string? path, bool loadFailed)

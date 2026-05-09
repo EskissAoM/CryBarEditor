@@ -31,11 +31,9 @@ public sealed class ScenarioTextureLoader
             _manualBarResolver = manualBarResolver;
         }
 
-        // Resolve a "<group>\<name>" terrain reference to decompressed DDT bytes.
-        // Returned PooledBuffer is owned by the caller.
-        // Uses FindByPartialPath so name collisions across groups
-        // (e.g. default/black_rock vs egyptian/black_rock) resolve correctly.
-        public async ValueTask<PooledBuffer?> TryResolveAsync(string textureName, CancellationToken ct = default)
+        // FindByPartialPath disambiguates same-name textures in different group
+        // folders (e.g. default/black_rock vs egyptian/black_rock).
+        async ValueTask<PooledBuffer?> ResolveFromIndexAsync(string textureName, CancellationToken ct)
         {
             if (_index is null || string.IsNullOrEmpty(textureName)) return null;
 
@@ -61,7 +59,7 @@ public sealed class ScenarioTextureLoader
         public async ValueTask<(PooledBuffer? Buffer, TextureSource Source)> TryResolveWithSourceAsync(
             string textureName, CancellationToken ct = default)
         {
-            var fromIndex = await TryResolveAsync(textureName, ct);
+            var fromIndex = await ResolveFromIndexAsync(textureName, ct);
             if (fromIndex is not null)
                 return (fromIndex, TextureSource.Index);
 
@@ -135,8 +133,6 @@ public sealed class ScenarioTextureLoader
                     }
                     finally { if (!ok) dst.Dispose(); }
 
-                    // Decode failure renders as the green placeholder; downgrade so
-                    // the inspector counts it as missing.
                     if (!ok) sourceFlags[i] = TextureSource.Placeholder;
                 }
                 var n = Interlocked.Increment(ref decodedSoFar);

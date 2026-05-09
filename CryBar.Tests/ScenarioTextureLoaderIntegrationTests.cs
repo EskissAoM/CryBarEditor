@@ -63,9 +63,10 @@ public class ScenarioTextureLoaderIntegrationTests
         var resolved = new List<string>();
         foreach (var name in data.TextureSet.Names)
         {
-            using var buf = await resolver.TryResolveAsync(name);
+            var (buf, _) = await resolver.TryResolveWithSourceAsync(name);
             if (buf is null || buf.Length == 0) unresolved.Add(name);
             else resolved.Add(name);
+            buf?.Dispose();
         }
 
         // Diagnostic: surface any names that didn't resolve so the suffix probing can be tightened

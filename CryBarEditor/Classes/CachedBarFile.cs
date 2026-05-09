@@ -58,23 +58,6 @@ sealed class CachedBarFile : IDisposable
         }
     }
 
-    // Decompressed read variant. ReadDataDecompressedPooled is sync (it does
-    // a seek + read + decompress on the stream); we still hold the semaphore
-    // because the seek-then-read against the shared FileStream isn't safe
-    // under concurrent access.
-    public async ValueTask<PooledBuffer?> ReadEntryDecompressedPooledAsync(BarFileEntry entry)
-    {
-        await _streamLock.WaitAsync();
-        try
-        {
-            return entry.ReadDataDecompressedPooled(Stream);
-        }
-        finally
-        {
-            _streamLock.Release();
-        }
-    }
-
     public void Dispose()
     {
         _streamLock.Dispose();

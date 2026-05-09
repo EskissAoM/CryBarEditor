@@ -53,7 +53,9 @@ internal sealed class ManualTextureBar : IDisposable
 
         try
         {
-            return await _bar.ReadEntryDecompressedPooledAsync(match);
+            using var raw = await _bar.ReadEntryRawPooledAsync(match);
+            if (raw is null) return null;
+            return BarCompression.EnsureDecompressedPooled(raw, out _);
         }
         catch
         {
@@ -61,18 +63,11 @@ internal sealed class ManualTextureBar : IDisposable
         }
     }
 
-    // Compare case-insensitively, treating both '\' and '/' as separators.
     static BarFileEntry? FindBySuffix(IReadOnlyList<BarFileEntry> entries, string suffix)
     {
-        var normForward = suffix.Replace('\\', '/');
         for (int i = 0; i < entries.Count; i++)
-        {
-            var path = entries[i].RelativePath;
-            if (path.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            if (entries[i].RelativePath.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
                 return entries[i];
-            if (path.Replace('\\', '/').EndsWith(normForward, StringComparison.OrdinalIgnoreCase))
-                return entries[i];
-        }
         return null;
     }
 

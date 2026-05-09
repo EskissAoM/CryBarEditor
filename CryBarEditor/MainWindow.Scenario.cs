@@ -117,17 +117,17 @@ public partial class MainWindow
 
         Dispatcher.UIThread.Post(() => _scenarioProgressOverlay.IsVisible = true);
 
+        var manualBarPath = _manualTextureBarPath;
         ManualTextureBar? manualBar = null;
-        if (_manualTextureBarPath is not null)
+        if (manualBarPath is not null)
         {
-            manualBar = ManualTextureBar.TryOpen(_manualTextureBarPath);
+            manualBar = await Task.Run(() => ManualTextureBar.TryOpen(manualBarPath), ct);
             if (manualBar is null)
             {
-                // Capture before clearing so the dispatcher post sees the path.
-                var failedPath = _manualTextureBarPath;
                 Dispatcher.UIThread.Post(() =>
-                    _scenarioInspector.SetManualBarStatus(failedPath, loadFailed: true));
+                    _scenarioInspector.SetManualBarStatus(manualBarPath, loadFailed: true));
                 _manualTextureBarPath = null;
+                manualBarPath = null;
             }
         }
 
@@ -145,8 +145,12 @@ public partial class MainWindow
                 p => Dispatcher.UIThread.Post(() => UpdateScenarioProgress(p)),
                 ct);
 
-            var pathSnapshot = _manualTextureBarPath;
-            Dispatcher.UIThread.Post(() => _scenarioInspector.UpdateAfterLoad(data, pathSnapshot));
+            Dispatcher.UIThread.Post(() =>
+            {
+                _scenarioInspector.UpdateAfterLoad(data);
+                if (manualBarPath is not null)
+                    _scenarioInspector.SetManualBarStatus(manualBarPath, loadFailed: false);
+            });
         }
         catch (OperationCanceledException) { /* expected on scenario change */ }
         finally
@@ -173,8 +177,10 @@ public partial class MainWindow
 
         _manualTextureBarPath = local;
 
-        if (_scenarioData?.Scenario is { } scn)
-            ShowScenarioPreview(scn);
+        if (_scenarioData is { } existing)
+            _ = LoadScenarioTexturesAsync(existing, existing.Cancellation.Token);
+        else if (_pendingScenario3D is not null && _scenarioTabStrip.SelectedIndex == 1)
+            FlushPendingScenario3D();
     }
 
     void HideScenarioPreview()

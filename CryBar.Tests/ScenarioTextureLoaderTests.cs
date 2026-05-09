@@ -10,25 +10,27 @@ public class ScenarioTextureLoaderTests
         ValueTask.FromResult<PooledBuffer?>(null);
 
     [Fact]
-    public async Task Resolve_UnknownName_ReturnsNull()
+    public async Task Resolve_UnknownName_ReturnsPlaceholder()
     {
         var index = new FileIndex();
         var resolver = new ScenarioTextureLoader.NameResolver(index, ReadFails);
 
-        using var buf = await resolver.TryResolveAsync("nonexistent\\name");
+        var (buf, source) = await resolver.TryResolveWithSourceAsync("nonexistent\\name");
 
         Assert.Null(buf);
+        Assert.Equal(TextureSource.Placeholder, source);
     }
 
     [Fact]
-    public async Task Resolve_EmptyName_ReturnsNull()
+    public async Task Resolve_EmptyName_ReturnsPlaceholder()
     {
         var index = new FileIndex();
         var resolver = new ScenarioTextureLoader.NameResolver(index, ReadFails);
 
-        using var buf = await resolver.TryResolveAsync("");
+        var (buf, source) = await resolver.TryResolveWithSourceAsync("");
 
         Assert.Null(buf);
+        Assert.Equal(TextureSource.Placeholder, source);
     }
 
     [Fact]
@@ -50,10 +52,12 @@ public class ScenarioTextureLoaderTests
         }
 
         var resolver = new ScenarioTextureLoader.NameResolver(index, Stub);
-        using var buf = await resolver.TryResolveAsync("greek\\greek_grass_1");
+        var (buf, source) = await resolver.TryResolveWithSourceAsync("greek\\greek_grass_1");
 
         Assert.NotNull(buf);
-        Assert.Equal(payload, buf.Span.ToArray());
+        Assert.Equal(TextureSource.Index, source);
+        Assert.Equal(payload, buf!.Span.ToArray());
+        buf.Dispose();
     }
 
     [Fact]
@@ -89,10 +93,12 @@ public class ScenarioTextureLoaderTests
         }
 
         var resolver = new ScenarioTextureLoader.NameResolver(index, Stub);
-        using var buf = await resolver.TryResolveAsync("default\\black_rock");
+        var (buf, source) = await resolver.TryResolveWithSourceAsync("default\\black_rock");
 
         Assert.NotNull(buf);
+        Assert.Equal(TextureSource.Index, source);
         Assert.Equal(defaultPayload, buf!.Span.ToArray());
+        buf.Dispose();
     }
 
     [Fact]
