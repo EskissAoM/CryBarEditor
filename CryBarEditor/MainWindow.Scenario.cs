@@ -14,6 +14,7 @@ public partial class MainWindow
     ScenarioPreviewData? _scenarioData;
     GlScenarioPreviewControl? _scenarioGl;
     string? _manualTextureBarPath;
+    ScenarioFile? _pendingScenario3D;
 
     void ShowScenarioPreview(ScenarioFile scenario)
     {
@@ -30,6 +31,17 @@ public partial class MainWindow
         _scenarioXmlHost.Content = _txtEditor;
         _txtEditor.IsVisible = true;
         _ = SetEditorText(".xml", ScenarioFile.StripBinaryForPreview(scenario.ToXml()));
+
+        // Defer 3D build/upload until the user actually opens the 3D View tab.
+        _pendingScenario3D = scenario;
+        if (_scenarioTabStrip.SelectedIndex == 1) FlushPendingScenario3D();
+    }
+
+    void FlushPendingScenario3D()
+    {
+        var scenario = _pendingScenario3D;
+        if (scenario is null) return;
+        _pendingScenario3D = null;
 
         var data = ScenarioPreviewData.TryBuild(scenario);
         if (data is null)
@@ -72,7 +84,11 @@ public partial class MainWindow
     }
 
     void ScenarioTab_SelectionChanged(object? sender, SelectionChangedEventArgs e)
-        => ToggleTabPanels(_scenarioTabStrip, _scenarioXmlHost, _scenario3dPanel);
+    {
+        ToggleTabPanels(_scenarioTabStrip, _scenarioXmlHost, _scenario3dPanel);
+        if (_scenarioTabStrip?.SelectedIndex == 1 && _pendingScenario3D is not null)
+            FlushPendingScenario3D();
+    }
 
     void ShowScenarioEntities_Toggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
@@ -163,6 +179,8 @@ public partial class MainWindow
 
     void HideScenarioPreview()
     {
+        _pendingScenario3D = null;
+
         // Dispose() cancels the data's CTS, which propagates to the in-flight load.
         _scenarioData?.Dispose();
         _scenarioData = null;
