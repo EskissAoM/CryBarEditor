@@ -5,6 +5,13 @@ using CryBar.Scenario;
 
 namespace CryBarEditor.Classes;
 
+public enum TextureSource : byte
+{
+    Placeholder = 0,
+    Index = 1,
+    ManualBar = 2,
+}
+
 public sealed class ScenarioPreviewData : IDisposable
 {
     public required ScenarioFile Scenario { get; init; }
@@ -17,6 +24,14 @@ public sealed class ScenarioPreviewData : IDisposable
     bool[] _sliceReady = [];
     public IReadOnlyList<bool> SliceReady => _sliceReady;
     internal void MarkSliceReady(int index) => _sliceReady[index] = true;
+
+    TextureSource[] _textureSources = [];
+    public IReadOnlyList<TextureSource> TextureSources => _textureSources;
+    internal void SetTextureSource(int sliceIndex, TextureSource source)
+    {
+        if ((uint)sliceIndex < (uint)_textureSources.Length)
+            _textureSources[sliceIndex] = source;
+    }
 
     public CancellationTokenSource Cancellation { get; } = new();
 
@@ -50,6 +65,7 @@ public sealed class ScenarioPreviewData : IDisposable
             Entities = entities,
         };
         data._sliceReady = new bool[textureSet.Names.Count];
+        data._textureSources = new TextureSource[textureSet.Names.Count];
         return data;
     }
 

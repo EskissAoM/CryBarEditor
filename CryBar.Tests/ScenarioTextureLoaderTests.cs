@@ -94,4 +94,71 @@ public class ScenarioTextureLoaderTests
         Assert.NotNull(buf);
         Assert.Equal(defaultPayload, buf!.Span.ToArray());
     }
+
+    [Fact]
+    public async Task Resolve_FallbackBar_UsedWhenIndexMisses()
+    {
+        var index = new FileIndex();    // empty
+        var fallbackBytes = new byte[] { 7, 8, 9 };
+
+        ValueTask<PooledBuffer?> ManualStub(string name, CancellationToken ct)
+        {
+            Assert.Equal("default\\black_rock", name);
+            var pb = new PooledBuffer(fallbackBytes.Length);
+            fallbackBytes.CopyTo(pb.Span);
+            return ValueTask.FromResult<PooledBuffer?>(pb);
+        }
+
+        var resolver = new ScenarioTextureLoader.NameResolver(index, ReadFails, ManualStub);
+        var (buf, source) = await resolver.TryResolveWithSourceAsync("default\\black_rock");
+
+        Assert.NotNull(buf);
+        Assert.Equal(TextureSource.ManualBar, source);
+        Assert.Equal(fallbackBytes, buf!.Span.ToArray());
+        buf.Dispose();
+    }
+
+    [Fact]
+    public async Task Resolve_FallbackBar_NotUsedWhenIndexHits()
+    {
+        var index = new FileIndex();
+        index.Add(new FileIndexEntry
+        {
+            FullRelativePath = "art/terrain/default/black_rock_basecolor.ddt",
+            Source = FileIndexSource.RootFile
+        });
+        var indexBytes = new byte[] { 1, 2, 3 };
+
+        ValueTask<PooledBuffer?> IndexStub(FileIndexEntry _)
+        {
+            var pb = new PooledBuffer(indexBytes.Length);
+            indexBytes.CopyTo(pb.Span);
+            return ValueTask.FromResult<PooledBuffer?>(pb);
+        }
+        ValueTask<PooledBuffer?> ManualStub(string _, CancellationToken __)
+            => throw new InvalidOperationException("Manual BAR must not be consulted when index hits");
+
+        var resolver = new ScenarioTextureLoader.NameResolver(index, IndexStub, ManualStub);
+        var (buf, source) = await resolver.TryResolveWithSourceAsync("default\\black_rock");
+
+        Assert.NotNull(buf);
+        Assert.Equal(TextureSource.Index, source);
+        Assert.Equal(indexBytes, buf!.Span.ToArray());
+        buf.Dispose();
+    }
+
+    [Fact]
+    public async Task Resolve_FallbackBar_ReturnsPlaceholderWhenManualMissesToo()
+    {
+        var index = new FileIndex();    // empty
+
+        static ValueTask<PooledBuffer?> ManualMisses(string _, CancellationToken __)
+            => ValueTask.FromResult<PooledBuffer?>(null);
+
+        var resolver = new ScenarioTextureLoader.NameResolver(index, ReadFails, ManualMisses);
+        var (buf, source) = await resolver.TryResolveWithSourceAsync("default\\nothing");
+
+        Assert.Null(buf);
+        Assert.Equal(TextureSource.Placeholder, source);
+    }
 }

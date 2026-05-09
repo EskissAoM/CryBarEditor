@@ -23,12 +23,9 @@ public static class WaterMeshBuilder
         int tileCount = mapX * mapZ;
         var waterType = terrain.WaterType;
 
-        // Water-tile mask. WaterType[t] is an index into WaterNames; the byte
-        // value 255 is the "no water" sentinel. Other values (including 0
-        // for the default water entry, plus 13/14/16/etc for variants) all
-        // mean the tile holds water. Earlier code mistakenly treated 0 as
-        // the no-water marker, which made campaign scenarios like fott01
-        // (whose water tiles use WaterType 13/14) render no surface at all.
+        // WaterType[t] is an index into WaterNames; the byte value 255 is the
+        // "no water" sentinel. Any other value (0 for the default body,
+        // 13/14/16/etc for variants) means the tile holds water.
         var isWater = new bool[tileCount];
         int waterTiles = 0;
         for (int i = 0; i < tileCount && i < waterType.Length; i++)

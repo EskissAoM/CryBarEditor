@@ -13,6 +13,7 @@ public partial class MainWindow
 {
     ScenarioPreviewData? _scenarioData;
     GlScenarioPreviewControl? _scenarioGl;
+    string? _manualTextureBarPath;
 
     void ShowScenarioPreview(ScenarioFile scenario)
     {
@@ -84,22 +85,64 @@ public partial class MainWindow
 
         Dispatcher.UIThread.Post(() => _scenarioProgressOverlay.IsVisible = true);
 
-        var resolver = new ScenarioTextureLoader.NameResolver(_fileIndex, ReadFromIndexEntryPooledAsync);
+        ManualTextureBar? manualBar = null;
+        if (_manualTextureBarPath is not null)
+        {
+            manualBar = ManualTextureBar.TryOpen(_manualTextureBarPath);
+            if (manualBar is null)
+            {
+                // Capture before clearing so the dispatcher post sees the path.
+                var failedPath = _manualTextureBarPath;
+                Dispatcher.UIThread.Post(() =>
+                    _scenarioInspector.SetManualBarStatus(failedPath, loadFailed: true));
+                _manualTextureBarPath = null;
+            }
+        }
 
         try
         {
+            var resolver = new ScenarioTextureLoader.NameResolver(
+                _fileIndex,
+                ReadFromIndexEntryPooledAsync,
+                manualBar is not null ? manualBar.ResolveTextureAsync : null);
+
             await ScenarioTextureLoader.LoadAllAsync(
                 data,
                 resolver,
                 (sliceIdx, rgba) => _scenarioGl.UploadSliceAsync(sliceIdx, rgba),
                 p => Dispatcher.UIThread.Post(() => UpdateScenarioProgress(p)),
                 ct);
+
+            var pathSnapshot = _manualTextureBarPath;
+            Dispatcher.UIThread.Post(() => _scenarioInspector.UpdateAfterLoad(data, pathSnapshot));
         }
         catch (OperationCanceledException) { /* expected on scenario change */ }
         finally
         {
+            manualBar?.Dispose();
             Dispatcher.UIThread.Post(() => _scenarioProgressOverlay.IsVisible = false);
         }
+    }
+
+    async void SelectManualTextureBarClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var picker = await StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
+        {
+            Title = "Select fallback ArtTerrainTextures.bar",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                new Avalonia.Platform.Storage.FilePickerFileType("BAR archive") { Patterns = ["*.bar"] },
+            ],
+        });
+        if (picker.Count == 0) return;
+        var local = picker[0].Path.LocalPath;
+        if (string.IsNullOrEmpty(local)) return;
+
+        _manualTextureBarPath = local;
+
+        if (_scenarioData?.Scenario is { } scn)
+            ShowScenarioPreview(scn);
     }
 
     void HideScenarioPreview()

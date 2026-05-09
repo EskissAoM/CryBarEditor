@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -19,24 +20,25 @@ public sealed class ScenarioTextureLoader
     {
         readonly FileIndex _index;
         readonly ReadEntryAsync _read;
+        readonly ResolveFromManualBarAsync? _manualBarResolver;
 
-        public NameResolver(FileIndex index, ReadEntryAsync read)
+        public delegate ValueTask<PooledBuffer?> ResolveFromManualBarAsync(string textureName, CancellationToken ct);
+
+        public NameResolver(FileIndex index, ReadEntryAsync read, ResolveFromManualBarAsync? manualBarResolver = null)
         {
             _index = index;
             _read = read;
+            _manualBarResolver = manualBarResolver;
         }
 
         // Resolve a "<group>\<name>" terrain reference to decompressed DDT bytes.
-        // Probes "<name>_basecolor.ddt" then "<name>.ddt" via FileIndex (stem-flexible).
-        // The returned PooledBuffer is owned by the caller.
+        // Returned PooledBuffer is owned by the caller.
+        // Uses FindByPartialPath so name collisions across groups
+        // (e.g. default/black_rock vs egyptian/black_rock) resolve correctly.
         public async ValueTask<PooledBuffer?> TryResolveAsync(string textureName, CancellationToken ct = default)
         {
             if (_index is null || string.IsNullOrEmpty(textureName)) return null;
 
-            // Use the full group-qualified path so name collisions across groups
-            // (e.g. default/black_rock vs egyptian/black_rock) resolve correctly.
-            // FindByPartialPath verifies all directory segments from the query
-            // appear in the candidate's full path.
             var entries = _index.FindByPartialPath(textureName + "_basecolor.ddt");
             if (entries.Count == 0) entries = _index.FindByPartialPath(textureName + ".ddt");
             if (entries.Count == 0) return null;
@@ -55,6 +57,23 @@ public sealed class ScenarioTextureLoader
             catch { return null; }
             finally { buf?.Dispose(); }
         }
+
+        public async ValueTask<(PooledBuffer? Buffer, TextureSource Source)> TryResolveWithSourceAsync(
+            string textureName, CancellationToken ct = default)
+        {
+            var fromIndex = await TryResolveAsync(textureName, ct);
+            if (fromIndex is not null)
+                return (fromIndex, TextureSource.Index);
+
+            if (_manualBarResolver is not null)
+            {
+                var fromBar = await _manualBarResolver(textureName, ct);
+                if (fromBar is not null)
+                    return (fromBar, TextureSource.ManualBar);
+            }
+
+            return (null, TextureSource.Placeholder);
+        }
     }
 
     sealed class SliceBuffer(int sliceIndex, PooledBuffer rgba) : IDisposable
@@ -66,11 +85,6 @@ public sealed class ScenarioTextureLoader
 
     public sealed record LoadProgress(int Resolved, int Decoded, int Uploaded, int Total);
 
-    // Top-level pipeline:
-    //   1) resolve names to DDT byte buffers via FileIndex (parallel; CachedBarFile
-    //      serializes per-stream access internally)
-    //   2) decode all resolved buffers to RGBA8 in parallel
-    //   3) upload each decoded slice via the GL-thread callback in encounter order
     public static async Task LoadAllAsync(
         ScenarioPreviewData data,
         NameResolver resolver,
@@ -87,13 +101,16 @@ public sealed class ScenarioTextureLoader
         try
         {
             int resolvedSoFar = 0;
+            var sourceFlags = new TextureSource[total];
             await Parallel.ForAsync(0, total, new ParallelOptions
             {
                 CancellationToken = ct,
                 MaxDegreeOfParallelism = Environment.ProcessorCount
             }, async (i, innerCt) =>
             {
-                resolved[i] = await resolver.TryResolveAsync(names[i], innerCt);
+                var (buf, source) = await resolver.TryResolveWithSourceAsync(names[i], innerCt);
+                resolved[i] = buf;
+                sourceFlags[i] = source;
                 var n = Interlocked.Increment(ref resolvedSoFar);
                 onProgress?.Invoke(new LoadProgress(n, 0, 0, total));
             });
@@ -117,10 +134,18 @@ public sealed class ScenarioTextureLoader
                         if (ok) buffers[i] = new SliceBuffer(i, dst);
                     }
                     finally { if (!ok) dst.Dispose(); }
+
+                    // Decode failure renders as the green placeholder; downgrade so
+                    // the inspector counts it as missing.
+                    if (!ok) sourceFlags[i] = TextureSource.Placeholder;
                 }
                 var n = Interlocked.Increment(ref decodedSoFar);
                 onProgress?.Invoke(new LoadProgress(total, n, 0, total));
             });
+
+            // Run after the decode phase so decode failures count as missing.
+            for (int i = 0; i < total; i++)
+                data.SetTextureSource(i, sourceFlags[i]);
 
             for (int i = 0; i < total; i++)
             {

@@ -359,6 +359,9 @@ public partial class MainWindow : SimpleWindow
 
         InitializeComponent();
 
+        _scenarioInspector.SelectBarRequested += () =>
+            SelectManualTextureBarClick(this, new Avalonia.Interactivity.RoutedEventArgs());
+
         TryRestorePreviousConfiguration();
 
         // set up editor

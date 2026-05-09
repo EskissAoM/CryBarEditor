@@ -1,14 +1,77 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="using:CryBarEditor.Controls"
+             xmlns:micons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
              x:Class="CryBarEditor.Controls.ScenarioInspectorPanel"
              x:DataType="controls:ScenarioInspectorPanel"
              Width="280" Background="#161820">
-    <StackPanel Margin="8" Spacing="6">
-        <TextBlock Text="Cursor" FontWeight="Bold" Foreground="#888"/>
-        <TextBlock x:Name="_cursorInfo" Text="(hover map)" Foreground="#ddd" FontFamily="Cascadia Code,Consolas"/>
-        <Separator Margin="0,8" Background="#333"/>
-        <TextBlock Text="Selected entity" FontWeight="Bold" Foreground="#888"/>
-        <TextBlock x:Name="_entityInfo" Text="(click an entity)" Foreground="#ddd" FontFamily="Cascadia Code,Consolas" TextWrapping="Wrap"/>
-    </StackPanel>
+    <DockPanel LastChildFill="True">
+
+        <!-- Fixed metadata at top of inspector. Doesn't scroll with the rest. -->
+        <Border DockPanel.Dock="Top" BorderBrush="#333" BorderThickness="0,0,0,1" Padding="8">
+            <TextBlock x:Name="_textureSummary" Text="(loading)"
+                       Foreground="#ddd" FontFamily="Cascadia Code,Consolas"
+                       TextWrapping="Wrap"/>
+        </Border>
+
+        <!-- Fixed action bar at bottom: warnings button (with details flyout) +
+             Select-BAR + path caption. -->
+        <Border DockPanel.Dock="Bottom" BorderBrush="#333" BorderThickness="0,1,0,0" Padding="8">
+            <StackPanel Spacing="6">
+                <Grid x:Name="_warningsRow" ColumnDefinitions="*,Auto" IsVisible="False">
+                    <TextBlock x:Name="_warningsText" Grid.Column="0"
+                               Foreground="#cc8800"
+                               TextWrapping="Wrap"
+                               VerticalAlignment="Center" />
+                    <Button Grid.Column="1"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Padding="6,2"
+                            ToolTip.Tip="Show missing texture details"
+                            Cursor="Hand"
+                            VerticalAlignment="Center">
+                        <Button.Flyout>
+                            <Flyout>
+                                <ScrollViewer MaxWidth="380" MaxHeight="360"
+                                              VerticalScrollBarVisibility="Auto">
+                                    <TextBlock x:Name="_missingNamesText"
+                                               TextWrapping="Wrap"
+                                               FontSize="11"
+                                               Foreground="#cc8800" />
+                                </ScrollViewer>
+                            </Flyout>
+                        </Button.Flyout>
+                        <micons:MaterialIcon Kind="InformationOutline"
+                                             Width="16" Height="16"
+                                             Foreground="#cc8800" />
+                    </Button>
+                </Grid>
+                <Button x:Name="_selectBarButton"
+                        Content="Select fallback BAR..."
+                        Click="SelectBarClick"
+                        IsVisible="False"
+                        HorizontalAlignment="Stretch"
+                        Background="#2c3a4f"
+                        Foreground="#cfd8e8"
+                        Padding="8,4" />
+                <TextBlock x:Name="_manualBarPathText"
+                           Foreground="#7e8aa0"
+                           FontSize="11"
+                           TextTrimming="CharacterEllipsis"
+                           IsVisible="False" />
+            </StackPanel>
+        </Border>
+
+        <!-- Scrollable middle: cursor + selected entity. -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="8" Spacing="6">
+                <TextBlock Text="Cursor" FontWeight="Bold" Foreground="#888"/>
+                <TextBlock x:Name="_cursorInfo" Text="(hover map)" Foreground="#ddd" FontFamily="Cascadia Code,Consolas"/>
+                <Separator Margin="0,8" Background="#333"/>
+                <TextBlock Text="Selected entity" FontWeight="Bold" Foreground="#888"/>
+                <TextBlock x:Name="_entityInfo" Text="(click an entity)" Foreground="#ddd" FontFamily="Cascadia Code,Consolas" TextWrapping="Wrap"/>
+            </StackPanel>
+        </ScrollViewer>
+
+    </DockPanel>
 </UserControl>
