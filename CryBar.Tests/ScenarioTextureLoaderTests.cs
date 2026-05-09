@@ -15,9 +15,9 @@ public class ScenarioTextureLoaderTests
         var index = new FileIndex();
         var resolver = new ScenarioTextureLoader.NameResolver(index, ReadFails);
 
-        var bytes = await resolver.TryResolveAsync("nonexistent\\name");
+        using var buf = await resolver.TryResolveAsync("nonexistent\\name");
 
-        Assert.Null(bytes);
+        Assert.Null(buf);
     }
 
     [Fact]
@@ -26,9 +26,9 @@ public class ScenarioTextureLoaderTests
         var index = new FileIndex();
         var resolver = new ScenarioTextureLoader.NameResolver(index, ReadFails);
 
-        var bytes = await resolver.TryResolveAsync("");
+        using var buf = await resolver.TryResolveAsync("");
 
-        Assert.Null(bytes);
+        Assert.Null(buf);
     }
 
     [Fact]
@@ -50,9 +50,9 @@ public class ScenarioTextureLoaderTests
         }
 
         var resolver = new ScenarioTextureLoader.NameResolver(index, Stub);
-        var bytes = await resolver.TryResolveAsync("greek\\greek_grass_1");
+        using var buf = await resolver.TryResolveAsync("greek\\greek_grass_1");
 
-        Assert.NotNull(bytes);
-        Assert.Equal(payload, bytes);
+        Assert.NotNull(buf);
+        Assert.Equal(payload, buf.Span.ToArray());
     }
 }

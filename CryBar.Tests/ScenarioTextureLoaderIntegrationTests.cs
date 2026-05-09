@@ -63,8 +63,8 @@ public class ScenarioTextureLoaderIntegrationTests
         var resolved = new List<string>();
         foreach (var name in data.TextureSet.Names)
         {
-            var bytes = await resolver.TryResolveAsync(name);
-            if (bytes is null || bytes.Length == 0) unresolved.Add(name);
+            using var buf = await resolver.TryResolveAsync(name);
+            if (buf is null || buf.Length == 0) unresolved.Add(name);
             else resolved.Add(name);
         }
 
@@ -90,7 +90,7 @@ public class ScenarioTextureLoaderIntegrationTests
         var resolver = new ScenarioTextureLoader.NameResolver(index, ReadEntry);
 
         int uploaded = 0;
-        Task UploadStub(int slice, byte[] rgba)
+        Task UploadStub(int slice, ReadOnlyMemory<byte> rgba)
         {
             Assert.Equal(ScenarioTextureLoader.TargetSize * ScenarioTextureLoader.TargetSize * 4, rgba.Length);
             uploaded++;

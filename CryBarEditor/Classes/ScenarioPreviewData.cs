@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using CryBar.Scenario;
 
@@ -13,8 +14,9 @@ public sealed class ScenarioPreviewData : IDisposable
     public WaterMesh? WaterMesh { get; init; }
     public required EntityMarker[] Entities { get; init; }
 
-    // SliceReady[i] flips true once slice i has been uploaded; false entries render with the grass-green placeholder.
-    public bool[] SliceReady = [];
+    bool[] _sliceReady = [];
+    public IReadOnlyList<bool> SliceReady => _sliceReady;
+    internal void MarkSliceReady(int index) => _sliceReady[index] = true;
 
     public CancellationTokenSource Cancellation { get; } = new();
 
@@ -38,7 +40,7 @@ public sealed class ScenarioPreviewData : IDisposable
         var water = WaterMeshBuilder.Build(terrain);
         var entities = EntityOverlayBuilder.Build(scenario);
 
-        return new ScenarioPreviewData
+        var data = new ScenarioPreviewData
         {
             Scenario = scenario,
             Terrain = terrain,
@@ -46,8 +48,9 @@ public sealed class ScenarioPreviewData : IDisposable
             TerrainMesh = mesh,
             WaterMesh = water,
             Entities = entities,
-            SliceReady = new bool[textureSet.Names.Count]
         };
+        data._sliceReady = new bool[textureSet.Names.Count];
+        return data;
     }
 
     public void Dispose()

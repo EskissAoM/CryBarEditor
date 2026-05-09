@@ -377,7 +377,6 @@ public partial class MainWindow
                         ShowScenarioPreview(scenario);
                         PreviewedFileNote = "(AoM Scenario, 3D + XML)";
                         ShowExperimentalWarning = true;
-                        // Tab control owns the preview now; skip the legacy text-editor path.
                         return;
                     }
 
@@ -654,9 +653,7 @@ public partial class MainWindow
     #region TMM 3D Preview
     void ShowTmmPreview(string metadataText)
     {
-        // Mirror ShowScenarioPreview's HideTmmPreview() call: the two structured
-        // panels are mutually exclusive, and showing one without tearing down the
-        // other left both visible at once and the prior scenario's GL/data alive.
+        // Structured preview panels are mutually exclusive.
         if (_scenarioRoot is not null && _scenarioRoot.IsVisible)
             HideScenarioPreview();
 
@@ -670,8 +667,6 @@ public partial class MainWindow
     void TmmTab_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         ToggleTabPanels(_tmmTabStrip, _tmmMetadataEditor, _tmm3dPanel);
-        // On 3D tab: flush pending mesh, then load textures (deferred from
-        // Metadata tab to avoid baking bindings against a stale mesh).
         if (_tmmTabStrip?.SelectedIndex != 1) return;
         if (_pendingMeshData != null) FlushPendingMesh();
         TryKickTextureLoadForCurrent();
@@ -684,8 +679,8 @@ public partial class MainWindow
         _ = EnsureTexturesLoadedAsync(_currentTmmFileName, RestartTextureLoadCts());
     }
 
-    // Shared by TmmTab/ScenarioTab handlers. Null-guarded because Avalonia raises
-    // SelectionChanged during XAML EndInit before named fields are populated.
+    // Avalonia raises SelectionChanged during XAML EndInit before named fields
+    // are populated, hence the null guards.
     static void ToggleTabPanels(TabStrip? strip, Control? first, Control? second)
     {
         if (strip is null || first is null || second is null) return;
@@ -710,9 +705,6 @@ public partial class MainWindow
         _flatPreview.IsVisible = true;
         _meshConversionCts?.Cancel();
 
-        // Scenario tab is also a structured preview; hide it whenever the editor
-        // is switching back to flat-text mode so call sites don't need to know
-        // which structured panel was visible before.
         if (_scenarioRoot is not null && _scenarioRoot.IsVisible)
             HideScenarioPreview();
     }

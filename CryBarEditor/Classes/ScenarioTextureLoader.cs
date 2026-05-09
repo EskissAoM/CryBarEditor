@@ -11,6 +11,7 @@ namespace CryBarEditor.Classes;
 public sealed class ScenarioTextureLoader
 {
     public const int TargetSize = 256;
+    const int SliceBytes = TargetSize * TargetSize * 4;
 
     public delegate ValueTask<PooledBuffer?> ReadEntryAsync(FileIndexEntry entry);
 
@@ -27,7 +28,8 @@ public sealed class ScenarioTextureLoader
 
         // Resolve a "<group>\<name>" terrain reference to decompressed DDT bytes.
         // Probes "<name>_basecolor.ddt" then "<name>.ddt" via FileIndex (stem-flexible).
-        public async ValueTask<byte[]?> TryResolveAsync(string textureName, CancellationToken ct = default)
+        // The returned PooledBuffer is owned by the caller.
+        public async ValueTask<PooledBuffer?> TryResolveAsync(string textureName, CancellationToken ct = default)
         {
             if (_index is null || string.IsNullOrEmpty(textureName)) return null;
 
@@ -38,23 +40,29 @@ public sealed class ScenarioTextureLoader
             if (entries.Count == 0) entries = _index.Find(fname + ".ddt");
             if (entries.Count == 0) return null;
 
+            PooledBuffer? buf = null;
             try
             {
-                using var buf = await _read(entries[0]);
+                buf = await _read(entries[0]);
                 if (buf is null) return null;
-
                 ct.ThrowIfCancellationRequested();
-                return buf.Span.ToArray();
+                var owned = buf;
+                buf = null;
+                return owned;
             }
             catch (OperationCanceledException) { throw; }
-            catch
-            {
-                return null;
-            }
+            catch { return null; }
+            finally { buf?.Dispose(); }
         }
     }
 
-    public sealed record SliceBuffer(int SliceIndex, byte[] Rgba);
+    sealed class SliceBuffer(int sliceIndex, PooledBuffer rgba) : IDisposable
+    {
+        public int SliceIndex { get; } = sliceIndex;
+        public PooledBuffer Rgba { get; } = rgba;
+        public void Dispose() => Rgba.Dispose();
+    }
+
     public sealed record LoadProgress(int Resolved, int Decoded, int Uploaded, int Total);
 
     // Top-level pipeline:
@@ -65,57 +73,89 @@ public sealed class ScenarioTextureLoader
     public static async Task LoadAllAsync(
         ScenarioPreviewData data,
         NameResolver resolver,
-        Func<int, byte[], Task> uploadSliceAsync,
+        Func<int, ReadOnlyMemory<byte>, Task> uploadSliceAsync,
         Action<LoadProgress>? onProgress,
         CancellationToken ct)
     {
         var names = data.TextureSet.Names;
         int total = names.Count;
 
-        var resolved = new byte[]?[total];
-        int resolvedSoFar = 0;
-        await Parallel.ForAsync(0, total, new ParallelOptions
-        {
-            CancellationToken = ct,
-            MaxDegreeOfParallelism = Environment.ProcessorCount
-        }, async (i, innerCt) =>
-        {
-            resolved[i] = await resolver.TryResolveAsync(names[i], innerCt);
-            var n = Interlocked.Increment(ref resolvedSoFar);
-            onProgress?.Invoke(new LoadProgress(n, 0, 0, total));
-        });
-
-        int decodedSoFar = 0;
+        var resolved = new PooledBuffer?[total];
         var buffers = new SliceBuffer?[total];
-        await Parallel.ForAsync(0, total, new ParallelOptions
-        {
-            CancellationToken = ct,
-            MaxDegreeOfParallelism = Environment.ProcessorCount
-        }, async (i, innerCt) =>
-        {
-            innerCt.ThrowIfCancellationRequested();
-            var bytes = resolved[i];
-            if (bytes is not null && bytes.Length > 0)
-            {
-                var rgba = await DDTImage.DecodeBaseColorOnlyAsync(bytes, TargetSize, innerCt);
-                if (rgba is not null) buffers[i] = new SliceBuffer(i, rgba);
-            }
-            var n = Interlocked.Increment(ref decodedSoFar);
-            onProgress?.Invoke(new LoadProgress(total, n, 0, total));
-        });
 
-        int uploaded = 0;
-        for (int i = 0; i < total; i++)
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            var buf = buffers[i];
-            if (buf is not null)
+            int resolvedSoFar = 0;
+            await Parallel.ForAsync(0, total, new ParallelOptions
             {
-                await uploadSliceAsync(buf.SliceIndex, buf.Rgba);
-                data.SliceReady[buf.SliceIndex] = true;
+                CancellationToken = ct,
+                MaxDegreeOfParallelism = Environment.ProcessorCount
+            }, async (i, innerCt) =>
+            {
+                resolved[i] = await resolver.TryResolveAsync(names[i], innerCt);
+                var n = Interlocked.Increment(ref resolvedSoFar);
+                onProgress?.Invoke(new LoadProgress(n, 0, 0, total));
+            });
+
+            int decodedSoFar = 0;
+            await Parallel.ForAsync(0, total, new ParallelOptions
+            {
+                CancellationToken = ct,
+                MaxDegreeOfParallelism = Environment.ProcessorCount
+            }, async (i, innerCt) =>
+            {
+                innerCt.ThrowIfCancellationRequested();
+                var src = resolved[i];
+                if (src is not null && src.Length > 0)
+                {
+                    var dst = new PooledBuffer(SliceBytes);
+                    bool ok = false;
+                    try
+                    {
+                        ok = await DDTImage.DecodeBaseColorOnlyIntoAsync(src.Memory, TargetSize, dst.Memory, innerCt);
+                        if (ok) buffers[i] = new SliceBuffer(i, dst);
+                    }
+                    finally { if (!ok) dst.Dispose(); }
+                }
+                var n = Interlocked.Increment(ref decodedSoFar);
+                onProgress?.Invoke(new LoadProgress(total, n, 0, total));
+            });
+
+            for (int i = 0; i < total; i++)
+            {
+                resolved[i]?.Dispose();
+                resolved[i] = null;
             }
-            uploaded++;
-            onProgress?.Invoke(new LoadProgress(total, total, uploaded, total));
+
+            int uploaded = 0;
+            for (int i = 0; i < total; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var slice = buffers[i];
+                if (slice is not null)
+                {
+                    try
+                    {
+                        await uploadSliceAsync(slice.SliceIndex, slice.Rgba.Memory);
+                        data.MarkSliceReady(slice.SliceIndex);
+                    }
+                    finally
+                    {
+                        slice.Dispose();
+                        buffers[i] = null;
+                    }
+                }
+                uploaded++;
+                onProgress?.Invoke(new LoadProgress(total, total, uploaded, total));
+            }
+        }
+        finally
+        {
+            for (int i = 0; i < total; i++)
+            {
+                resolved[i]?.Dispose();
+                buffers[i]?.Dispose();
+            }
         }
     }
 }

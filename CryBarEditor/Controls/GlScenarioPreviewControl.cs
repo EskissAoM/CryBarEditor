@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Numerics;
@@ -381,6 +382,11 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _entitiesUploaded = false;
         _entityCount = 0;
         _allocatedSlices = 0;
+
+        // Drain so any in-flight UploadSliceAsync TCS resolves instead of
+        // hanging forever when no further render frames will run.
+        while (_glActionQueue.TryDequeue(out var pending))
+            pending(gl);
     }
 
     protected override unsafe void OnOpenGlRender(GlInterface gl, int fb)
@@ -398,8 +404,10 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
         if (_data is null || !_glInitialized)
         {
-            // Drop pending uploads if there's no scenario; they'd have nothing to write to.
-            while (_glActionQueue.TryDequeue(out _)) { }
+            // Invoke pending actions so their TaskCompletionSources resolve;
+            // each action self-guards against missing GL state.
+            while (_glActionQueue.TryDequeue(out var pending))
+                pending(gl);
             return;
         }
 
@@ -467,8 +475,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
         // Per instance: pos.xyz + color.rgba.
         // AoMR stores entity X/Z in half-tile units (1 tile = 2 stored units).
-        // Terrain heights are transposed at parse time so the file's vx-outer
-        // layout becomes our vz-outer; entity coords go through unchanged.
         const int floatsPerInstance = 7;
         var inst = new float[_entityCount * floatsPerInstance];
         for (int i = 0; i < _entityCount; i++)
@@ -654,35 +660,38 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (_glTexImage3D != null)
             _glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, SliceSize, SliceSize, slices, 0, GL_RGBA, GL_UNSIGNED_BYTE, null);
 
-        var placeholder = new byte[SliceBytes];
-        for (int i = 0; i < placeholder.Length; i += 4)
+        var placeholder = ArrayPool<byte>.Shared.Rent(SliceBytes);
+        try
         {
-            placeholder[i + 0] = PlaceholderR;
-            placeholder[i + 1] = PlaceholderG;
-            placeholder[i + 2] = PlaceholderB;
-            placeholder[i + 3] = PlaceholderA;
-        }
-
-        if (_glTexSubImage3D != null)
-        {
-            fixed (byte* p = placeholder)
+            for (int i = 0; i < SliceBytes; i += 4)
             {
-                for (int s = 0; s < slices; s++)
-                    _glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, s, SliceSize, SliceSize, 1, GL_RGBA, GL_UNSIGNED_BYTE, p);
+                placeholder[i + 0] = PlaceholderR;
+                placeholder[i + 1] = PlaceholderG;
+                placeholder[i + 2] = PlaceholderB;
+                placeholder[i + 3] = PlaceholderA;
+            }
+
+            if (_glTexSubImage3D != null)
+            {
+                fixed (byte* p = placeholder)
+                {
+                    for (int s = 0; s < slices; s++)
+                        _glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, s, SliceSize, SliceSize, 1, GL_RGBA, GL_UNSIGNED_BYTE, p);
+                }
             }
         }
+        finally { ArrayPool<byte>.Shared.Return(placeholder); }
 
         _allocatedSlices = slices;
     }
 
     // Replaces slice `sliceIndex` in the texture array with `rgba` (256x256x4 bytes).
     // Returns a task that completes once the upload has executed on the GL thread.
-    public Task UploadSliceAsync(int sliceIndex, byte[] rgba)
+    // The caller must keep `rgba` alive until the returned task completes.
+    public Task UploadSliceAsync(int sliceIndex, ReadOnlyMemory<byte> rgba)
     {
-        if (rgba is null || rgba.Length != SliceBytes)
-            return Task.CompletedTask;
-        if (sliceIndex < 0)
-            return Task.CompletedTask;
+        if (rgba.Length != SliceBytes) return Task.CompletedTask;
+        if (sliceIndex < 0) return Task.CompletedTask;
 
         var tcs = new TaskCompletionSource();
         QueueGlAction(gl =>
@@ -694,7 +703,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
                     tcs.SetResult();
                     return;
                 }
-                UploadSliceCore(gl, sliceIndex, rgba);
+                UploadSliceCore(gl, sliceIndex, rgba.Span);
                 tcs.SetResult();
             }
             catch (Exception ex) { tcs.SetException(ex); }
@@ -702,7 +711,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         return tcs.Task;
     }
 
-    unsafe void UploadSliceCore(GlInterface gl, int sliceIndex, byte[] rgba)
+    unsafe void UploadSliceCore(GlInterface gl, int sliceIndex, ReadOnlySpan<byte> rgba)
     {
         if (_glTexSubImage3D == null) return;
 

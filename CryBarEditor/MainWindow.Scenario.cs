@@ -13,7 +13,6 @@ public partial class MainWindow
 {
     ScenarioPreviewData? _scenarioData;
     GlScenarioPreviewControl? _scenarioGl;
-    CancellationTokenSource? _scenarioCts;
 
     void ShowScenarioPreview(ScenarioFile scenario)
     {
@@ -50,10 +49,7 @@ public partial class MainWindow
 
         _scenarioGl.SetScenario(data);
 
-        _scenarioCts?.Cancel();
-        _scenarioCts?.Dispose();
-        _scenarioCts = CancellationTokenSource.CreateLinkedTokenSource(data.Cancellation.Token);
-        _ = LoadScenarioTexturesAsync(data, _scenarioCts.Token);
+        _ = LoadScenarioTexturesAsync(data, data.Cancellation.Token);
     }
 
     GlScenarioPreviewControl CreateScenarioGl()
@@ -108,10 +104,7 @@ public partial class MainWindow
 
     void HideScenarioPreview()
     {
-        _scenarioCts?.Cancel();
-        _scenarioCts?.Dispose();
-        _scenarioCts = null;
-
+        // Dispose() cancels the data's CTS, which propagates to the in-flight load.
         _scenarioData?.Dispose();
         _scenarioData = null;
 
