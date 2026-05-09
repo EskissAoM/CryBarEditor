@@ -34,6 +34,7 @@ public sealed class ScenarioPreviewData : IDisposable
     }
 
     public CancellationTokenSource Cancellation { get; } = new();
+    public ScenarioSelection Selection { get; } = new();
 
     public static ScenarioPreviewData? TryBuild(ScenarioFile scenario)
     {
