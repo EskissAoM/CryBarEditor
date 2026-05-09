@@ -18,6 +18,7 @@ namespace CryBarEditor.Controls;
 public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 {
     // Constants Avalonia's GlConsts doesn't surface
+    const int GL_LINES                = 0x0001;
     const int GL_TRIANGLES            = 0x0004;
     const int GL_DYNAMIC_DRAW         = 0x88E8;
     const int GL_TEXTURE0             = 0x84C0;
@@ -84,6 +85,12 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     int _waterIndexCount;
     bool _waterUploaded;
 
+    int _tileSelectProgram;
+    int _tileSelectVao, _tileSelectVbo;
+    int _uTileSelectMvp, _uTileSelectYScale, _uTileSelectColor;
+    int _tileSelectVertexCount;
+    bool _tileSelectDirty;
+
     int _billboardProgram;
     int _billboardVao, _billboardQuadVbo, _billboardInstanceVbo;
     int _uBillboardView, _uBillboardProj, _uBillboardSize, _uBillboardCamPos, _uBillboardFadeNear, _uBillboardFadeFar, _uBillboardYScale;
@@ -111,6 +118,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     unsafe delegate* unmanaged<uint, uint, void> _glVertexAttribDivisor;
     unsafe delegate* unmanaged<uint, int, int, int, void> _glDrawArraysInstanced;
     unsafe delegate* unmanaged<int, float, float, float, void> _glUniform3f;
+    unsafe delegate* unmanaged<int, float, float, float, float, void> _glUniform4f;
 
     public void QueueGlAction(Action<GlInterface> action)
     {
@@ -120,12 +128,18 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     public void SetScenario(ScenarioPreviewData? data)
     {
+        if (_data is not null)
+            _data.Selection.Changed -= OnSelectionChanged;
+
         _data = data;
         _meshUploaded = false;
         _waterUploaded = false;
         _entitiesUploaded = false;
+        _tileSelectDirty = true;
         if (data is not null)
         {
+            data.Selection.Changed += OnSelectionChanged;
+
             float cx = data.Terrain.MapSizeX * 0.5f;
             float cz = data.Terrain.MapSizeZ * 0.5f;
             float radius = MathF.Max(data.Terrain.MapSizeX, data.Terrain.MapSizeZ) * 0.55f;
@@ -140,6 +154,12 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         {
             _avgHeight = 0f;
         }
+        RequestNextFrameRendering();
+    }
+
+    void OnSelectionChanged()
+    {
+        _tileSelectDirty = true;
         RequestNextFrameRendering();
     }
 
@@ -297,6 +317,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _glVertexAttribDivisor = (delegate* unmanaged<uint, uint, void>)gl.GetProcAddress("glVertexAttribDivisor");
         _glDrawArraysInstanced = (delegate* unmanaged<uint, int, int, int, void>)gl.GetProcAddress("glDrawArraysInstanced");
         _glUniform3f = (delegate* unmanaged<int, float, float, float, void>)gl.GetProcAddress("glUniform3f");
+        _glUniform4f = (delegate* unmanaged<int, float, float, float, float, void>)gl.GetProcAddress("glUniform4f");
 
         string?[] missing =
         [
@@ -329,6 +350,31 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _waterVao = gl.GenVertexArray();
         _waterVbo = gl.GenBuffer();
         _waterEbo = gl.GenBuffer();
+
+        const string TileSelectVsBody = """
+            layout(location = 0) in vec3 aPos;
+            uniform mat4 uMVP;
+            uniform float uYScale;
+            void main()
+            {
+                vec3 p = aPos; p.y *= uYScale;
+                // Slight upward bias to avoid z-fighting against the textured ground.
+                p.y += 0.02;
+                gl_Position = uMVP * vec4(p, 1.0);
+            }
+            """;
+        const string TileSelectFsBody = """
+            out vec4 fragColor;
+            uniform vec4 uColor;
+            void main() { fragColor = uColor; }
+            """;
+        _tileSelectProgram = CreateProgram(gl, vsPreamble + TileSelectVsBody, fsPreamble + TileSelectFsBody);
+        _uTileSelectMvp    = gl.GetUniformLocationString(_tileSelectProgram, "uMVP");
+        _uTileSelectYScale = gl.GetUniformLocationString(_tileSelectProgram, "uYScale");
+        _uTileSelectColor  = gl.GetUniformLocationString(_tileSelectProgram, "uColor");
+
+        _tileSelectVao = gl.GenVertexArray();
+        _tileSelectVbo = gl.GenBuffer();
 
         _billboardProgram = CreateProgram(gl, vsPreamble + BillboardVertexShaderBody, fsPreamble + BillboardFragmentShaderBody);
         _uBillboardView     = gl.GetUniformLocationString(_billboardProgram, "uView");
@@ -376,6 +422,11 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (_waterVbo != 0)      { gl.DeleteBuffer(_waterVbo); _waterVbo = 0; }
         if (_waterEbo != 0)      { gl.DeleteBuffer(_waterEbo); _waterEbo = 0; }
         if (_waterVao != 0)      { gl.DeleteVertexArray(_waterVao); _waterVao = 0; }
+        if (_tileSelectProgram != 0) { gl.DeleteProgram(_tileSelectProgram); _tileSelectProgram = 0; }
+        if (_tileSelectVbo != 0)     { gl.DeleteBuffer(_tileSelectVbo); _tileSelectVbo = 0; }
+        if (_tileSelectVao != 0)     { gl.DeleteVertexArray(_tileSelectVao); _tileSelectVao = 0; }
+        _tileSelectVertexCount = 0;
+        _tileSelectDirty = false;
         if (_billboardProgram != 0)     { gl.DeleteProgram(_billboardProgram); _billboardProgram = 0; }
         if (_billboardQuadVbo != 0)     { gl.DeleteBuffer(_billboardQuadVbo); _billboardQuadVbo = 0; }
         if (_billboardInstanceVbo != 0) { gl.DeleteBuffer(_billboardInstanceVbo); _billboardInstanceVbo = 0; }
@@ -387,6 +438,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _entitiesUploaded = false;
         _entityCount = 0;
         _allocatedSlices = 0;
+        _tileSelectVertexCount = 0;
 
         // Drain so any in-flight UploadSliceAsync TCS resolves instead of
         // hanging forever when no further render frames will run.
@@ -458,6 +510,13 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             }
             DrawWater(gl, mvpCopy);
         }
+
+        if (_tileSelectDirty)
+        {
+            UploadTileSelectionMesh(gl);
+            _tileSelectDirty = false;
+        }
+        DrawTileSelection(gl, mvpCopy);
 
         if (_showEntities)
         {
@@ -618,6 +677,66 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
         gl.EnableVertexAttribArray(0);
         gl.VertexAttribPointer(0, 3, GL_FLOAT_TYPE, 0, 3 * sizeof(float), IntPtr.Zero);
+        gl.BindVertexArray(0);
+    }
+
+    unsafe void UploadTileSelectionMesh(GlInterface gl)
+    {
+        if (_data is null) { _tileSelectVertexCount = 0; return; }
+        var sel = _data.Selection;
+        int count = sel.Tiles.Count;
+        if (count == 0) { _tileSelectVertexCount = 0; return; }
+
+        int mapX = _data.Terrain.MapSizeX;
+        int rowStride = mapX + 1;
+        var heights = _data.Terrain.Heights;
+        // 4 edges per tile, 2 endpoints per edge, 3 floats per endpoint = 24 floats per tile.
+        var verts = new float[count * 24];
+        int o = 0;
+        foreach (int tileIdx in sel.Tiles)
+        {
+            int tx = tileIdx % mapX;
+            int tz = tileIdx / mapX;
+            float h00 = heights[tz       * rowStride + tx    ];
+            float h10 = heights[tz       * rowStride + tx + 1];
+            float h11 = heights[(tz + 1) * rowStride + tx + 1];
+            float h01 = heights[(tz + 1) * rowStride + tx    ];
+
+            // Edge 1: (tx, tz) -> (tx+1, tz)
+            verts[o++] = tx;     verts[o++] = h00; verts[o++] = tz;
+            verts[o++] = tx + 1; verts[o++] = h10; verts[o++] = tz;
+            // Edge 2: (tx+1, tz) -> (tx+1, tz+1)
+            verts[o++] = tx + 1; verts[o++] = h10; verts[o++] = tz;
+            verts[o++] = tx + 1; verts[o++] = h11; verts[o++] = tz + 1;
+            // Edge 3: (tx+1, tz+1) -> (tx, tz+1)
+            verts[o++] = tx + 1; verts[o++] = h11; verts[o++] = tz + 1;
+            verts[o++] = tx;     verts[o++] = h01; verts[o++] = tz + 1;
+            // Edge 4: (tx, tz+1) -> (tx, tz)
+            verts[o++] = tx;     verts[o++] = h01; verts[o++] = tz + 1;
+            verts[o++] = tx;     verts[o++] = h00; verts[o++] = tz;
+        }
+
+        gl.BindVertexArray(_tileSelectVao);
+        gl.BindBuffer(GL_ARRAY_BUFFER, _tileSelectVbo);
+        fixed (float* p = verts)
+            gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(verts.Length * sizeof(float)), (IntPtr)p, GL_DYNAMIC_DRAW);
+        gl.EnableVertexAttribArray(0);
+        gl.VertexAttribPointer(0, 3, GL_FLOAT_TYPE, 0, 3 * sizeof(float), IntPtr.Zero);
+        gl.BindVertexArray(0);
+
+        _tileSelectVertexCount = count * 8;
+    }
+
+    unsafe void DrawTileSelection(GlInterface gl, Matrix4x4 mvp)
+    {
+        if (_tileSelectVertexCount == 0) return;
+        gl.UseProgram(_tileSelectProgram);
+        gl.UniformMatrix4fv(_uTileSelectMvp, 1, false, &mvp.M11);
+        gl.Uniform1f(_uTileSelectYScale, HeightScale);
+        // Yellow outline.
+        if (_glUniform4f != null) _glUniform4f(_uTileSelectColor, 1.0f, 0.82f, 0.30f, 1.0f);
+        gl.BindVertexArray(_tileSelectVao);
+        gl.DrawArrays(GL_LINES, 0, _tileSelectVertexCount);
         gl.BindVertexArray(0);
     }
 
