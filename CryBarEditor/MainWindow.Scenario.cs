@@ -70,8 +70,9 @@ public partial class MainWindow
         var gl = new GlScenarioPreviewControl();
         gl.CursorHit += hit =>
             Dispatcher.UIThread.Post(() => _scenarioInspector.SetCursor(hit, _scenarioData));
-        gl.EntitySelected += entity =>
-            Dispatcher.UIThread.Post(() => _scenarioInspector.SetEntity(entity));
+        // EntitySelected wiring removed; Task 8 wires LeftClicked/RightClicked through ScenarioSelectionInput.
+        // gl.EntitySelected += entity =>
+        //     Dispatcher.UIThread.Post(() => _scenarioInspector.SetEntity(entity));
         gl.ErrorChanged += msg =>
             Dispatcher.UIThread.Post(() =>
             {

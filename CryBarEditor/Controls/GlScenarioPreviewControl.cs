@@ -86,8 +86,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     int _billboardProgram;
     int _billboardVao, _billboardQuadVbo, _billboardInstanceVbo;
-    int _uBillboardView, _uBillboardProj, _uBillboardSize, _uBillboardCamPos, _uBillboardFadeNear, _uBillboardFadeFar, _uBillboardSelected, _uBillboardYScale;
-    int _selectedEntityIndex = -1;
+    int _uBillboardView, _uBillboardProj, _uBillboardSize, _uBillboardCamPos, _uBillboardFadeNear, _uBillboardFadeFar, _uBillboardYScale;
     bool _entitiesUploaded;
     int _entityCount;
     float _avgHeight;
@@ -98,9 +97,10 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     bool _glInitialized;
 
     bool _leftDragging, _rightDragging;
-    bool _leftDragMoved;
+    bool _leftDragMoved, _rightDragMoved;
     Avalonia.Point _lastPointerPos;
     Avalonia.Point _leftPressPos;
+    Avalonia.Point _rightPressPos;
 
     readonly ConcurrentQueue<Action<GlInterface>> _glActionQueue = new();
 
@@ -124,7 +124,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _meshUploaded = false;
         _waterUploaded = false;
         _entitiesUploaded = false;
-        _selectedEntityIndex = -1;
         if (data is not null)
         {
             float cx = data.Terrain.MapSizeX * 0.5f;
@@ -187,28 +186,23 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         uniform vec3 uCamPos;
         uniform float uFadeNear;
         uniform float uFadeFar;
-        uniform int uSelectedIdx;
         uniform float uYScale;
         out vec2 vUv;
         out vec4 vColor;
         out float vFade;
-        flat out int vSelected;
         void main() {
             // Apply the same Y scale as terrain, then lift above the (already scaled) ground.
             vec3 wp = vec3(aWorldPos.x, aWorldPos.y * uYScale + 0.4, aWorldPos.z);
-            // Selected entity gets a slightly bigger disc so it stands out at any zoom.
-            float sizeMul = (gl_InstanceID == uSelectedIdx) ? 1.2 : 1.0;
             // World-anchored billboard: offset in view-space (X right, Y up relative
             // to camera) so the disc has a constant world radius and zooms naturally
             // with the terrain instead of staying fixed-pixel.
             vec4 viewPos = uView * vec4(wp, 1.0);
-            viewPos.xy += aQuad * uSize * sizeMul;
+            viewPos.xy += aQuad * uSize;
             gl_Position = uProj * viewPos;
             vUv = aQuad;
             vColor = aColor;
             float d = distance(uCamPos, wp);
             vFade = 1.0 - smoothstep(uFadeNear, uFadeFar, d);
-            vSelected = (gl_InstanceID == uSelectedIdx) ? 1 : 0;
         }
         """;
 
@@ -216,7 +210,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         in vec2 vUv;
         in vec4 vColor;
         in float vFade;
-        flat in int vSelected;
         out vec4 fragColor;
         void main() {
             float r = length(vUv);
@@ -224,13 +217,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             float edge = smoothstep(0.92, 1.0, r);
             vec4 col = mix(vColor, vec4(0.0, 0.0, 0.0, 1.0), edge);
             col.a *= mix(0.35, 1.0, clamp(vFade, 0.0, 1.0));
-            if (vSelected == 1) {
-                // Bright white ring at the disc edge + fade override so the
-                // selection stays readable even on far entities.
-                float ring = smoothstep(0.78, 0.92, r) * (1.0 - smoothstep(0.92, 1.0, r));
-                col.rgb = mix(col.rgb, vec3(1.0, 1.0, 1.0), ring);
-                col.a = max(col.a, 0.95);
-            }
             fragColor = col;
         }
         """;
@@ -351,7 +337,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _uBillboardCamPos   = gl.GetUniformLocationString(_billboardProgram, "uCamPos");
         _uBillboardFadeNear = gl.GetUniformLocationString(_billboardProgram, "uFadeNear");
         _uBillboardFadeFar  = gl.GetUniformLocationString(_billboardProgram, "uFadeFar");
-        _uBillboardSelected = gl.GetUniformLocationString(_billboardProgram, "uSelectedIdx");
         _uBillboardYScale   = gl.GetUniformLocationString(_billboardProgram, "uYScale");
         _billboardVao = gl.GenVertexArray();
         _billboardQuadVbo = gl.GenBuffer();
@@ -568,7 +553,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             _glUniform3f(_uBillboardCamPos, eyePos.X, eyePos.Y, eyePos.Z);
         gl.Uniform1f(_uBillboardFadeNear, fadeNear);
         gl.Uniform1f(_uBillboardFadeFar, fadeFar);
-        gl.Uniform1i(_uBillboardSelected, _selectedEntityIndex);
         gl.Uniform1f(_uBillboardYScale, HeightScale);
         gl.BindVertexArray(_billboardVao);
         _glDrawArraysInstanced(GL_TRIANGLES, 0, 6, _entityCount);
@@ -594,8 +578,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     public event Action<WorldRayHit?>? CursorHit;
 
-    /// <summary>Fires when the user clicks an entity billboard (or empty space, with `null`).</summary>
-    public event Action<EntityMarker?>? EntitySelected;
+    public event Action<PickHit, bool>? LeftClicked;
+    public event Action<PickHit, bool>? RightClicked;
 
     public event Action<string?>? ErrorChanged;
 
@@ -756,7 +740,12 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             _leftDragMoved = false;
             _leftPressPos = _lastPointerPos;
         }
-        if (props.IsRightButtonPressed) _rightDragging = true;
+        if (props.IsRightButtonPressed)
+        {
+            _rightDragging = true;
+            _rightDragMoved = false;
+            _rightPressPos = _lastPointerPos;
+        }
         e.Handled = true;
     }
 
@@ -765,10 +754,18 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         base.OnPointerReleased(e);
         var props = e.GetCurrentPoint(this).Properties;
         bool wasLeftDown = _leftDragging;
+        bool wasRightDown = _rightDragging;
         if (!props.IsLeftButtonPressed) _leftDragging = false;
         if (!props.IsRightButtonPressed) _rightDragging = false;
+
+        var pos = e.GetPosition(this);
+        bool ctrl = (e.KeyModifiers & Avalonia.Input.KeyModifiers.Control) != 0;
+
         if (wasLeftDown && !_leftDragMoved)
-            PickEntity(e.GetPosition(this));
+            LeftClicked?.Invoke(ComputePickHit(pos), ctrl);
+        if (wasRightDown && !_rightDragMoved)
+            RightClicked?.Invoke(ComputePickHit(pos), ctrl);
+
         e.Handled = true;
     }
 
@@ -782,7 +779,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
         if (_leftDragging)
         {
-            // Treat as drag once movement crosses a small dead-zone.
             double moved = Math.Abs(pos.X - _leftPressPos.X) + Math.Abs(pos.Y - _leftPressPos.Y);
             if (moved > 4) _leftDragMoved = true;
             _camera.Rotate(-dx * 0.3f, dy * 0.3f);
@@ -791,6 +787,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         }
         else if (_rightDragging)
         {
+            double moved = Math.Abs(pos.X - _rightPressPos.X) + Math.Abs(pos.Y - _rightPressPos.Y);
+            if (moved > 4) _rightDragMoved = true;
             _camera.PanGround(-dx * 0.003f, dy * 0.003f);
             RequestNextFrameRendering();
             e.Handled = true;
@@ -801,11 +799,11 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         }
     }
 
-    void PickEntity(Avalonia.Point pos)
+    int PickEntityIndex(Avalonia.Point pos)
     {
-        if (_data is null || _entityCount == 0) { SetSelected(null); return; }
+        if (_data is null || _entityCount == 0) return -1;
         var bounds = Bounds;
-        if (bounds.Width <= 0 || bounds.Height <= 0) { SetSelected(null); return; }
+        if (bounds.Width <= 0 || bounds.Height <= 0) return -1;
 
         float aspect = (float)(bounds.Width / bounds.Height);
         var view = _camera.GetViewMatrix();
@@ -848,17 +846,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
                 best = i;
             }
         }
-
-        SetSelected(best);
-    }
-
-    void SetSelected(int? index)
-    {
-        int newIdx = index ?? -1;
-        if (newIdx == _selectedEntityIndex) return;
-        _selectedEntityIndex = newIdx;
-        EntitySelected?.Invoke(newIdx >= 0 && _data is not null ? _data.Entities[newIdx] : null);
-        RequestNextFrameRendering();
+        return best;
     }
 
     void EmitCursorHit(Avalonia.Point pos)
@@ -907,6 +895,57 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         float height = vIdx < _data.Terrain.Heights.Length ? _data.Terrain.Heights[vIdx] : 0f;
 
         sub(new WorldRayHit(tileX, tileZ, vertexX, vertexZ, height));
+    }
+
+    PickHit ComputePickHit(Avalonia.Point pos)
+    {
+        int? entityIdx = TryPickEntityIdx(pos);
+        int? tileIdx = TryPickTileIdx(pos);
+        uint? entityId = null;
+        if (entityIdx is int ei && _data is not null)
+            entityId = _data.Entities[ei].EntityId;
+        return new PickHit(tileIdx, entityId);
+    }
+
+    int? TryPickEntityIdx(Avalonia.Point pos)
+    {
+        if (_data is null || _entityCount == 0) return null;
+        int idx = PickEntityIndex(pos);
+        return idx < 0 ? null : idx;
+    }
+
+    int? TryPickTileIdx(Avalonia.Point pos)
+    {
+        if (_data is null) return null;
+        var bounds = Bounds;
+        if (bounds.Width <= 0 || bounds.Height <= 0) return null;
+
+        float ndcX = (float)(2.0 * pos.X / bounds.Width - 1.0);
+        float ndcY = (float)(1.0 - 2.0 * pos.Y / bounds.Height);
+        float aspect = (float)(bounds.Width / bounds.Height);
+        var view = _camera.GetViewMatrix();
+        var proj = _camera.GetProjectionMatrix(aspect);
+        var mvp = view * proj;
+        if (!Matrix4x4.Invert(mvp, out var invMvp)) return null;
+
+        var nearH = Vector4.Transform(new Vector4(ndcX, ndcY, -1f, 1f), invMvp);
+        var farH  = Vector4.Transform(new Vector4(ndcX, ndcY,  1f, 1f), invMvp);
+        if (nearH.W == 0 || farH.W == 0) return null;
+        var nearW = new Vector3(nearH.X / nearH.W, nearH.Y / nearH.W, nearH.Z / nearH.W);
+        var farW  = new Vector3(farH.X  / farH.W,  farH.Y  / farH.W,  farH.Z  / farH.W);
+        var dir = Vector3.Normalize(farW - nearW);
+        if (MathF.Abs(dir.Y) < 1e-5f) return null;
+        float t = (_avgHeight * HeightScale - nearW.Y) / dir.Y;
+        if (t < 0) return null;
+        var hit = nearW + dir * t;
+
+        int mapX = _data.Terrain.MapSizeX;
+        int mapZ = _data.Terrain.MapSizeZ;
+        if (hit.X < 0 || hit.X > mapX || hit.Z < 0 || hit.Z > mapZ) return null;
+
+        int tx = Math.Clamp((int)hit.X, 0, mapX - 1);
+        int tz = Math.Clamp((int)hit.Z, 0, mapZ - 1);
+        return tz * mapX + tx;
     }
 
     protected override void OnPointerWheelChanged(Avalonia.Input.PointerWheelEventArgs e)
