@@ -753,6 +753,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
         gl.Enable(GL_BLEND);
         if (_glBlendFunc != null) _glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        // Selection overlay must always be visible -- water/terrain otherwise occlude it.
+        gl.Disable(GL_DEPTH_TEST);
 
         gl.UseProgram(_entitySelectProgram);
         gl.UniformMatrix4fv(_uEntitySelectView, 1, false, &view.M11);
@@ -763,6 +765,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _glDrawArraysInstanced(GL_TRIANGLES, 0, 6, _entitySelectInstanceCount);
         gl.BindVertexArray(0);
 
+        gl.Enable(GL_DEPTH_TEST);
         gl.Disable(GL_BLEND);
     }
 
@@ -881,9 +884,12 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.Uniform1f(_uTileSelectYScale, HeightScale);
         // Yellow outline.
         if (_glUniform4f != null) _glUniform4f(_uTileSelectColor, 1.0f, 0.82f, 0.30f, 1.0f);
+        // Selection overlay must always be visible -- water/billboards otherwise occlude it.
+        gl.Disable(GL_DEPTH_TEST);
         gl.BindVertexArray(_tileSelectVao);
         gl.DrawArrays(GL_LINES, 0, _tileSelectVertexCount);
         gl.BindVertexArray(0);
+        gl.Enable(GL_DEPTH_TEST);
     }
 
     unsafe void UploadMesh(GlInterface gl, ScenarioPreviewData data)
@@ -1199,18 +1205,64 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         var nearW = new Vector3(nearH.X / nearH.W, nearH.Y / nearH.W, nearH.Z / nearH.W);
         var farW  = new Vector3(farH.X  / farH.W,  farH.Y  / farH.W,  farH.Z  / farH.W);
         var dir = Vector3.Normalize(farW - nearW);
-        if (MathF.Abs(dir.Y) < 1e-5f) return null;
-        float t = (_avgHeight * HeightScale - nearW.Y) / dir.Y;
-        if (t < 0) return null;
-        var hit = nearW + dir * t;
 
         int mapX = _data.Terrain.MapSizeX;
         int mapZ = _data.Terrain.MapSizeZ;
-        if (hit.X < 0 || hit.X > mapX || hit.Z < 0 || hit.Z > mapZ) return null;
+        int rowStride = mapX + 1;
+        var heights = _data.Terrain.Heights;
 
-        int tx = Math.Clamp((int)hit.X, 0, mapX - 1);
-        int tz = Math.Clamp((int)hit.Z, 0, mapZ - 1);
-        return tz * mapX + tx;
+        // Clip ray to the map's XZ bounds so we don't march outside the heightfield.
+        float tMin = 0f, tMax = float.MaxValue;
+        if (MathF.Abs(dir.X) > 1e-6f)
+        {
+            float t1 = (0     - nearW.X) / dir.X;
+            float t2 = (mapX  - nearW.X) / dir.X;
+            if (t1 > t2) (t1, t2) = (t2, t1);
+            tMin = MathF.Max(tMin, t1);
+            tMax = MathF.Min(tMax, t2);
+        }
+        else if (nearW.X < 0 || nearW.X > mapX) return null;
+        if (MathF.Abs(dir.Z) > 1e-6f)
+        {
+            float t1 = (0     - nearW.Z) / dir.Z;
+            float t2 = (mapZ  - nearW.Z) / dir.Z;
+            if (t1 > t2) (t1, t2) = (t2, t1);
+            tMin = MathF.Max(tMin, t1);
+            tMax = MathF.Min(tMax, t2);
+        }
+        else if (nearW.Z < 0 || nearW.Z > mapZ) return null;
+        if (tMax <= 0 || tMin >= tMax) return null;
+        tMin = MathF.Max(tMin, 0f);
+
+        // March the ray, sampling bilinearly-interpolated terrain height. The first
+        // tile where the ray's Y drops at or below the surface is the hit. This
+        // matches what the user clicks on slopes -- the avg-plane fallback used
+        // before this was off by a tile or two on tilted edges.
+        const float StepDt = 0.25f;
+        int safety = 4 * (mapX + mapZ) + 8;
+        int? prevTile = null;
+        for (float t = tMin; t < tMax && safety-- > 0; t += StepDt)
+        {
+            var p = nearW + dir * t;
+            if (p.X < 0 || p.X >= mapX || p.Z < 0 || p.Z >= mapZ) break;
+
+            int tx = (int)p.X;
+            int tz = (int)p.Z;
+            int tileIdx = tz * mapX + tx;
+
+            float fx = p.X - tx;
+            float fz = p.Z - tz;
+            float h00 = heights[tz       * rowStride + tx    ];
+            float h10 = heights[tz       * rowStride + tx + 1];
+            float h11 = heights[(tz + 1) * rowStride + tx + 1];
+            float h01 = heights[(tz + 1) * rowStride + tx    ];
+            float th = (h00 * (1 - fx) * (1 - fz) + h10 * fx * (1 - fz)
+                      + h11 * fx * fz + h01 * (1 - fx) * fz) * HeightScale;
+
+            if (p.Y <= th) return prevTile ?? tileIdx;
+            prevTile = tileIdx;
+        }
+        return null;
     }
 
     protected override void OnPointerWheelChanged(Avalonia.Input.PointerWheelEventArgs e)
