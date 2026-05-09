@@ -522,6 +522,19 @@
 								<DockPanel x:Name="_scenario3dPanel" IsVisible="False">
 									<controls:ScenarioInspectorPanel x:Name="_scenarioInspector"
 																	 DockPanel.Dock="Right"/>
+									<StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
+												HorizontalAlignment="Right" Margin="0,4,0,0">
+										<CheckBox x:Name="_showScenarioEntitiesCheckbox"
+												  Content="Entities"
+												  IsChecked="True"
+												  IsCheckedChanged="ShowScenarioEntities_Toggled"
+												  Margin="0,0,8,0" />
+										<CheckBox x:Name="_showScenarioWaterCheckbox"
+												  Content="Water"
+												  IsChecked="True"
+												  IsCheckedChanged="ShowScenarioWater_Toggled"
+												  Margin="0,0,8,0" />
+									</StackPanel>
 									<Grid>
 										<Border x:Name="_scenarioCanvasContainer" Background="#0a0a0a"/>
 										<Border x:Name="_scenarioErrorPanel"

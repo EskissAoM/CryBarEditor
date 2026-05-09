@@ -49,6 +49,30 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     readonly OrbitCamera _camera = new();
     ScenarioPreviewData? _data;
     bool _meshUploaded;
+    bool _showEntities = true;
+    bool _showWater = true;
+
+    public bool ShowEntities
+    {
+        get => _showEntities;
+        set
+        {
+            if (_showEntities == value) return;
+            _showEntities = value;
+            RequestNextFrameRendering();
+        }
+    }
+
+    public bool ShowWater
+    {
+        get => _showWater;
+        set
+        {
+            if (_showWater == value) return;
+            _showWater = value;
+            RequestNextFrameRendering();
+        }
+    }
 
     int _heightProgram;
     int _heightVao, _heightVbo, _heightEbo;
@@ -440,7 +464,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.BindVertexArray(_heightVao);
         gl.DrawElements(GL_TRIANGLES, _data.TerrainMesh.Indices.Length, GL_UNSIGNED_INT_TYPE, IntPtr.Zero);
 
-        if (_data.WaterMesh is not null)
+        if (_showWater && _data.WaterMesh is not null)
         {
             if (!_waterUploaded)
             {
@@ -450,13 +474,16 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             DrawWater(gl, mvpCopy);
         }
 
-        if (!_entitiesUploaded)
+        if (_showEntities)
         {
-            UploadEntities(gl, _data);
-            _entitiesUploaded = true;
+            if (!_entitiesUploaded)
+            {
+                UploadEntities(gl, _data);
+                _entitiesUploaded = true;
+            }
+            if (_entityCount > 0)
+                DrawEntities(gl, view, proj, eyePos);
         }
-        if (_entityCount > 0)
-            DrawEntities(gl, view, proj, eyePos);
 
         gl.BindVertexArray(0);
         gl.UseProgram(0);

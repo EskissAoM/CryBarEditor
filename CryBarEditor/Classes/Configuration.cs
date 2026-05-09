@@ -28,6 +28,9 @@ public class Configuration
     public bool? FilterOnlyOverriddenBarEntries { get; set; }
     public bool? Show3DMarkers { get; set; }
     public bool? Show3DGroundGrid { get; set; }
+    public bool? Show3DTextured { get; set; }
+    public bool? ShowScenarioEntities { get; set; }
+    public bool? ShowScenarioWater { get; set; }
 }
 
 [JsonSourceGenerationOptions(DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]

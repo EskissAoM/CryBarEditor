@@ -66,11 +66,27 @@ public partial class MainWindow
                 _scenarioErrorText.Text = msg ?? "";
                 _scenarioErrorPanel.IsVisible = msg is not null;
             });
+        gl.ShowEntities = _showScenarioEntitiesCheckbox.IsChecked == true;
+        gl.ShowWater = _showScenarioWaterCheckbox.IsChecked == true;
         return gl;
     }
 
     void ScenarioTab_SelectionChanged(object? sender, SelectionChangedEventArgs e)
         => ToggleTabPanels(_scenarioTabStrip, _scenarioXmlHost, _scenario3dPanel);
+
+    void ShowScenarioEntities_Toggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_scenarioGl != null)
+            _scenarioGl.ShowEntities = _showScenarioEntitiesCheckbox.IsChecked == true;
+        SaveConfiguration();
+    }
+
+    void ShowScenarioWater_Toggled(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_scenarioGl != null)
+            _scenarioGl.ShowWater = _showScenarioWaterCheckbox.IsChecked == true;
+        SaveConfiguration();
+    }
 
     void UpdateScenarioProgress(ScenarioTextureLoader.LoadProgress p)
     {

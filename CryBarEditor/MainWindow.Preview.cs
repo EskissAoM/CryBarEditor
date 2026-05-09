@@ -43,7 +43,7 @@ public partial class MainWindow
     readonly Dictionary<string, bool> _textureAvailability = new();
     CancellationTokenSource? _textureLoadCts;
     string? _currentTmmFileName;
-    bool _useTextured3D; // Per-session preference; not persisted.
+    bool _useTextured3D;
 
     CancellationToken RestartTextureLoadCts()
     {
@@ -955,6 +955,7 @@ public partial class MainWindow
         _useTextured3D = _texturedToggle.IsChecked == true;
         if (_glPreview != null) _glPreview.UseTexturedMode = _useTextured3D;
         TryKickTextureLoadForCurrent();
+        SaveConfiguration();
     }
 
     PreviewMeshData? _pendingMeshData;
