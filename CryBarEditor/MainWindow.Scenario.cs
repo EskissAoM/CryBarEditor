@@ -58,7 +58,8 @@ public partial class MainWindow
         _scenarioCanvasContainer.IsVisible = true;
         _scenarioErrorPanel.IsVisible = false;
         _scenarioInspector.SetCursor(null, null);
-        _scenarioInspector.SetEntity(null);
+        // SetEntity removed; Task 8 calls UpdateSelection instead.
+        // _scenarioInspector.SetEntity(null);
 
         _scenarioGl.SetScenario(data);
 

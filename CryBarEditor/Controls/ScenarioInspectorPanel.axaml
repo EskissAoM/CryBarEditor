@@ -62,14 +62,45 @@
             </StackPanel>
         </Border>
 
-        <!-- Scrollable middle: cursor + selected entity. -->
+        <!-- Scrollable middle: cursor + unified Selected section. -->
         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Margin="8" Spacing="6">
                 <TextBlock Text="Cursor" FontWeight="Bold" Foreground="#888"/>
                 <TextBlock x:Name="_cursorInfo" Text="(hover map)" Foreground="#ddd" FontFamily="Cascadia Code,Consolas"/>
-                <Separator Margin="0,8" Background="#333"/>
-                <TextBlock Text="Selected entity" FontWeight="Bold" Foreground="#888"/>
-                <TextBlock x:Name="_entityInfo" Text="(click an entity)" Foreground="#ddd" FontFamily="Cascadia Code,Consolas" TextWrapping="Wrap"/>
+
+                <StackPanel x:Name="_selectedSection" IsVisible="False" Spacing="4" Margin="0,8,0,0">
+                    <Separator Background="#333"/>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock x:Name="_selectedHeader" Grid.Column="0"
+                                   Text="Selected" FontWeight="Bold" Foreground="#888"
+                                   VerticalAlignment="Center"/>
+                        <Button x:Name="_selectedListButton" Grid.Column="1"
+                                Background="Transparent" BorderThickness="0" Padding="6,2"
+                                ToolTip.Tip="Show all selected items"
+                                Cursor="Hand" VerticalAlignment="Center"
+                                IsVisible="False">
+                            <Button.Flyout>
+                                <Flyout>
+                                    <ScrollViewer MaxWidth="380" MaxHeight="360"
+                                                  VerticalScrollBarVisibility="Auto">
+                                        <TextBlock x:Name="_selectedListText"
+                                                   TextWrapping="Wrap" FontSize="11"
+                                                   Foreground="#ddd"/>
+                                    </ScrollViewer>
+                                </Flyout>
+                            </Button.Flyout>
+                            <micons:MaterialIcon Kind="InformationOutline"
+                                                 Width="16" Height="16"
+                                                 Foreground="#888"/>
+                        </Button>
+                    </Grid>
+                    <TextBlock x:Name="_selectedFields" Foreground="#ddd"
+                               FontFamily="Cascadia Code,Consolas" TextWrapping="Wrap"/>
+                    <Button x:Name="_selectedClearButton" Content="Clear selection"
+                            Click="ClearSelectionClick"
+                            HorizontalAlignment="Stretch" Margin="0,4,0,0"
+                            Background="#2c3a4f" Foreground="#cfd8e8" Padding="8,4"/>
+                </StackPanel>
             </StackPanel>
         </ScrollViewer>
 

@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using CryBar.Scenario;
 using CryBarEditor.Classes;
+using System.Collections.Generic;
 
 namespace CryBarEditor.Controls;
 
@@ -46,18 +47,137 @@ public partial class ScenarioInspectorPanel : UserControl
             $"Texture: {texName}";
     }
 
-    public void SetEntity(EntityMarker? marker)
+    public event System.Action? ClearSelectionRequested;
+
+    void ClearSelectionClick(object? sender, RoutedEventArgs e) => ClearSelectionRequested?.Invoke();
+
+    public void UpdateSelection(ScenarioPreviewData? data)
     {
-        if (marker is null)
+        if (data is null || data.Selection.Kind == ScenarioSelectionKind.None)
         {
-            _entityInfo.Text = "(click an entity)";
+            _selectedSection.IsVisible = false;
             return;
         }
-        _entityInfo.Text =
-            $"Proto: {marker.ProtoName}\n" +
-            $"Player: {marker.PlayerId}\n" +
-            $"Position: ({marker.Position.X:F2}, {marker.Position.Y:F2}, {marker.Position.Z:F2})\n" +
-            $"Entity ID: {marker.EntityId}";
+
+        _selectedSection.IsVisible = true;
+
+        if (data.Selection.Kind == ScenarioSelectionKind.Tiles)
+            UpdateTileSelection(data);
+        else
+            UpdateEntitySelection(data);
+    }
+
+    void UpdateTileSelection(ScenarioPreviewData data)
+    {
+        var sel = data.Selection;
+        int count = sel.Tiles.Count;
+        _selectedHeader.Text = count == 1 ? "Selected tile" : $"Selected {count} tiles";
+
+        var terrain = data.Terrain;
+        int rowStride = terrain.MapSizeX + 1;
+
+        // Aggregate over selected tiles. Field is MIXED if any value differs.
+        float? height = null; bool heightMixed = false;
+        string? group = null; bool groupMixed = false;
+        string? texture = null; bool textureMixed = false;
+        byte? waterType = null; bool waterMixed = false;
+
+        var lines = new System.Text.StringBuilder();
+        foreach (int idx in sel.Tiles)
+        {
+            int tx = idx % terrain.MapSizeX;
+            int tz = idx / terrain.MapSizeX;
+
+            float h00 = terrain.Heights[tz       * rowStride + tx    ];
+            float h10 = terrain.Heights[tz       * rowStride + tx + 1];
+            float h11 = terrain.Heights[(tz + 1) * rowStride + tx + 1];
+            float h01 = terrain.Heights[(tz + 1) * rowStride + tx    ];
+            float avgH = (h00 + h10 + h11 + h01) * 0.25f;
+
+            byte g = terrain.TileGroups[idx];
+            ushort s = terrain.TileSubs[idx];
+            string gName = "?", tName = "?";
+            if (g < terrain.TerrainGroups.Length)
+            {
+                gName = terrain.TerrainGroups[g].Name;
+                if (s < terrain.TerrainGroups[g].Textures.Length)
+                    tName = terrain.TerrainGroups[g].Textures[s];
+            }
+
+            byte wt = terrain.WaterType[idx];
+
+            if (height is null) height = avgH;
+            else if (!heightMixed && System.Math.Abs(avgH - height.Value) > 1e-3f) heightMixed = true;
+
+            if (group is null) group = gName;
+            else if (!groupMixed && group != gName) groupMixed = true;
+
+            if (texture is null) texture = tName;
+            else if (!textureMixed && texture != tName) textureMixed = true;
+
+            if (waterType is null) waterType = wt;
+            else if (!waterMixed && waterType != wt) waterMixed = true;
+
+            if (count > 1) lines.AppendLine($"({tx}, {tz}) {tName}");
+        }
+
+        _selectedFields.Text =
+            $"Height: {(heightMixed ? "MIXED" : (height?.ToString("F2") ?? "?"))}\n" +
+            $"Group: {(groupMixed ? "MIXED" : group ?? "?")}\n" +
+            $"Texture: {(textureMixed ? "MIXED" : texture ?? "?")}\n" +
+            $"Water type: {(waterMixed ? "MIXED" : waterType?.ToString() ?? "?")}";
+
+        _selectedListButton.IsVisible = count > 1;
+        if (count > 1) _selectedListText.Text = lines.ToString().TrimEnd();
+    }
+
+    void UpdateEntitySelection(ScenarioPreviewData data)
+    {
+        var sel = data.Selection;
+        int count = sel.Entities.Count;
+        _selectedHeader.Text = count == 1 ? "Selected entity" : $"Selected {count} entities";
+
+        // Build id->index lookup once.
+        var idToIdx = new Dictionary<uint, int>(data.Entities.Length);
+        for (int i = 0; i < data.Entities.Length; i++)
+            idToIdx[data.Entities[i].EntityId] = i;
+
+        string? proto = null; bool protoMixed = false;
+        int? player = null; bool playerMixed = false;
+        bool positionMixed = false; System.Numerics.Vector3? position = null;
+
+        var lines = new System.Text.StringBuilder();
+        foreach (uint id in sel.Entities)
+        {
+            if (!idToIdx.TryGetValue(id, out int idx)) continue;
+            var m = data.Entities[idx];
+
+            if (proto is null) proto = m.ProtoName;
+            else if (!protoMixed && proto != m.ProtoName) protoMixed = true;
+
+            if (player is null) player = m.PlayerId;
+            else if (!playerMixed && player != m.PlayerId) playerMixed = true;
+
+            if (position is null) position = m.Position;
+            else if (!positionMixed && System.Numerics.Vector3.DistanceSquared(position.Value, m.Position) > 1e-4f)
+                positionMixed = true;
+
+            if (count > 1) lines.AppendLine($"[{id}] {m.ProtoName}");
+        }
+
+        string posText = position is null
+            ? "?"
+            : positionMixed
+                ? "MIXED"
+                : $"({position.Value.X:F2}, {position.Value.Y:F2}, {position.Value.Z:F2})";
+
+        _selectedFields.Text =
+            $"Proto: {(protoMixed ? "MIXED" : proto ?? "?")}\n" +
+            $"Player: {(playerMixed ? "MIXED" : player?.ToString() ?? "?")}\n" +
+            $"Position: {posText}";
+
+        _selectedListButton.IsVisible = count > 1;
+        if (count > 1) _selectedListText.Text = lines.ToString().TrimEnd();
     }
 
     public void UpdateAfterLoad(ScenarioPreviewData? data)
