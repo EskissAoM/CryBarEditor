@@ -707,10 +707,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         const int floatsPerInstance = 7;
         var inst = new float[count * floatsPerInstance];
         int o = 0;
-        // Build a fast id->index lookup once per upload to avoid quadratic scans.
-        var idToIdx = new System.Collections.Generic.Dictionary<uint, int>(_data.Entities.Length);
-        for (int i = 0; i < _data.Entities.Length; i++)
-            idToIdx[_data.Entities[i].EntityId] = i;
+        var idToIdx = _data.EntityIdToIndex;
         foreach (uint id in sel.Entities)
         {
             if (!idToIdx.TryGetValue(id, out int idx)) continue;
@@ -1120,14 +1117,13 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         return best;
     }
 
-    void EmitCursorHit(Avalonia.Point pos)
+    // Builds a world-space ray from a window-space pointer position. Returns false
+    // when the projection isn't invertible or the bounds are degenerate.
+    bool TryUnprojectRay(Avalonia.Point pos, out Vector3 nearW, out Vector3 dir)
     {
-        var sub = CursorHit;
-        if (sub is null) return;
-        if (_data is null) { sub(null); return; }
-
+        nearW = default; dir = default;
         var bounds = Bounds;
-        if (bounds.Width <= 0 || bounds.Height <= 0) { sub(null); return; }
+        if (bounds.Width <= 0 || bounds.Height <= 0) return false;
 
         // NDC from window-space pointer; Y inverted because Avalonia is top-down.
         float ndcX = (float)(2.0 * pos.X / bounds.Width - 1.0);
@@ -1136,15 +1132,23 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         float aspect = (float)(bounds.Width / bounds.Height);
         var view = _camera.GetViewMatrix();
         var proj = _camera.GetProjectionMatrix(aspect);
-        var mvp = view * proj;
-        if (!Matrix4x4.Invert(mvp, out var invMvp)) { sub(null); return; }
+        if (!Matrix4x4.Invert(view * proj, out var invMvp)) return false;
 
         var nearH = Vector4.Transform(new Vector4(ndcX, ndcY, -1f, 1f), invMvp);
         var farH  = Vector4.Transform(new Vector4(ndcX, ndcY,  1f, 1f), invMvp);
-        if (nearH.W == 0 || farH.W == 0) { sub(null); return; }
-        var nearW = new Vector3(nearH.X / nearH.W, nearH.Y / nearH.W, nearH.Z / nearH.W);
-        var farW  = new Vector3(farH.X  / farH.W,  farH.Y  / farH.W,  farH.Z  / farH.W);
-        var dir = Vector3.Normalize(farW - nearW);
+        if (nearH.W == 0 || farH.W == 0) return false;
+        nearW = new Vector3(nearH.X / nearH.W, nearH.Y / nearH.W, nearH.Z / nearH.W);
+        var farW = new Vector3(farH.X / farH.W, farH.Y / farH.W, farH.Z / farH.W);
+        dir = Vector3.Normalize(farW - nearW);
+        return true;
+    }
+
+    void EmitCursorHit(Avalonia.Point pos)
+    {
+        var sub = CursorHit;
+        if (sub is null) return;
+        if (_data is null) { sub(null); return; }
+        if (!TryUnprojectRay(pos, out var nearW, out var dir)) { sub(null); return; }
 
         // Plane intersect at y = avg height; cheap proxy for a real heightmap raycast.
         // The rendered terrain is scaled by HeightScale, so the plane Y has to match.
@@ -1188,23 +1192,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     int? TryPickTileIdx(Avalonia.Point pos)
     {
         if (_data is null) return null;
-        var bounds = Bounds;
-        if (bounds.Width <= 0 || bounds.Height <= 0) return null;
-
-        float ndcX = (float)(2.0 * pos.X / bounds.Width - 1.0);
-        float ndcY = (float)(1.0 - 2.0 * pos.Y / bounds.Height);
-        float aspect = (float)(bounds.Width / bounds.Height);
-        var view = _camera.GetViewMatrix();
-        var proj = _camera.GetProjectionMatrix(aspect);
-        var mvp = view * proj;
-        if (!Matrix4x4.Invert(mvp, out var invMvp)) return null;
-
-        var nearH = Vector4.Transform(new Vector4(ndcX, ndcY, -1f, 1f), invMvp);
-        var farH  = Vector4.Transform(new Vector4(ndcX, ndcY,  1f, 1f), invMvp);
-        if (nearH.W == 0 || farH.W == 0) return null;
-        var nearW = new Vector3(nearH.X / nearH.W, nearH.Y / nearH.W, nearH.Z / nearH.W);
-        var farW  = new Vector3(farH.X  / farH.W,  farH.Y  / farH.W,  farH.Z  / farH.W);
-        var dir = Vector3.Normalize(farW - nearW);
+        if (!TryUnprojectRay(pos, out var nearW, out var dir)) return null;
 
         int mapX = _data.Terrain.MapSizeX;
         int mapZ = _data.Terrain.MapSizeZ;

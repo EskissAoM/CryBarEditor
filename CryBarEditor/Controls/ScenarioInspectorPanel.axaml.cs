@@ -137,10 +137,7 @@ public partial class ScenarioInspectorPanel : UserControl
         int count = sel.Entities.Count;
         _selectedHeader.Text = count == 1 ? "Selected entity" : $"Selected {count} entities";
 
-        // Build id->index lookup once.
-        var idToIdx = new Dictionary<uint, int>(data.Entities.Length);
-        for (int i = 0; i < data.Entities.Length; i++)
-            idToIdx[data.Entities[i].EntityId] = i;
+        var idToIdx = data.EntityIdToIndex;
 
         string? proto = null; bool protoMixed = false;
         int? player = null; bool playerMixed = false;

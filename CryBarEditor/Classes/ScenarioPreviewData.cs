@@ -36,6 +36,24 @@ public sealed class ScenarioPreviewData : IDisposable
     public CancellationTokenSource Cancellation { get; } = new();
     public ScenarioSelection Selection { get; } = new();
 
+    Dictionary<uint, int>? _entityIdToIndex;
+    // Lazy id -> Entities[] index lookup. Built on first access; subsequent
+    // overlay/inspector rebuilds reuse the same dictionary.
+    public IReadOnlyDictionary<uint, int> EntityIdToIndex
+    {
+        get
+        {
+            if (_entityIdToIndex is null)
+            {
+                var d = new Dictionary<uint, int>(Entities.Length);
+                for (int i = 0; i < Entities.Length; i++)
+                    d[Entities[i].EntityId] = i;
+                _entityIdToIndex = d;
+            }
+            return _entityIdToIndex;
+        }
+    }
+
     public static ScenarioPreviewData? TryBuild(ScenarioFile scenario)
     {
         if (scenario is null || !scenario.Parsed) return null;
