@@ -6,6 +6,7 @@
 		xmlns:cbar="using:CryBar.Bar"
 		xmlns:ce="using:CryBarEditor"
 		xmlns:cc="using:CryBarEditor.Classes"
+		xmlns:controls="using:CryBarEditor.Controls"
 		xmlns:converters="using:CryBarEditor.Converters"
 		xmlns:micons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
 		mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="450"
@@ -52,20 +53,20 @@
 			<Setter Property="Background" Value="#4772b5" />
 		</Style>
 
-		<!-- TMM TabControl dark theme -->
-		<Style Selector="TabControl#_tmmTabControl">
+		<!-- Structured-preview TabStrip dark theme (TMM + scenario) -->
+		<Style Selector="TabStrip.structuredPreviewTabs">
 			<Setter Property="Background" Value="#1c1c1c" />
 		</Style>
-		<Style Selector="TabControl#_tmmTabControl TabItem">
+		<Style Selector="TabStrip.structuredPreviewTabs TabStripItem">
 			<Setter Property="Background" Value="#1c1c1c" />
 			<Setter Property="Foreground" Value="#a0a0a0" />
 			<Setter Property="Padding" Value="12,6" />
 		</Style>
-		<Style Selector="TabControl#_tmmTabControl TabItem:selected">
+		<Style Selector="TabStrip.structuredPreviewTabs TabStripItem:selected">
 			<Setter Property="Background" Value="#2b3c57" />
 			<Setter Property="Foreground" Value="#d9d9d9" />
 		</Style>
-		<Style Selector="TabControl#_tmmTabControl TabItem:pointerover">
+		<Style Selector="TabStrip.structuredPreviewTabs TabStripItem:pointerover">
 			<Setter Property="Background" Value="#1a2436" />
 			<Setter Property="Foreground" Value="#d9d9d9" />
 		</Style>
@@ -225,6 +226,7 @@
 							 SelectionMode="Multiple"
 							 SelectedItems="{Binding SelectedRootFileEntries, Mode=TwoWay}"
 							 SelectedItem="{Binding SelectedRootFileEntry, Mode=TwoWay}"
+							 Tapped="RootListBox_Tapped"
 							 ContextMenu="{StaticResource SharedContextMenu}">
 						<ListBox.ItemTemplate>
 							<DataTemplate x:DataType="cc:RootFileEntry">
@@ -305,6 +307,7 @@
 								SelectionMode="Multiple"
 								SelectedItems="{Binding SelectedBarFileEntries, Mode=TwoWay}"
 								SelectedItem="{Binding SelectedBarEntry, Mode=TwoWay}"
+								Tapped="BarListBox_Tapped"
 								ContextMenu="{StaticResource SharedContextMenu}">
 							<ListBox.ItemTemplate>
 								<DataTemplate x:DataType="cbar:BarFileEntry">
@@ -456,17 +459,23 @@
 								Background="#1c1c1c"/>
 						</Panel>
 
-						<!-- Tabbed preview for TMM files -->
-						<TabControl x:Name="_tmmTabControl" IsVisible="False">
-							<TabItem Header="Metadata">
+						<!-- TabStrip + Grid (not TabControl) keeps both panels parented across tabs,
+							 so the GL context survives tab toggles. -->
+						<Grid x:Name="_tmmRoot" IsVisible="False" RowDefinitions="Auto,*">
+							<TabStrip Grid.Row="0" x:Name="_tmmTabStrip"
+									  Classes="structuredPreviewTabs"
+									  SelectedIndex="0"
+									  SelectionChanged="TmmTab_SelectionChanged">
+								<TabStripItem>Metadata</TabStripItem>
+								<TabStripItem>3D View</TabStripItem>
+							</TabStrip>
+							<Grid Grid.Row="1">
 								<ae:TextEditor x:Name="_tmmMetadataEditor"
 									IsReadOnly="True"
 									ShowLineNumbers="True"
 									FontFamily="Cascadia Code,Consolas,Menlo,Monospace"
 									Background="#1c1c1c"/>
-							</TabItem>
-							<TabItem Header="3D Preview">
-								<DockPanel>
+								<DockPanel x:Name="_tmm3dPanel" IsVisible="False">
 									<StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
 												HorizontalAlignment="Right" Margin="0,4,0,0">
 										<CheckBox x:Name="_showMarkersCheckbox"
@@ -495,8 +504,54 @@
 										<Canvas x:Name="_3dLabelCanvas" IsHitTestVisible="False" />
 									</Grid>
 								</DockPanel>
-							</TabItem>
-						</TabControl>
+							</Grid>
+						</Grid>
+
+						<Grid x:Name="_scenarioRoot" IsVisible="False" RowDefinitions="Auto,*">
+							<TabStrip Grid.Row="0" x:Name="_scenarioTabStrip"
+									  Classes="structuredPreviewTabs"
+									  SelectedIndex="0"
+									  SelectionChanged="ScenarioTab_SelectionChanged">
+								<TabStripItem>XML</TabStripItem>
+								<TabStripItem>3D View</TabStripItem>
+							</TabStrip>
+							<Grid Grid.Row="1">
+								<!-- _txtEditor is reparented here in ShowScenarioPreview to reuse its
+									 large-doc / TextMate / folding pipeline. -->
+								<ContentControl x:Name="_scenarioXmlHost" Background="#1c1c1c"/>
+								<DockPanel x:Name="_scenario3dPanel" IsVisible="False">
+									<controls:ScenarioInspectorPanel x:Name="_scenarioInspector"
+																	 DockPanel.Dock="Right"/>
+									<Grid>
+										<Border x:Name="_scenarioCanvasContainer" Background="#0a0a0a"/>
+										<Border x:Name="_scenarioErrorPanel"
+												IsVisible="False"
+												Background="#0a0a0a"
+												HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+											<StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10">
+												<TextBlock x:Name="_scenarioErrorText"
+														   Foreground="#ddd"
+														   FontSize="14"
+														   HorizontalAlignment="Center"/>
+											</StackPanel>
+										</Border>
+										<Border x:Name="_scenarioProgressOverlay"
+												IsVisible="False"
+												Background="#a0000000"
+												HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+											<StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6">
+												<TextBlock x:Name="_scenarioProgressText"
+														   Foreground="#ddd"
+														   HorizontalAlignment="Center"/>
+												<ProgressBar x:Name="_scenarioProgressBar"
+															 Width="240" Height="6"
+															 Minimum="0" Maximum="1"/>
+											</StackPanel>
+										</Border>
+									</Grid>
+								</DockPanel>
+							</Grid>
+						</Grid>
 					</Grid>
 				</DockPanel>
 			</Grid>

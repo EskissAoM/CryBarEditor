@@ -1,0 +1,14 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:CryBarEditor.Controls"
+             x:Class="CryBarEditor.Controls.ScenarioInspectorPanel"
+             x:DataType="controls:ScenarioInspectorPanel"
+             Width="280" Background="#161820">
+    <StackPanel Margin="8" Spacing="6">
+        <TextBlock Text="Cursor" FontWeight="Bold" Foreground="#888"/>
+        <TextBlock x:Name="_cursorInfo" Text="(hover map)" Foreground="#ddd" FontFamily="Cascadia Code,Consolas"/>
+        <Separator Margin="0,8" Background="#333"/>
+        <TextBlock Text="Selected entity" FontWeight="Bold" Foreground="#888"/>
+        <TextBlock x:Name="_entityInfo" Text="(click an entity)" Foreground="#ddd" FontFamily="Cascadia Code,Consolas" TextWrapping="Wrap"/>
+    </StackPanel>
+</UserControl>

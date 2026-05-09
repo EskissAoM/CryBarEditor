@@ -24,4 +24,10 @@
     <ProjectReference Include="..\CryBarEditor\CryBarEditor.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="TestFiles\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

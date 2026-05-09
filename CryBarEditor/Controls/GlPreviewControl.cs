@@ -67,6 +67,9 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     public event Action<IReadOnlyList<MarkerLabel>>? MarkersProjected;
     readonly List<MarkerLabel> _markerLabelBuffer = new();
 
+    // Fires when the GL context tears down; hosts must drop cached GL handles here.
+    public event Action? GlContextLost;
+
     // Gizmo GL resources
     int _gizmoProgram;
     int _gizmoVao, _gizmoVbo;
@@ -542,6 +545,9 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     protected override void OnOpenGlDeinit(GlInterface gl)
     {
         if (!_glInitialized) return;
+
+        // Notify hosts first so they drop their GL-bound caches before tear-down.
+        GlContextLost?.Invoke();
 
         gl.BindBuffer(GL_ARRAY_BUFFER, 0);
         gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
@@ -1212,32 +1218,6 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         e.Handled = true;
     }
 
-    #region GL Helpers
-
     static int CreateProgram(GlInterface gl, string vertexSrc, string fragmentSrc)
-    {
-        int vs = CompileShader(gl, GL_VERTEX_SHADER, vertexSrc);
-        int fs = CompileShader(gl, GL_FRAGMENT_SHADER, fragmentSrc);
-
-        int program = gl.CreateProgram();
-        gl.AttachShader(program, vs);
-        gl.AttachShader(program, fs);
-        gl.LinkProgram(program);
-
-        // Delete shader objects (they stay attached until program is deleted)
-        gl.DeleteShader(vs);
-        gl.DeleteShader(fs);
-
-        return program;
-    }
-
-    static int CompileShader(GlInterface gl, int type, string source)
-    {
-        int shader = gl.CreateShader(type);
-        gl.ShaderSourceString(shader, source);
-        gl.CompileShader(shader);
-        return shader;
-    }
-
-    #endregion
+        => GlShaderHelpers.CreateProgram(gl, vertexSrc, fragmentSrc);
 }

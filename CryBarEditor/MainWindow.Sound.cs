@@ -9,6 +9,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace CryBarEditor;
@@ -30,8 +31,12 @@ public partial class MainWindow
 
     /// <summary>
     /// Cache of parsed soundset definition files, keyed by source file identifier.
+    /// Access serialized by <see cref="_cachedSoundsetFilesLock"/> -- TryFindInSoundsetFileAsync
+    /// and RebuildSoundsetIndexAsync can run concurrently (sound preview + dependency window),
+    /// each reading and writing this map across await boundaries.
     /// </summary>
     readonly Dictionary<string, List<SoundsetDefinition>> _cachedSoundsetFiles = new(StringComparer.OrdinalIgnoreCase);
+    readonly Lock _cachedSoundsetFilesLock = new();
 
     #region Soundset Resolution
 
@@ -111,7 +116,10 @@ public partial class MainWindow
         if (_fileIndex == null) return (null, null);
 
         // Check cache first
-        if (_cachedSoundsetFiles.TryGetValue(fileName, out var cached))
+        List<SoundsetDefinition>? cached;
+        lock (_cachedSoundsetFilesLock)
+            _cachedSoundsetFiles.TryGetValue(fileName, out cached);
+        if (cached != null)
         {
             var found = SoundsetParser.FindSoundset(cached, eventName);
             if (found != null) return (found, fileName);
@@ -131,7 +139,8 @@ public partial class MainWindow
         try
         {
             var definitions = SoundsetParser.ParseSoundsetXml(xmlText);
-            _cachedSoundsetFiles[fileName] = definitions;
+            lock (_cachedSoundsetFilesLock)
+                _cachedSoundsetFiles[fileName] = definitions;
 
             var soundset = SoundsetParser.FindSoundset(definitions, eventName);
             if (soundset != null) return (soundset, fileName);
@@ -213,7 +222,8 @@ public partial class MainWindow
     void ClearSoundCaches()
     {
         _cachedSoundManifest = null;
-        _cachedSoundsetFiles.Clear();
+        lock (_cachedSoundsetFilesLock)
+            _cachedSoundsetFiles.Clear();
     }
 
     #endregion

@@ -462,7 +462,7 @@ public partial class ScenarioFile
         return false;
     }
 
-    static bool TryReadUTF16(ReadOnlySpan<byte> data, int offset, out string value, out int newOffset)
+    internal static bool TryReadUTF16(ReadOnlySpan<byte> data, int offset, out string value, out int newOffset)
     {
         value = "";
         newOffset = offset;

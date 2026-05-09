@@ -1,5 +1,7 @@
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using AvaloniaEdit.Document;
@@ -43,6 +45,15 @@ public partial class MainWindow
     string? _currentTmmFileName;
     bool _useTextured3D; // Per-session preference; not persisted.
 
+    CancellationToken RestartTextureLoadCts()
+    {
+        var old = _textureLoadCts;
+        _textureLoadCts = new CancellationTokenSource();
+        old?.Cancel();
+        old?.Dispose();
+        return _textureLoadCts.Token;
+    }
+
     // The resolver is stateless apart from a single-entry parse cache it owns.
     // One instance per editor session avoids re-allocating per probe + per load.
     TmmMaterialResolver? _materialResolver;
@@ -56,6 +67,7 @@ public partial class MainWindow
         if (entry == null || !Directory.Exists(_rootDirectory))
             return;
 
+        _currentlyPreviewedItem = entry;
         var path = Path.Combine(_rootDirectory, entry.RelativePath);
         if (entry.Extension == ".BAR")
         {
@@ -81,12 +93,36 @@ public partial class MainWindow
         if (entry == null || _barStream == null)
             return;
 
+        _currentlyPreviewedItem = entry;
         _previewCsc?.Cancel();
         _previewCsc?.Dispose();
         _previewCsc = new();
 
         PreviewedFileData = $"BAR Offset: {entry.ContentOffset},   BAR Size: {entry.SizeInArchive},   Actual Size: {entry.SizeUncompressed},   Compressed: {(entry.IsCompressed ? "true" : "false")}";
         await Preview(entry, F_GetFullRelativePathBAR, F_ReadSizeBAR, F_ReadBAR, _previewCsc.Token);
+    }
+
+    // Re-click on an already-selected item doesn't fire the SelectedItem setter, so
+    // when the user previewed something in the other panel since, a re-click would
+    // be a no-op. Re-fire Preview when the clicked entry isn't what's rendered.
+    void RootListBox_Tapped(object? sender, Avalonia.Input.TappedEventArgs e)
+    {
+        if (ExtractTappedEntry<RootFileEntry>(e) is { } entry)
+            _ = Preview(entry);
+    }
+
+    void BarListBox_Tapped(object? sender, Avalonia.Input.TappedEventArgs e)
+    {
+        if (ExtractTappedEntry<BarFileEntry>(e) is { } entry)
+            _ = Preview(entry);
+    }
+
+    T? ExtractTappedEntry<T>(Avalonia.Input.TappedEventArgs e) where T : class
+    {
+        var entry = (e.Source as Avalonia.Controls.Control)
+            ?.FindAncestorOfType<Avalonia.Controls.ListBoxItem>(includeSelf: true)
+            ?.DataContext as T;
+        return entry != null && !ReferenceEquals(entry, _currentlyPreviewedItem) ? entry : null;
     }
 
     public async Task Preview(FMODEvent? e)
@@ -335,17 +371,19 @@ public partial class MainWindow
                     await SetImagePreview(null);
 
                     var mem = data.Memory;
-                    var (scenText, scenExt, scenNote) = await Task.Run(() =>
+                    var scenario = await Task.Run(() => new ScenarioFile(mem));
+                    if (scenario.Parsed)
                     {
-                        var scenario = new ScenarioFile(mem);
-                        if (scenario.Parsed)
-                            return (ScenarioFile.StripBinaryForPreview(scenario.ToXml()), ".xml", "(AoM Scenario, converted to XML)");
-                        return ("Failed to parse scenario file", ".txt", "");
-                    });
-                    PreviewedFileNote = scenNote;
-                    ShowExperimentalWarning = scenExt == ".xml";
-                    text = scenText;
-                    ext = scenExt;
+                        ShowScenarioPreview(scenario);
+                        PreviewedFileNote = "(AoM Scenario, 3D + XML)";
+                        ShowExperimentalWarning = true;
+                        return;
+                    }
+
+                    HideScenarioPreview();
+                    text = "Failed to parse scenario file";
+                    ext = ".txt";
+                    PreviewedFileNote = "";
                 }
                 else if (ext == ".trg")
                 {
@@ -615,30 +653,40 @@ public partial class MainWindow
     #region TMM 3D Preview
     void ShowTmmPreview(string metadataText)
     {
-        if (!_tmmTabControl.IsVisible)
-            _tmmTabControl.SelectedIndex = _tmmSelectedTabIndex;
+        // Structured preview panels are mutually exclusive.
+        if (_scenarioRoot is not null && _scenarioRoot.IsVisible)
+            HideScenarioPreview();
+
+        if (!_tmmRoot.IsVisible)
+            _tmmTabStrip.SelectedIndex = _tmmSelectedTabIndex;
         _flatPreview.IsVisible = false;
-        _tmmTabControl.IsVisible = true;
-        _tmmTabControl.SelectionChanged -= TmmTabControl_SelectionChanged;
-        _tmmTabControl.SelectionChanged += TmmTabControl_SelectionChanged;
+        _tmmRoot.IsVisible = true;
         _tmmMetadataEditor.Document = new TextDocument(metadataText);
     }
 
-    void TmmTabControl_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    void TmmTab_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
-        if (_tmmTabControl.SelectedIndex == 1)
-        {
-            // Flush pending mesh on first switch to 3D tab
-            if (_pendingMeshData != null)
-                FlushPendingMesh();
+        ToggleTabPanels(_tmmTabStrip, _tmmMetadataEditor, _tmm3dPanel);
+        if (_tmmTabStrip?.SelectedIndex != 1) return;
+        if (_pendingMeshData != null) FlushPendingMesh();
+        TryKickTextureLoadForCurrent();
+    }
 
-            // Force GL control to re-render by detaching and reattaching
-            if (_glPreview != null)
-            {
-                _3dViewContainer.Child = null;
-                _3dViewContainer.Child = _glPreview;
-            }
-        }
+    void TryKickTextureLoadForCurrent()
+    {
+        if (!_useTextured3D || _currentTmmFileName == null) return;
+        if (!_textureAvailability.TryGetValue(_currentTmmFileName, out var has) || !has) return;
+        _ = EnsureTexturesLoadedAsync(_currentTmmFileName, RestartTextureLoadCts());
+    }
+
+    // Avalonia raises SelectionChanged during XAML EndInit before named fields
+    // are populated, hence the null guards.
+    static void ToggleTabPanels(TabStrip? strip, Control? first, Control? second)
+    {
+        if (strip is null || first is null || second is null) return;
+        bool firstSelected = strip.SelectedIndex == 0;
+        first.IsVisible = firstSelected;
+        second.IsVisible = !firstSelected;
     }
 
     void FlushPendingMesh()
@@ -651,11 +699,14 @@ public partial class MainWindow
 
     void HideTmmPreview()
     {
-        if (_tmmTabControl.IsVisible)
-            _tmmSelectedTabIndex = _tmmTabControl.SelectedIndex;
-        _tmmTabControl.IsVisible = false;
+        if (_tmmRoot.IsVisible)
+            _tmmSelectedTabIndex = _tmmTabStrip.SelectedIndex;
+        _tmmRoot.IsVisible = false;
         _flatPreview.IsVisible = true;
         _meshConversionCts?.Cancel();
+
+        if (_scenarioRoot is not null && _scenarioRoot.IsVisible)
+            HideScenarioPreview();
     }
 
     void Update3DStatus(string text)
@@ -695,39 +746,32 @@ public partial class MainWindow
 
         // Store pending mesh; only initialize GL and upload when 3D tab is visible
         _pendingMeshData = meshData;
-        if (_tmmTabControl.SelectedIndex == 1)
+        if (_tmmTabStrip.SelectedIndex == 1)
             FlushPendingMesh();
         else
             Update3DStatus(""); // ready, will load when tab is selected
 
-        // Kick off availability probe (and texture load if user prefers textured mode).
-        // Independent of the mesh-conversion CTS - texture work has its own lifetime.
-        var oldTexCts = _textureLoadCts;
-        _textureLoadCts = new CancellationTokenSource();
-        oldTexCts?.Cancel();
-        oldTexCts?.Dispose();
-        _ = ProbeTextureAvailabilityAsync(tmmFileName, _textureLoadCts.Token);
+        // Texture work has its own CTS lifetime, independent of the mesh-conversion CTS.
+        _ = ProbeTextureAvailabilityAsync(tmmFileName, RestartTextureLoadCts());
     }
 
     async Task ProbeTextureAvailabilityAsync(string tmmFileName, CancellationToken token)
     {
         var resolver = GetMaterialResolver();
         if (resolver == null) { UpdateTexturedToggleVisibility(false); return; }
-        if (_textureAvailability.TryGetValue(tmmFileName, out bool cached))
+
+        if (!_textureAvailability.TryGetValue(tmmFileName, out var has))
         {
-            UpdateTexturedToggleVisibility(cached);
-            if (cached && _useTextured3D)
-                await EnsureTexturesLoadedAsync(tmmFileName, token);
-            return;
+            has = await resolver.HasAtLeastBaseColorAsync(tmmFileName, token);
+            if (token.IsCancellationRequested) return;
+            _textureAvailability[tmmFileName] = has;
         }
 
-        bool has = await resolver.HasAtLeastBaseColorAsync(tmmFileName, token);
-        if (token.IsCancellationRequested) return;
-
-        _textureAvailability[tmmFileName] = has;
         UpdateTexturedToggleVisibility(has);
 
-        if (has && _useTextured3D)
+        // Auto-load only when 3D tab is active; otherwise the mesh isn't in place
+        // and TmmTab_SelectionChanged will kick the load on tab activation.
+        if (has && _useTextured3D && _tmmTabStrip?.SelectedIndex == 1)
             await EnsureTexturesLoadedAsync(tmmFileName, token);
     }
 
@@ -910,15 +954,7 @@ public partial class MainWindow
     {
         _useTextured3D = _texturedToggle.IsChecked == true;
         if (_glPreview != null) _glPreview.UseTexturedMode = _useTextured3D;
-
-        if (_useTextured3D && _currentTmmFileName != null)
-        {
-            var oldCts = _textureLoadCts;
-            _textureLoadCts = new CancellationTokenSource();
-            oldCts?.Cancel();
-            oldCts?.Dispose();
-            _ = EnsureTexturesLoadedAsync(_currentTmmFileName, _textureLoadCts.Token);
-        }
+        TryKickTextureLoadForCurrent();
     }
 
     PreviewMeshData? _pendingMeshData;
@@ -929,6 +965,14 @@ public partial class MainWindow
         _glPreview = new GlPreviewControl();
         _glPreview.GizmoLabelsProjected += OnGizmoLabelsProjected;
         _glPreview.MarkersProjected += OnMarkersProjected;
+        // Texture cache holds GL handles tied to the dying context; drop it so the
+        // next render rebuilds fresh against the new one. Also cancel any in-flight
+        // load so its queued upload doesn't write into the wrong context.
+        _glPreview.GlContextLost += () =>
+        {
+            _textureCache = null;
+            _textureLoadCts?.Cancel();
+        };
         _glPreview.ShowMarkers = _showMarkersCheckbox.IsChecked == true;
         _glPreview.ShowGroundGrid = _showGroundGridCheckbox.IsChecked == true;
         _3dViewContainer.Child = _glPreview;

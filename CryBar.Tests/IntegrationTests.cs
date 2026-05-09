@@ -4,6 +4,7 @@ using System.Xml;
 using CryBar;
 using CryBar.Bar;
 using CryBar.Export;
+using CryBar.Indexing;
 using CryBar.Scenario;
 using CryBar.TMM;
 using SixLabors.ImageSharp;
@@ -2446,6 +2447,102 @@ public class IntegrationTests
         Assert.True(doc.RootElement.TryGetProperty("materials", out _), "JSON should contain materials");
         Assert.True(doc.RootElement.TryGetProperty("textures", out _), "JSON should contain textures");
         Assert.True(doc.RootElement.TryGetProperty("images", out _), "JSON should contain images");
+    }
+
+    #endregion
+
+    #region Scenario Tests
+
+    /// <summary>
+    /// Walks every campaign mythscn, builds an index over every BAR under the game folder,
+    /// and asserts every referenced terrain texture name resolves. Surfaces any names that
+    /// don't resolve so the resolver's probe variants can be tightened.
+    /// </summary>
+    [SkippableFact]
+    public void ScenarioTextureResolution_AllReferencedTexturesResolve()
+    {
+        Skip.IfNot(GameInstalled, "AoM:Retold game directory not found");
+
+        var campaignDir = Path.Combine(GamePath, "campaign");
+        Skip.IfNot(Directory.Exists(campaignDir), "Campaign folder missing");
+
+        var index = new FileIndex();
+        FileIndexBuilder.IndexBarFiles(index, FindBarFiles());
+        Assert.True(index.Count > 0, "No BAR entries indexed from game folder");
+
+        var scenarios = Directory.GetFiles(campaignDir, "*.mythscn", SearchOption.AllDirectories);
+        Assert.True(scenarios.Length > 0, "No campaign mythscn files found");
+
+        var unresolved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int referencedCount = 0;
+        foreach (var path in scenarios)
+        {
+            var compressed = File.ReadAllBytes(path);
+            var decompressed = BarCompression.DecompressL33t(compressed);
+            if (decompressed is null) continue;
+
+            var scenario = new ScenarioFile(decompressed);
+            if (!scenario.Parsed) continue;
+
+            var terrain = ScenarioTerrain.TryParse(scenario);
+            if (terrain is null) continue;
+
+            var set = ScenarioTextureSet.Build(terrain);
+            foreach (var name in set.Names)
+            {
+                referencedCount++;
+                var fname = Path.GetFileName(name.Replace('\\', '/'));
+                if (fname.Length == 0) { unresolved.Add(name); continue; }
+
+                var hits = index.Find(fname + "_basecolor.ddt");
+                if (hits.Count == 0) hits = index.Find(fname + ".ddt");
+                if (hits.Count == 0) unresolved.Add(name);
+            }
+        }
+
+        Assert.True(referencedCount > 0, "Walked scenarios but no texture names were collected");
+        Assert.True(unresolved.Count == 0,
+            $"{unresolved.Count} unique texture names did not resolve across {scenarios.Length} scenarios:\n" +
+            string.Join("\n", unresolved.Take(20)));
+    }
+
+    /// <summary>
+    /// Regression guard for the column-major terrain layout. fott26 (210x160) is
+    /// non-square so per-vertex/per-tile arrays read with the wrong stride produce
+    /// huge row-to-row jumps. Real terrain has similar smoothness in both directions;
+    /// a misread shows up as one axis having ~50x more big jumps than the other.
+    /// </summary>
+    [SkippableFact]
+    public void Fott26_TerrainHeights_AreSmoothInBothAxes()
+    {
+        Skip.IfNot(GameInstalled, "AoM:Retold game directory not found");
+
+        var path = Path.Combine(FottCampaignDir, "fott26.mythscn");
+        Skip.IfNot(File.Exists(path), $"{path} not found");
+
+        var compressed = File.ReadAllBytes(path);
+        var decompressed = BarCompression.DecompressL33t(compressed);
+        Assert.NotNull(decompressed);
+
+        var scenario = new ScenarioFile(decompressed!);
+        Assert.True(scenario.Parsed);
+
+        var terrain = ScenarioTerrain.TryParse(scenario);
+        Assert.NotNull(terrain);
+
+        int vCols = terrain!.MapSizeX + 1;
+        int bigJumpsX = 0, bigJumpsZ = 0;
+        for (int vz = 0; vz <= terrain.MapSizeZ; vz++)
+        for (int vx = 0; vx < terrain.MapSizeX; vx++)
+            if (Math.Abs(terrain.Heights[vz * vCols + vx] - terrain.Heights[vz * vCols + vx + 1]) > 5f) bigJumpsX++;
+        for (int vz = 0; vz < terrain.MapSizeZ; vz++)
+        for (int vx = 0; vx <= terrain.MapSizeX; vx++)
+            if (Math.Abs(terrain.Heights[vz * vCols + vx] - terrain.Heights[(vz + 1) * vCols + vx]) > 5f) bigJumpsZ++;
+
+        // Real terrain stays under a few hundred big jumps per axis; cap at 500 so
+        // an axis-swap regression (one axis spiking to thousands) gets caught.
+        Assert.True(bigJumpsX < 500, $"Too many X-axis height jumps: {bigJumpsX} (transpose regression?)");
+        Assert.True(bigJumpsZ < 500, $"Too many Z-axis height jumps: {bigJumpsZ} (transpose regression?)");
     }
 
     #endregion

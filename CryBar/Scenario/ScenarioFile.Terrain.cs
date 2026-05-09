@@ -93,10 +93,11 @@ public partial class ScenarioFile
             off += (int)ttGroupSize;
         }
 
-        // map_size_x, map_size_z
+        // File stores (gameZ, gameX); XML attributes use game-axis names so x/z
+        // line up with ScenarioTerrain.MapSizeX / MapSizeZ downstream.
         if (off + 8 > t3.Length) return;
-        var mapSizeX = BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off));
-        var mapSizeZ = BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off + 4));
+        var mapSizeZ = BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off));
+        var mapSizeX = BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off + 4));
         off += 8;
         writer.WriteStartElement("MapSize");
         writer.WriteAttributeString("x", mapSizeX.ToString());
@@ -315,8 +316,9 @@ public partial class ScenarioFile
                     case "MapSize":
                         if (t3Bw != null)
                         {
-                            t3Bw.Write(uint.Parse(reader.GetAttribute("x") ?? "0"));
+                            // File order is (gameZ, gameX); XML uses game-axis names.
                             t3Bw.Write(uint.Parse(reader.GetAttribute("z") ?? "0"));
+                            t3Bw.Write(uint.Parse(reader.GetAttribute("x") ?? "0"));
                         }
                         reader.Skip();
                         break;
