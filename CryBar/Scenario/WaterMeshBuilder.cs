@@ -23,14 +23,17 @@ public static class WaterMeshBuilder
         int tileCount = mapX * mapZ;
         var waterType = terrain.WaterType;
 
-        // Water-tile mask. WaterType[t]==0 marks a water tile; any non-zero
-        // value is a "no-water override" the editor uses to carve dry holes
-        // out of low-lying terrain.
+        // Water-tile mask. WaterType[t] is an index into WaterNames; the byte
+        // value 255 is the "no water" sentinel. Other values (including 0
+        // for the default water entry, plus 13/14/16/etc for variants) all
+        // mean the tile holds water. Earlier code mistakenly treated 0 as
+        // the no-water marker, which made campaign scenarios like fott01
+        // (whose water tiles use WaterType 13/14) render no surface at all.
         var isWater = new bool[tileCount];
         int waterTiles = 0;
         for (int i = 0; i < tileCount && i < waterType.Length; i++)
         {
-            if (waterType[i] == 0) { isWater[i] = true; waterTiles++; }
+            if (waterType[i] != 255) { isWater[i] = true; waterTiles++; }
         }
         if (waterTiles == 0) return null;
 
@@ -134,10 +137,11 @@ public static class WaterMeshBuilder
             if (c >= 0) tilesPerComp[c]++;
         }
 
-        // Pooled per-component sample arrays. Sampling each tile's 4 corners
-        // without dedupe over-weights interior vertices (4 samples vs 1 at the
-        // shore corner) -- which is what we want, since shore corners can dip
-        // below the true surface and interior is authoritative.
+        // Pooled per-component sample arrays sized at 4 samples per tile (one
+        // per corner). Sampling without dedupe over-weights interior vertices
+        // (4 samples vs 1 at the shore corner) -- which is what we want, since
+        // shore corners can dip below the true surface and interior is
+        // authoritative.
         var pool = System.Buffers.ArrayPool<float>.Shared;
         var samples = new float[compCount][];
         var sampleCounts = new int[compCount];
@@ -157,10 +161,10 @@ public static class WaterMeshBuilder
                 float h10 = waterH[tz       * vCols + tx + 1];
                 float h01 = waterH[(tz + 1) * vCols + tx];
                 float h11 = waterH[(tz + 1) * vCols + tx + 1];
-                if (h00 > 0) arr[n++] = h00;
-                if (h10 > 0) arr[n++] = h10;
-                if (h01 > 0) arr[n++] = h01;
-                if (h11 > 0) arr[n++] = h11;
+                arr[n++] = h00;
+                arr[n++] = h10;
+                arr[n++] = h01;
+                arr[n++] = h11;
                 sampleCounts[c] = n;
             }
 

@@ -2546,4 +2546,66 @@ public class IntegrationTests
     }
 
     #endregion
+
+    #region Scenario viewer regressions
+
+    [SkippableFact]
+    public void WaterMesh_Fott01_HasWaterTiles()
+    {
+        Skip.IfNot(GameInstalled, "AoM:Retold game directory not found");
+        var path = Path.Combine(FottCampaignDir, "fott01.mythscn");
+        Skip.IfNot(File.Exists(path), $"fott01.mythscn not found at {path}");
+
+        var compressed = File.ReadAllBytes(path);
+        var decompressed = BarCompression.DecompressL33t(compressed);
+        Assert.NotNull(decompressed);
+
+        var scenario = new ScenarioFile(decompressed);
+        Assert.True(scenario.Parsed);
+
+        var terrain = ScenarioTerrain.TryParse(scenario);
+        Assert.NotNull(terrain);
+
+        var water = WaterMeshBuilder.Build(terrain!);
+        Assert.NotNull(water);
+
+        // fott01 has roughly half the map as water; expect well over a thousand
+        // water tiles in the built mesh (every water tile contributes >= 1 quad).
+        var quads = water!.Indices.Length / 6;
+        Assert.True(quads > 1000, $"fott01 water mesh has only {quads} quads; expected > 1000");
+    }
+
+    [SkippableFact]
+    public void TextureResolution_Fott26_AllReferencedResolve()
+    {
+        Skip.IfNot(GameInstalled, "AoM:Retold game directory not found");
+        var scnPath = Path.Combine(FottCampaignDir, "fott26.mythscn");
+        Skip.IfNot(File.Exists(scnPath), $"fott26.mythscn not found at {scnPath}");
+        var barPath = Path.Combine(GamePath, "art", "ArtTerrainTextures.bar");
+        Skip.IfNot(File.Exists(barPath), $"ArtTerrainTextures.bar not found at {barPath}");
+
+        var compressed = File.ReadAllBytes(scnPath);
+        var decompressed = BarCompression.DecompressL33t(compressed);
+        Assert.NotNull(decompressed);
+        var scenario = new ScenarioFile(decompressed);
+        var terrain = ScenarioTerrain.TryParse(scenario);
+        Assert.NotNull(terrain);
+        var texSet = ScenarioTextureSet.Build(terrain!);
+
+        var index = new FileIndex();
+        FileIndexBuilder.IndexBarFiles(index, [barPath]);
+
+        var unresolved = new List<string>();
+        foreach (var n in texSet.Names)
+        {
+            var hits = index.FindByPartialPath(n + "_basecolor.ddt");
+            if (hits.Count == 0) hits = index.FindByPartialPath(n + ".ddt");
+            if (hits.Count == 0) unresolved.Add(n);
+        }
+
+        Assert.True(unresolved.Count == 0,
+            $"fott26 has {unresolved.Count} unresolved textures: [{string.Join(", ", unresolved.Take(10))}]");
+    }
+
+    #endregion
 }

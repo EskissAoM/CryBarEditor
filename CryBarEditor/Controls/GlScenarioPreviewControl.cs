@@ -256,10 +256,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             wSum = max(wSum, 1e-4);
             vec4 col = (a * vWeights.x + b * vWeights.y + c * vWeights.z + d * vWeights.w) / wSum;
 
-            // Grass-green fallback if texture sampling returns zero so terrain stays
-            // visible if the texture array isn't fully populated yet.
-            if (col.r + col.g + col.b < 0.01) col = vec4(0.30, 0.42, 0.20, 1.0);
-
             // Smooth-shaded normal from the interpolated per-vertex slope.
             // vSlope already carries the Y-scale baked in by the vertex shader.
             vec3 N = normalize(vec3(-vSlope.x, 1.0, -vSlope.y));

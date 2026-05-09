@@ -101,6 +101,8 @@ public class WaterMeshBuilderTests
     {
         int vCount = (mapX + 1) * (mapZ + 1);
         int tCount = mapX * mapZ;
+        var waterType = new byte[tCount];
+        Array.Fill(waterType, (byte)255); // no-water sentinel; nothing marked as water by default
         return new ScenarioTerrain
         {
             MapSizeX = mapX, MapSizeZ = mapZ,
@@ -108,19 +110,20 @@ public class WaterMeshBuilderTests
             WaterHeights = waterHeights,
             UnkHeights = new float[vCount],
             TileGroups = new byte[tCount], TileSubs = new ushort[tCount], TilePt = new byte[tCount],
-            WaterType = new byte[tCount],
+            WaterType = waterType,
             TerrainGroups = []
         };
     }
 
     // Variant that wires WaterType so the listed tiles are water (value 0) and
-    // all others are non-water (value 1). Matches WaterMeshBuilder's convention.
+    // all others are non-water (value 255 = the no-water sentinel). Matches
+    // WaterMeshBuilder's convention: any value != 255 indexes into WaterNames.
     static ScenarioTerrain NewWaterTerrain(int mapX, int mapZ, float[] waterHeights, int[] waterTiles)
     {
         int vCount = (mapX + 1) * (mapZ + 1);
         int tCount = mapX * mapZ;
         var waterType = new byte[tCount];
-        Array.Fill(waterType, (byte)1); // non-water default
+        Array.Fill(waterType, (byte)255); // non-water sentinel
         foreach (var t in waterTiles) waterType[t] = 0;
         return new ScenarioTerrain
         {

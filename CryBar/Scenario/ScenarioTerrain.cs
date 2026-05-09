@@ -20,11 +20,12 @@ public sealed class ScenarioTerrain
     public required ushort[] TileSubs { get; init; }
     public required byte[] TilePt { get; init; }
     /// <summary>
-    /// Per-tile water marker. 0 = water tile (uses the default body), non-zero =
-    /// "no-water" override the editor stamps on dry holes / non-water depressions.
-    /// This is the authoritative "is this tile water?" flag -- WaterHeights alone
-    /// can't be trusted because the sea-level reference bleeds into low-lying
-    /// non-water terrain. WaterMeshBuilder reads it as `value == 0`.
+    /// Per-tile water marker. The byte value 255 is the "no water" sentinel;
+    /// any other value is an index into WaterNames identifying which water
+    /// body type covers the tile. This is the authoritative "is this tile
+    /// water?" flag -- WaterHeights alone can't be trusted because the sea-
+    /// level reference bleeds into low-lying non-water terrain.
+    /// WaterMeshBuilder reads it as `value != 255`.
     /// </summary>
     public required byte[] WaterType { get; init; }
     public required TerrainTextureGroup[] TerrainGroups { get; init; }
@@ -96,7 +97,7 @@ public sealed class ScenarioTerrain
         SkipSizeSection(t3, ref off);
         SkipSizeSection(t3, ref off);
 
-        // WaterType is per-tile: 0 = no water, non-zero = index into WaterNames.
+        // WaterType is per-tile: 255 = no water sentinel, other values index into WaterNames.
         var waterType = ReadList<byte>(t3, ref off);
 
         if (off + 4 > t3.Length) return null;

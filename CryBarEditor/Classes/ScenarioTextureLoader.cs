@@ -33,11 +33,12 @@ public sealed class ScenarioTextureLoader
         {
             if (_index is null || string.IsNullOrEmpty(textureName)) return null;
 
-            var fname = Path.GetFileName(textureName.Replace('\\', '/'));
-            if (fname.Length == 0) return null;
-
-            var entries = _index.Find(fname + "_basecolor.ddt");
-            if (entries.Count == 0) entries = _index.Find(fname + ".ddt");
+            // Use the full group-qualified path so name collisions across groups
+            // (e.g. default/black_rock vs egyptian/black_rock) resolve correctly.
+            // FindByPartialPath verifies all directory segments from the query
+            // appear in the candidate's full path.
+            var entries = _index.FindByPartialPath(textureName + "_basecolor.ddt");
+            if (entries.Count == 0) entries = _index.FindByPartialPath(textureName + ".ddt");
             if (entries.Count == 0) return null;
 
             PooledBuffer? buf = null;

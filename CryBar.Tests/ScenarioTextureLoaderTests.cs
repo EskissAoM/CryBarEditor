@@ -55,4 +55,43 @@ public class ScenarioTextureLoaderTests
         Assert.NotNull(buf);
         Assert.Equal(payload, buf.Span.ToArray());
     }
+
+    [Fact]
+    public async Task Resolve_GroupPrefix_DisambiguatesCollisions()
+    {
+        var index = new FileIndex();
+        index.Add(new FileIndexEntry
+        {
+            FullRelativePath = "art/terrain/zzz_other/black_rock_basecolor.ddt",
+            Source = FileIndexSource.RootFile
+        });
+        index.Add(new FileIndexEntry
+        {
+            FullRelativePath = "art/terrain/default/black_rock_basecolor.ddt",
+            Source = FileIndexSource.RootFile
+        });
+        index.Add(new FileIndexEntry
+        {
+            FullRelativePath = "art/terrain/egyptian/black_rock_basecolor.ddt",
+            Source = FileIndexSource.RootFile
+        });
+
+        var defaultPayload = new byte[] { 1, 2, 3 };
+        var egyptianPayload = new byte[] { 9, 9, 9 };
+
+        ValueTask<PooledBuffer?> Stub(FileIndexEntry e)
+        {
+            var pb = new PooledBuffer(3);
+            var src = e.FullRelativePath.ToString().Contains("default", StringComparison.OrdinalIgnoreCase)
+                ? defaultPayload : egyptianPayload;
+            src.CopyTo(pb.Span);
+            return ValueTask.FromResult<PooledBuffer?>(pb);
+        }
+
+        var resolver = new ScenarioTextureLoader.NameResolver(index, Stub);
+        using var buf = await resolver.TryResolveAsync("default\\black_rock");
+
+        Assert.NotNull(buf);
+        Assert.Equal(defaultPayload, buf!.Span.ToArray());
+    }
 }
