@@ -58,22 +58,36 @@ public partial class MainWindow
         _scenarioCanvasContainer.IsVisible = true;
         _scenarioErrorPanel.IsVisible = false;
         _scenarioInspector.SetCursor(null, null);
-        // SetEntity removed; Task 8 calls UpdateSelection instead.
-        // _scenarioInspector.SetEntity(null);
+
+        _scenarioInspector.ClearSelectionRequested -= OnInspectorClearSelection;
+        _scenarioInspector.ClearSelectionRequested += OnInspectorClearSelection;
 
         _scenarioGl.SetScenario(data);
 
+        data.Selection.Changed += () =>
+            Dispatcher.UIThread.Post(() => _scenarioInspector.UpdateSelection(_scenarioData));
+        _scenarioInspector.UpdateSelection(data);
+
         _ = LoadScenarioTexturesAsync(data, data.Cancellation.Token);
     }
+
+    void OnInspectorClearSelection() => _scenarioData?.Selection.Clear();
 
     GlScenarioPreviewControl CreateScenarioGl()
     {
         var gl = new GlScenarioPreviewControl();
         gl.CursorHit += hit =>
             Dispatcher.UIThread.Post(() => _scenarioInspector.SetCursor(hit, _scenarioData));
-        // EntitySelected wiring removed; Task 8 wires LeftClicked/RightClicked through ScenarioSelectionInput.
-        // gl.EntitySelected += entity =>
-        //     Dispatcher.UIThread.Post(() => _scenarioInspector.SetEntity(entity));
+        gl.LeftClicked += (hit, ctrl) =>
+        {
+            if (_scenarioData is null) return;
+            ScenarioSelectionInput.OnLeftClick(_scenarioData.Selection, hit, ctrl);
+        };
+        gl.RightClicked += (hit, ctrl) =>
+        {
+            if (_scenarioData is null) return;
+            ScenarioSelectionInput.OnRightClick(_scenarioData.Selection, hit, ctrl);
+        };
         gl.ErrorChanged += msg =>
             Dispatcher.UIThread.Post(() =>
             {
