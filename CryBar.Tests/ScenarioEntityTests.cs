@@ -17,7 +17,9 @@ public class ScenarioEntityTests
             PlayerId = 3,
             Position = new Vector3(1, 2, 3),
             Rotation = Matrix3x3.Identity,
-            OtherFields = new byte[] { 0xAA, 0xBB }
+            H1Prefix = [],
+            H1EnTail = [],
+            H1Suffix = new byte[] { 0xAA, 0xBB }
         };
         Assert.Equal(7u, e.EntityId);
         Assert.Equal(12, e.ProtoIndex);
@@ -25,7 +27,9 @@ public class ScenarioEntityTests
         Assert.Equal(3, e.PlayerId);
         Assert.Equal(new Vector3(1, 2, 3), e.Position);
         Assert.Equal(Matrix3x3.Identity, e.Rotation);
-        Assert.Equal(new byte[] { 0xAA, 0xBB }, e.OtherFields);
+        Assert.Equal([], e.H1Prefix);
+        Assert.Equal([], e.H1EnTail);
+        Assert.Equal(new byte[] { 0xAA, 0xBB }, e.H1Suffix);
     }
 
     [Fact]

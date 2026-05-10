@@ -59,15 +59,59 @@ public class ScenarioEntityListBuilderTests
     }
 
     [Fact]
-    public void Build_CapturesOtherFieldsBlob()
+    public void Build_CapturesH1SuffixBlob()
     {
         var scenario = LoadFixtureScenario();
         var entities = ScenarioEntityListBuilder.Build(scenario);
         Assert.NotEmpty(entities);
 
-        // OtherFields should be non-null for all and non-empty for any real H1
-        // record (there's tail data beyond position+rotation).
-        Assert.All(entities, e => Assert.NotNull(e.OtherFields));
-        Assert.Contains(entities, e => e.OtherFields.Length > 0);
+        // H1Suffix should be non-null for all and non-empty for any real H1 record
+        // (UnitP1, UnitP2, markers, fake_p1 records all live after the EN section).
+        Assert.All(entities, e => Assert.NotNull(e.H1Suffix));
+        Assert.Contains(entities, e => e.H1Suffix.Length > 0);
+    }
+
+    [Fact]
+    public void Build_CapturesH1PrefixWithKnownLayout()
+    {
+        var scenario = LoadFixtureScenario();
+        var entities = ScenarioEntityListBuilder.Build(scenario);
+        Assert.NotEmpty(entities);
+
+        // H1Prefix length is posOff - 6 = (22 + unk_len) - 6 = 16 + unk_len.
+        // unk_len is 12 (old format) or 16 (new format) -> 28 or 32 bytes.
+        Assert.All(entities, e =>
+            Assert.True(e.H1Prefix.Length == 28 || e.H1Prefix.Length == 32,
+                $"H1Prefix.Length={e.H1Prefix.Length}, expected 28 or 32"));
+    }
+
+    [Fact]
+    public void Build_CapturesH1EnTailLengthZeroOrOne()
+    {
+        var scenario = LoadFixtureScenario();
+        var entities = ScenarioEntityListBuilder.Build(scenario);
+        Assert.NotEmpty(entities);
+
+        // H1EnTail is empty for new-format scenarios; 1 byte (ignore13 bool) for old format.
+        Assert.All(entities, e =>
+            Assert.True(e.H1EnTail.Length == 0 || e.H1EnTail.Length == 1,
+                $"H1EnTail.Length={e.H1EnTail.Length}, expected 0 or 1"));
+    }
+
+    [Fact]
+    public void Build_PlayerIdAtH1PrefixOffset8()
+    {
+        var scenario = LoadFixtureScenario();
+        var entities = ScenarioEntityListBuilder.Build(scenario);
+        Assert.NotEmpty(entities);
+
+        // Z1Writer relies on this invariant: the u32 LE at H1Prefix[8..12] equals PlayerId.
+        // h1[14] = h1[6 + 8] = H1Prefix[8] (low byte of the u32 player_id field).
+        foreach (var e in entities)
+        {
+            Assert.True(e.H1Prefix.Length >= 12, $"H1Prefix too short: {e.H1Prefix.Length}");
+            var prefixPlayerId = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(e.H1Prefix.AsSpan(8, 4));
+            Assert.Equal((uint)e.PlayerId, prefixPlayerId);
+        }
     }
 }

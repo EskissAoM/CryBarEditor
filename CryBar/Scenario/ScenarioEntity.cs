@@ -10,7 +10,19 @@ public sealed class ScenarioEntity
     public required byte PlayerId { get; set; }
     public required Vector3 Position { get; set; }
     public required Matrix3x3 Rotation { get; set; }
-    public required byte[] OtherFields { get; init; }
+
+    // EN body header bytes from h1[6] (after EN magic + enSize) up to start of Position.
+    // PlayerId lives at offset 8 within this blob (the u32 player_id field).
+    // Length = posOff - 6 (i.e. 28 if unk_len=12, 32 if unk_len=16).
+    public required byte[] H1Prefix { get; init; }
+
+    // Bytes inside the EN section that come AFTER the rotation matrix.
+    // 0 bytes for new-format scenarios; 1 byte (optional ignore13 bool) for old format.
+    public required byte[] H1EnTail { get; init; }
+
+    // Bytes AFTER the EN section ends, to end of H1 record.
+    // Contains UnitP1 (with name_index = ProtoIndex), UnitP2, markers, 2x fake_p1.
+    public required byte[] H1Suffix { get; init; }
 }
 
 public readonly struct Matrix3x3 : System.IEquatable<Matrix3x3>

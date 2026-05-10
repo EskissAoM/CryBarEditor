@@ -56,7 +56,7 @@ public static class ScenarioEntityListBuilder
                 if (marker == "H1" && size >= 82)
                 {
                     var sub = span.Slice(off + 6, (int)size);
-                    if (TryParseH1(sub, out var pos, out var playerId, out var protoIndex, out var rotation, out var otherFields))
+                    if (TryParseH1(sub, out var pos, out var playerId, out var protoIndex, out var rotation, out var h1Prefix, out var h1EnTail, out var h1Suffix))
                     {
                         var name = (protoIndex >= 0 && protoIndex < protoNames.Count) ? protoNames[protoIndex] : "?";
                         result.Add(new ScenarioEntity
@@ -67,7 +67,9 @@ public static class ScenarioEntityListBuilder
                             PlayerId = (byte)playerId,
                             EntityId = entityId,
                             Rotation = rotation,
-                            OtherFields = otherFields
+                            H1Prefix = h1Prefix,
+                            H1EnTail = h1EnTail,
+                            H1Suffix = h1Suffix
                         });
                     }
                 }
@@ -85,13 +87,17 @@ public static class ScenarioEntityListBuilder
         out int playerId,
         out int protoIndex,
         out Matrix3x3 rotation,
-        out byte[] otherFields)
+        out byte[] h1Prefix,
+        out byte[] h1EnTail,
+        out byte[] h1Suffix)
     {
         pos = default;
         playerId = 0;
         protoIndex = -1;
         rotation = Matrix3x3.Identity;
-        otherFields = [];
+        h1Prefix = [];
+        h1EnTail = [];
+        h1Suffix = [];
 
         if (!ScenarioFile.GetEntityOffsets(h1, out int posOff, out int rotOff, out int enEnd))
             return false;
@@ -127,10 +133,18 @@ public static class ScenarioEntityListBuilder
             BinaryPrimitives.ReadSingleLittleEndian(h1.Slice(rotOff + 28, 4)),
             BinaryPrimitives.ReadSingleLittleEndian(h1.Slice(rotOff + 32, 4)));
 
-        // OtherFields: everything after the rotation matrix up to the end of the H1 sub-block.
-        // Includes optional bool, P1/P2/P3 sub-sections, and trailing ConstP1 records.
-        int trailOff = rotOff + 36;
-        otherFields = trailOff < h1.Length ? h1.Slice(trailOff).ToArray() : [];
+        // H1Prefix: EN body bytes after the EN magic+size header (h1[0..5]) up to Position.
+        // Contains unit_id_copy, magic zero, player_id, unk_len, unk2/unk3 padding blocks.
+        h1Prefix = h1.Slice(6, posOff - 6).ToArray();
+
+        // H1EnTail: bytes inside the EN section after the rotation matrix.
+        // 0 bytes for new format; 1 byte (optional ignore13 bool) for old format.
+        int tailStart = rotOff + 36;
+        h1EnTail = enEnd > tailStart ? h1.Slice(tailStart, enEnd - tailStart).ToArray() : [];
+
+        // H1Suffix: bytes after the EN section to end of H1 record. Includes UnitP1
+        // (name_index = ProtoIndex), UnitP2, markers, 2x fake_p1.
+        h1Suffix = enEnd < h1.Length ? h1.Slice(enEnd).ToArray() : [];
         return true;
     }
 }
