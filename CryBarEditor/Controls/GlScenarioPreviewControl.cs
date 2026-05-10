@@ -628,8 +628,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             inst[o + 0] = m.Position.X * 0.5f;
             inst[o + 1] = m.Position.Y;
             inst[o + 2] = m.Position.Z * 0.5f;
-            var (r, g, b, a) = PlayerColor(m.PlayerId);
-            inst[o + 3] = r; inst[o + 4] = g; inst[o + 5] = b; inst[o + 6] = a;
+            var c = CryBar.Scenario.PlayerColors.GetRgb(m.PlayerId);
+            inst[o + 3] = c.R; inst[o + 4] = c.G; inst[o + 5] = c.B; inst[o + 6] = 1f;
         }
 
         gl.BindVertexArray(_billboardVao);
@@ -766,11 +766,6 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.Disable(GL_BLEND);
     }
 
-    static (float r, float g, float b, float a) PlayerColor(int playerId)
-    {
-        var c = CryBar.Scenario.PlayerColors.GetRgb((byte)playerId);
-        return (c.R, c.G, c.B, 1f);
-    }
 
     public readonly record struct WorldRayHit(int TileX, int TileZ, int VertexX, int VertexZ, float Height);
 
