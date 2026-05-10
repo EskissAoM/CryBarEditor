@@ -1,6 +1,8 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Xml;
+using CryBar.Scenario.Writers;
 
 namespace CryBar.Scenario;
 
@@ -252,29 +254,6 @@ public partial class ScenarioFile
         return byteCount;
     }
 
-    static void ReadFloatArrayXml(string text, BinaryWriter? bw, bool writeCount)
-    {
-        if (bw == null) return;
-        if (text.Length == 0)
-        {
-            if (writeCount) bw.Write(0u);
-            return;
-        }
-        if (IsBase64Content(text))
-        {
-            var bytes = Convert.FromBase64String(text);
-            if (writeCount) bw.Write((uint)(bytes.Length / 4));
-            bw.Write(bytes);
-        }
-        else
-        {
-            // Old format: space-separated floats
-            var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (writeCount) bw.Write((uint)parts.Length);
-            WriteFloatArray(bw, parts);
-        }
-    }
-
     static ScenarioSection ReadTnXml(XmlReader reader)
     {
         var hasT3Attr = reader.GetAttribute("hasT3");
@@ -287,20 +266,33 @@ public partial class ScenarioFile
         var t3MagicAttr = reader.GetAttribute("t3Magic");
         var hasTmAttr = reader.GetAttribute("hasTm");
 
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms);
-
         byte hasT3 = byte.Parse(hasT3Attr);
-        bw.Write(hasT3);
+        byte hasTm = string.IsNullOrEmpty(hasTmAttr) ? (byte)0 : byte.Parse(hasTmAttr);
+        uint t3Magic = string.IsNullOrEmpty(t3MagicAttr) ? 0u : uint.Parse(t3MagicAttr);
 
-        MemoryStream? t3Ms = hasT3 != 0 ? new MemoryStream() : null;
-        BinaryWriter? t3Bw = t3Ms != null ? new BinaryWriter(t3Ms) : null;
-
-        if (t3Bw != null)
-            t3Bw.Write(string.IsNullOrEmpty(t3MagicAttr) ? 0u : uint.Parse(t3MagicAttr));
-
-        byte[]? tnTmData = null;
-        byte[]? tnTrailData = null;
+        // Defaults populated from XML; any element absent leaves the default.
+        TerrainTextureGroup[] terrainGroups = [];
+        uint terrainGroupsMagic = 1u;
+        int mapX = 0, mapZ = 0;
+        float unkF0 = 0f, unkF1 = 0f;
+        byte[] tileGroups = [];
+        ushort[] tileSubs = [];
+        byte[] tilePt = [];
+        byte[] waterType = [];
+        string tileGroupsMarker = "TT";
+        string tileSubsMarker = "TS";
+        string tilePtMarker = "PT";
+        string waterTypeMarker = "WT";
+        byte[] waterColorsSection = [];
+        byte[] waterNamesSection = [];
+        byte[] t3Tail = [];
+        byte[] tmSection = [];
+        byte[] tnTrail = [];
+        // Heights count is shared. We track each array separately and later resize so
+        // all three have matching lengths -- the writer emits a single u32 count.
+        float[] heights = [];
+        float[] waterHeights = [];
+        float[] unkHeights = [];
 
         if (!reader.IsEmptyElement)
         {
@@ -311,61 +303,79 @@ public partial class ScenarioFile
                 switch (reader.Name)
                 {
                     case "TerrainGroups":
-                        ReadTerrainGroupsTT(reader, t3Bw!);
+                        (terrainGroupsMagic, terrainGroups) = ReadTerrainGroupsXml(reader);
                         break;
                     case "MapSize":
-                        if (t3Bw != null)
-                        {
-                            // File order is (gameZ, gameX); XML uses game-axis names.
-                            t3Bw.Write(uint.Parse(reader.GetAttribute("z") ?? "0"));
-                            t3Bw.Write(uint.Parse(reader.GetAttribute("x") ?? "0"));
-                        }
+                        // File order is (gameZ, gameX); XML uses game-axis names.
+                        mapZ = int.Parse(reader.GetAttribute("z") ?? "0");
+                        mapX = int.Parse(reader.GetAttribute("x") ?? "0");
                         reader.Skip();
                         break;
                     case "UnkFloats":
-                        if (t3Bw != null)
-                        {
-                            t3Bw.Write(float.Parse(reader.GetAttribute("f0") ?? "0"));
-                            t3Bw.Write(float.Parse(reader.GetAttribute("f1") ?? "0"));
-                        }
+                        unkF0 = float.Parse(reader.GetAttribute("f0") ?? "0");
+                        unkF1 = float.Parse(reader.GetAttribute("f1") ?? "0");
                         reader.Skip();
                         break;
                     case "TT" or "PT" or "WT":
-                        ReadSizeListSection(reader, t3Bw!, 1);
+                    {
+                        var marker = reader.Name;
+                        var bytes = ReadSizeListBytes(reader, elemSize: 1);
+                        if (marker == "TT") { tileGroupsMarker = marker; tileGroups = bytes; }
+                        else if (marker == "PT") { tilePtMarker = marker; tilePt = bytes; }
+                        else { waterTypeMarker = marker; waterType = bytes; }
                         break;
+                    }
                     case "TS" or "PS":
-                        ReadSizeListSection(reader, t3Bw!, 2);
+                    {
+                        var marker = reader.Name;
+                        if (marker == "TS")
+                        {
+                            tileSubsMarker = marker;
+                            tileSubs = ReadSizeListUshorts(reader);
+                        }
+                        else
+                        {
+                            // PS = WaterColors (cosmetic). Capture the raw section bytes
+                            // (marker + size header + body) so it round-trips opaquely.
+                            waterColorsSection = ReadFullSizeListSectionBytes(reader, elemSize: 2);
+                        }
                         break;
+                    }
                     case "WI":
-                        ReadWaterNames(reader, t3Bw!);
+                        waterNamesSection = ReadWaterNamesSectionBytes(reader);
                         break;
                     case "Heights":
                     {
-                        if (reader.IsEmptyElement) { if (t3Bw != null) t3Bw.Write(0u); reader.Read(); break; }
-                        ReadFloatArrayXml(reader.ReadElementContentAsString().Trim(), t3Bw, writeCount: true);
+                        if (reader.IsEmptyElement) { reader.Read(); break; }
+                        heights = ReadFloatArrayFromXml(reader.ReadElementContentAsString().Trim());
                         break;
                     }
-                    case "WaterHeights" or "UnkHeights":
+                    case "WaterHeights":
                     {
                         if (reader.IsEmptyElement) { reader.Read(); break; }
-                        ReadFloatArrayXml(reader.ReadElementContentAsString().Trim(), t3Bw, writeCount: false);
+                        waterHeights = ReadFloatArrayFromXml(reader.ReadElementContentAsString().Trim());
+                        break;
+                    }
+                    case "UnkHeights":
+                    {
+                        if (reader.IsEmptyElement) { reader.Read(); break; }
+                        unkHeights = ReadFloatArrayFromXml(reader.ReadElementContentAsString().Trim());
                         break;
                     }
                     case "T3Tail":
                     {
                         if (reader.IsEmptyElement) { reader.Read(); break; }
                         var text = reader.ReadElementContentAsString().Trim();
-                        if (t3Bw != null && text.Length > 0)
-                            t3Bw.Write(Convert.FromBase64String(text));
+                        if (text.Length > 0) t3Tail = Convert.FromBase64String(text);
                         break;
                     }
                     case "TnTM":
                         if (reader.IsEmptyElement) { reader.Read(); break; }
-                        tnTmData = Convert.FromBase64String(reader.ReadElementContentAsString().Trim());
+                        tmSection = Convert.FromBase64String(reader.ReadElementContentAsString().Trim());
                         break;
                     case "TnTrail":
                         if (reader.IsEmptyElement) { reader.Read(); break; }
-                        tnTrailData = Convert.FromBase64String(reader.ReadElementContentAsString().Trim());
+                        tnTrail = Convert.FromBase64String(reader.ReadElementContentAsString().Trim());
                         break;
                     default:
                         reader.Skip();
@@ -376,41 +386,52 @@ public partial class ScenarioFile
         }
         else reader.Read();
 
-        if (t3Ms != null)
+        // The writer emits a single u32 height count. Align the three arrays to the max
+        // observed length (trailing zeros) so byte-equivalent output is produced regardless
+        // of which arrays the XML happened to populate.
+        var heightCount = Math.Max(heights.Length, Math.Max(waterHeights.Length, unkHeights.Length));
+        if (heights.Length != heightCount) Array.Resize(ref heights, heightCount);
+        if (waterHeights.Length != heightCount) Array.Resize(ref waterHeights, heightCount);
+        if (unkHeights.Length != heightCount) Array.Resize(ref unkHeights, heightCount);
+
+        var terrain = new ScenarioTerrain
         {
-            var t3Data = t3Ms.ToArray();
-            bw.Write((byte)'T'); bw.Write((byte)'3');
-            bw.Write((uint)t3Data.Length);
-            bw.Write(t3Data);
-            t3Bw!.Dispose();
-            t3Ms.Dispose();
-        }
+            MapSizeX = mapX,
+            MapSizeZ = mapZ,
+            Heights = heights,
+            WaterHeights = waterHeights,
+            UnkHeights = unkHeights,
+            TileGroups = tileGroups,
+            TileSubs = tileSubs,
+            TilePt = tilePt,
+            WaterType = waterType,
+            TerrainGroups = terrainGroups,
+            HasT3 = hasT3,
+            HasTm = hasTm,
+            T3Magic = t3Magic,
+            TerrainGroupsMagic = terrainGroupsMagic,
+            UnkFloat0 = unkF0,
+            UnkFloat1 = unkF1,
+            TileGroupsMarker = tileGroupsMarker,
+            TileSubsMarker = tileSubsMarker,
+            TilePtMarker = tilePtMarker,
+            WaterTypeMarker = waterTypeMarker,
+            WaterColorsSection = waterColorsSection,
+            WaterNamesSection = waterNamesSection,
+            T3Tail = t3Tail,
+            TmSection = tmSection,
+            TnTrail = tnTrail,
+        };
 
-        byte hasTm = string.IsNullOrEmpty(hasTmAttr) ? (byte)0 : byte.Parse(hasTmAttr);
-        bw.Write(hasTm);
-
-        if (hasTm != 0 && tnTmData != null)
-        {
-            bw.Write((byte)'T'); bw.Write((byte)'M');
-            bw.Write((uint)tnTmData.Length);
-            bw.Write(tnTmData);
-        }
-
-        if (tnTrailData != null)
-            bw.Write(tnTrailData);
-
-        return new ScenarioSection("TN", ms.ToArray());
+        return new ScenarioSection("TN", TnWriter.Write(terrain));
     }
 
-    static void ReadTerrainGroupsTT(XmlReader reader, BinaryWriter t3Bw)
+    static (uint magic, TerrainTextureGroup[] groups) ReadTerrainGroupsXml(XmlReader reader)
     {
         var magicAttr = reader.GetAttribute("magic");
+        var magic = string.IsNullOrEmpty(magicAttr) ? 1u : uint.Parse(magicAttr);
 
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms);
-        bw.Write(string.IsNullOrEmpty(magicAttr) ? 1u : uint.Parse(magicAttr));
-
-        var groups = new List<(string name, List<string> textures)>();
+        var groups = new List<TerrainTextureGroup>();
         if (!reader.IsEmptyElement)
         {
             reader.Read();
@@ -435,7 +456,7 @@ public partial class ScenarioFile
                         reader.ReadEndElement();
                     }
                     else reader.Read();
-                    groups.Add((name, textures));
+                    groups.Add(new TerrainTextureGroup { Name = name, Textures = textures.ToArray() });
                 }
                 else reader.Skip();
             }
@@ -443,72 +464,130 @@ public partial class ScenarioFile
         }
         else reader.Read();
 
-        bw.Write((uint)groups.Count);
-        foreach (var (name, textures) in groups)
-        {
-            WriteString16(bw, name);
-            bw.Write((uint)textures.Count);
-            foreach (var tex in textures)
-                WriteString16(bw, tex);
-        }
-
-        WriteSubSection(t3Bw, "TT", ms.ToArray());
+        return (magic, groups.ToArray());
     }
 
-    static void ReadSizeListSection(XmlReader reader, BinaryWriter bw, int elemSize)
+    /// <summary>
+    /// Reads a size-list element's payload as a byte array. Accepts both base64 (new
+    /// format: raw inner bytes containing u32 count + u8[]) and legacy CSV. The
+    /// returned array is the elements only (no count prefix).
+    /// </summary>
+    static byte[] ReadSizeListBytes(XmlReader reader, int elemSize)
+    {
+        if (reader.IsEmptyElement) { reader.Read(); return []; }
+        var text = reader.ReadElementContentAsString().Trim();
+        if (text.Length == 0) return [];
+
+        if (IsBase64Content(text))
+        {
+            var bytes = Convert.FromBase64String(text);
+            // Strip the leading u32 count, return element bytes only.
+            if (bytes.Length < 4) return [];
+            return bytes[4..];
+        }
+
+        // Legacy CSV format.
+        var parts = text.Split(',');
+        var result = new byte[parts.Length * elemSize];
+        if (elemSize == 1)
+        {
+            for (int i = 0; i < parts.Length; i++)
+                result[i] = byte.Parse(parts[i].Trim());
+        }
+        else
+        {
+            var span = result.AsSpan();
+            for (int i = 0; i < parts.Length; i++)
+                BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(i * 2), ushort.Parse(parts[i].Trim()));
+        }
+        return result;
+    }
+
+    static ushort[] ReadSizeListUshorts(XmlReader reader)
+    {
+        var bytes = ReadSizeListBytes(reader, elemSize: 2);
+        if (bytes.Length == 0) return [];
+        var result = new ushort[bytes.Length / 2];
+        MemoryMarshal.Cast<byte, ushort>(bytes.AsSpan(0, result.Length * 2)).CopyTo(result);
+        return result;
+    }
+
+    /// <summary>
+    /// Reads a size-list XML element and returns the full sub-section bytes
+    /// (marker[2] + u32 size + body). Used for cosmetic sub-sections we preserve
+    /// opaquely (e.g. WaterColors "PS").
+    /// </summary>
+    static byte[] ReadFullSizeListSectionBytes(XmlReader reader, int elemSize)
     {
         var marker = reader.Name;
 
-        bw.Write((byte)marker[0]); bw.Write((byte)marker[1]);
-
         if (reader.IsEmptyElement)
         {
-            bw.Write(4u); // section size = just the count
-            bw.Write(0u); // count = 0
             reader.Read();
-            return;
+            // Empty list: section body is just a u32 count of 0.
+            var empty = new byte[10];
+            empty[0] = (byte)marker[0]; empty[1] = (byte)marker[1];
+            BinaryPrimitives.WriteUInt32LittleEndian(empty.AsSpan(2, 4), 4u);
+            // u32 count at [6..10] is already zero-initialized.
+            return empty;
         }
 
         var text = reader.ReadElementContentAsString().Trim();
         if (text.Length == 0)
         {
-            bw.Write(4u);
-            bw.Write(0u);
-            return;
+            var empty = new byte[10];
+            empty[0] = (byte)marker[0]; empty[1] = (byte)marker[1];
+            BinaryPrimitives.WriteUInt32LittleEndian(empty.AsSpan(2, 4), 4u);
+            return empty;
         }
 
+        byte[] body;
         if (IsBase64Content(text))
         {
-            // New format: base64 of raw inner bytes (count + elements)
-            var bytes = Convert.FromBase64String(text);
-            bw.Write((uint)bytes.Length);
-            bw.Write(bytes);
+            // New format: base64 of raw inner bytes (count + elements).
+            body = Convert.FromBase64String(text);
         }
         else
         {
-            // Old format: CSV of values
+            // Legacy CSV: rebuild count + elements blob.
             var parts = text.Split(',');
-            var count = (uint)parts.Length;
-            bw.Write((uint)(4 + count * (uint)elemSize));
-            bw.Write(count);
-            foreach (var p in parts)
+            body = new byte[4 + parts.Length * elemSize];
+            BinaryPrimitives.WriteUInt32LittleEndian(body.AsSpan(0, 4), (uint)parts.Length);
+            if (elemSize == 1)
             {
-                if (elemSize == 1)
-                    bw.Write(byte.Parse(p.Trim()));
-                else
-                    bw.Write(ushort.Parse(p.Trim()));
+                for (int i = 0; i < parts.Length; i++)
+                    body[4 + i] = byte.Parse(parts[i].Trim());
+            }
+            else
+            {
+                var span = body.AsSpan(4);
+                for (int i = 0; i < parts.Length; i++)
+                    BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(i * 2), ushort.Parse(parts[i].Trim()));
             }
         }
+
+        var section = new byte[6 + body.Length];
+        section[0] = (byte)marker[0];
+        section[1] = (byte)marker[1];
+        BinaryPrimitives.WriteUInt32LittleEndian(section.AsSpan(2, 4), (uint)body.Length);
+        Buffer.BlockCopy(body, 0, section, 6, body.Length);
+        return section;
     }
 
-    static void ReadWaterNames(XmlReader reader, BinaryWriter t3Bw)
+    /// <summary>
+    /// Reads a WI-style XML element (magic + per-name UTF-16 entries) and returns the
+    /// full sub-section bytes (marker[2] + u32 size + body). The body is u32 magic +
+    /// u32 nameCount + nameCount * String16.
+    /// </summary>
+    static byte[] ReadWaterNamesSectionBytes(XmlReader reader)
     {
         var marker = reader.Name;
         var magicAttr = reader.GetAttribute("magic");
+        var magic = string.IsNullOrEmpty(magicAttr) ? 0u : uint.Parse(magicAttr);
 
         using var innerMs = new MemoryStream();
         using var innerBw = new BinaryWriter(innerMs);
-        innerBw.Write(string.IsNullOrEmpty(magicAttr) ? 0u : uint.Parse(magicAttr));
+        innerBw.Write(magic);
 
         var names = new List<string>();
         if (!reader.IsEmptyElement)
@@ -529,6 +608,57 @@ public partial class ScenarioFile
         innerBw.Write((uint)names.Count);
         foreach (var name in names)
             WriteString16(innerBw, name);
-        WriteSubSection(t3Bw, marker, innerMs.ToArray());
+
+        var body = innerMs.ToArray();
+        var section = new byte[6 + body.Length];
+        section[0] = (byte)marker[0];
+        section[1] = (byte)marker[1];
+        BinaryPrimitives.WriteUInt32LittleEndian(section.AsSpan(2, 4), (uint)body.Length);
+        Buffer.BlockCopy(body, 0, section, 6, body.Length);
+        return section;
+    }
+
+    /// <summary>
+    /// Decodes a Heights/WaterHeights/UnkHeights XML payload into a float array.
+    /// Accepts both base64 (raw float bytes; or, for Heights only, a u32 count
+    /// followed by raw floats) and legacy space-separated text.
+    /// </summary>
+    static float[] ReadFloatArrayFromXml(string text)
+    {
+        if (text.Length == 0) return [];
+
+        if (IsBase64Content(text))
+        {
+            var bytes = Convert.FromBase64String(text);
+            // Heights section originally encoded a u32 count followed by floats; the
+            // count length (4 bytes) is included in the base64. WaterHeights/UnkHeights
+            // contain only floats with no count prefix. Distinguish by length: if the
+            // byte length is divisible by 4 and has an apparent count of (n-1)/1 floats
+            // matching, treat as count-prefixed; otherwise treat as raw floats.
+            // Simplest heuristic: if (bytes.Length - 4) >= 0 and divisible by 4 AND the
+            // u32 at offset 0 equals (bytes.Length - 4) / 4, then count-prefixed.
+            if (bytes.Length >= 4 && bytes.Length % 4 == 0)
+            {
+                var maybeCount = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(0, 4));
+                if ((long)maybeCount * 4 == bytes.Length - 4)
+                {
+                    var floats = new float[maybeCount];
+                    if (maybeCount > 0)
+                        MemoryMarshal.Cast<byte, float>(bytes.AsSpan(4)).Slice(0, (int)maybeCount).CopyTo(floats);
+                    return floats;
+                }
+                var raw = new float[bytes.Length / 4];
+                MemoryMarshal.Cast<byte, float>(bytes.AsSpan()).CopyTo(raw);
+                return raw;
+            }
+            return [];
+        }
+
+        // Legacy space-separated floats.
+        var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var result = new float[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+            result[i] = float.Parse(parts[i]);
+        return result;
     }
 }
