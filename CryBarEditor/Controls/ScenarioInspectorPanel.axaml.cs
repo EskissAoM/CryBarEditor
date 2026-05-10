@@ -371,6 +371,10 @@ public partial class ScenarioInspectorPanel : UserControl
             return ((byte)gi, (ushort)(newTexs.Length - 1));
         }
 
+        // Group index is stored as a byte in the binary format.
+        if (terrain.TerrainGroups.Length >= 256)
+            throw new System.InvalidOperationException("Cannot add terrain group: scenario already has 256 groups (binary format max).");
+
         var newGroup = new TerrainTextureGroup { Name = group, Textures = new[] { texture } };
         var newGroups = new TerrainTextureGroup[terrain.TerrainGroups.Length + 1];
         System.Array.Copy(terrain.TerrainGroups, newGroups, terrain.TerrainGroups.Length);

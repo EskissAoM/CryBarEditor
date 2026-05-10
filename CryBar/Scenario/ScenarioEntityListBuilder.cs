@@ -5,6 +5,10 @@ namespace CryBar.Scenario;
 
 public static class ScenarioEntityListBuilder
 {
+    // Sub-section size sanity cap; corrupt/truncated bodies past this length
+    // are treated as the end of the envelope walk.
+    internal const uint MaxSubSectionSize = 100_000;
+
     public static ScenarioEntity[] Build(ScenarioFile scenario)
     {
         if (scenario is null || !scenario.Parsed) return [];
@@ -49,7 +53,7 @@ public static class ScenarioEntityListBuilder
 
                 var marker = ScenarioFile.ReadMarker(span, off);
                 var size = BinaryPrimitives.ReadUInt32LittleEndian(span.Slice(off + 2));
-                if (size > 100_000 || off + 6 + size > (uint)span.Length) break;
+                if (size > MaxSubSectionSize || off + 6 + size > (uint)span.Length) break;
 
                 if (marker == "H1" && size >= 82)
                 {

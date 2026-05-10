@@ -70,13 +70,12 @@ public partial class MainWindow
 
         _scenarioGl.SetScenario(data);
 
-        data.Selection.Changed += () =>
-            Dispatcher.UIThread.Post(() => _scenarioInspector.UpdateSelection(_scenarioData));
+        data.Selection.Changed -= OnScenarioSelectionChanged;
+        data.Selection.Changed += OnScenarioSelectionChanged;
         _scenarioInspector.UpdateSelection(data);
 
-        // -=/+= because FlushPendingScenario3D can run more than once per scenario.
-        data.Editor.Changed += () =>
-            Dispatcher.UIThread.Post(() => OnEditorChanged(data));
+        data.Editor.Changed -= OnScenarioEditorChanged;
+        data.Editor.Changed += OnScenarioEditorChanged;
 
         _scenarioInspector.ExecuteCommand = cmd => data.Editor.Execute(cmd);
         _scenarioInspector.LoadProtoNamesAsync = async () => await GetOrLoadProtoNamesAsync(data);
@@ -108,9 +107,22 @@ public partial class MainWindow
             _ = LoadScenarioTexturesAsync(data, data.Cancellation.Token);
     }
 
+    void OnScenarioSelectionChanged()
+    {
+        var d = _scenarioData;
+        if (d is null) return;
+        Dispatcher.UIThread.Post(() => { if (ReferenceEquals(d, _scenarioData)) _scenarioInspector.UpdateSelection(d); });
+    }
+
+    void OnScenarioEditorChanged()
+    {
+        var d = _scenarioData;
+        if (d is null) return;
+        Dispatcher.UIThread.Post(() => { if (ReferenceEquals(d, _scenarioData)) OnEditorChanged(d); });
+    }
+
     void OnEditorChanged(ScenarioPreviewData data)
     {
-        // Closure captures `data`; ignore Changed events from a swapped-out scenario.
         if (!ReferenceEquals(data, _scenarioData)) return;
 
         // Discard() sets LastChange = null -> rebuild everything.
@@ -580,6 +592,12 @@ public partial class MainWindow
     void HideScenarioPreview()
     {
         _pendingScenario3D = null;
+
+        if (_scenarioData is { } prev)
+        {
+            prev.Selection.Changed -= OnScenarioSelectionChanged;
+            prev.Editor.Changed -= OnScenarioEditorChanged;
+        }
 
         // Detach inspector before the editor goes away.
         _scenarioInspector.BindEditor(null, sourcePath: null);

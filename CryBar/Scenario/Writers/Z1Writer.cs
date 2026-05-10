@@ -55,7 +55,9 @@ public static class Z1Writer
         for (int i = 0; i < entities.Count; i++)
         {
             var e = entities[i];
-            BinaryPrimitives.WriteUInt16LittleEndian(envelope, (ushort)e.EntityId);
+            // Format only encodes a 16-bit id; the model stores uint to play nicely
+            // with HashSet<uint>/Dictionary<uint, *>. Reject overflow loudly.
+            BinaryPrimitives.WriteUInt16LittleEndian(envelope, checked((ushort)e.EntityId));
             BinaryPrimitives.WriteUInt16LittleEndian(envelope.Slice(2), entityFlags is null ? (ushort)0 : entityFlags[i]);
             ms.Write(envelope);
 
