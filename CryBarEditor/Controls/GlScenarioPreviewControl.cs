@@ -613,7 +613,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     unsafe void UploadEntities(GlInterface gl, ScenarioPreviewData data)
     {
-        _entityCount = data.Entities.Length;
+        _entityCount = data.Entities.Count;
         if (_entityCount == 0) return;
         if (_glVertexAttribDivisor == null) return;
 

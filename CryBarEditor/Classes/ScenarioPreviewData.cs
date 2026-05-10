@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using CryBar.Scenario;
+using CryBar.Scenario.Editor;
 
 namespace CryBarEditor.Classes;
 
@@ -19,7 +21,7 @@ public sealed class ScenarioPreviewData : IDisposable
     public required ScenarioTextureSet TextureSet { get; init; }
     public required TerrainMesh TerrainMesh { get; init; }
     public WaterMesh? WaterMesh { get; init; }
-    public required ScenarioEntity[] Entities { get; init; }
+    public required List<ScenarioEntity> Entities { get; init; }
 
     bool[] _sliceReady = [];
     public IReadOnlyList<bool> SliceReady => _sliceReady;
@@ -36,6 +38,15 @@ public sealed class ScenarioPreviewData : IDisposable
     public CancellationTokenSource Cancellation { get; } = new();
     public ScenarioSelection Selection { get; } = new();
 
+    // Mediator that owns undo/redo + dirty tracking. Wired in TryBuild after the
+    // entity list is materialised so the editor and renderer share the SAME
+    // List<ScenarioEntity> instance (mutations from commands are visible everywhere).
+    public ScenarioEditor Editor { get; private set; } = null!;
+
+    // Lazy proto-name table populated by MainWindow on first proto picker open.
+    // Null until then; UI handlers should early-return when null.
+    public List<string>? ProtoNamesCache { get; set; }
+
     Dictionary<uint, int>? _entityIdToIndex;
     // Lazy id -> Entities[] index lookup. Built on first access; subsequent
     // overlay/inspector rebuilds reuse the same dictionary.
@@ -45,8 +56,8 @@ public sealed class ScenarioPreviewData : IDisposable
         {
             if (_entityIdToIndex is null)
             {
-                var d = new Dictionary<uint, int>(Entities.Length);
-                for (int i = 0; i < Entities.Length; i++)
+                var d = new Dictionary<uint, int>(Entities.Count);
+                for (int i = 0; i < Entities.Count; i++)
                     d[Entities[i].EntityId] = i;
                 _entityIdToIndex = d;
             }
@@ -73,6 +84,7 @@ public sealed class ScenarioPreviewData : IDisposable
         var mesh = TerrainMeshBuilder.Build(terrain, textureSet);
         var water = WaterMeshBuilder.Build(terrain);
         var entities = ScenarioEntityListBuilder.Build(scenario);
+        var entitiesList = entities.ToList();
 
         var data = new ScenarioPreviewData
         {
@@ -81,10 +93,13 @@ public sealed class ScenarioPreviewData : IDisposable
             TextureSet = textureSet,
             TerrainMesh = mesh,
             WaterMesh = water,
-            Entities = entities,
+            Entities = entitiesList,
         };
         data._sliceReady = new bool[textureSet.Names.Count];
         data._textureSources = new TextureSource[textureSet.Names.Count];
+        // Same terrain + entities list passed to the editor as the renderer reads,
+        // so command Apply mutations are immediately visible in both places.
+        data.Editor = new ScenarioEditor(scenario, terrain, data.Entities);
         return data;
     }
 
