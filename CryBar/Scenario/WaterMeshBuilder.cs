@@ -80,10 +80,21 @@ public static class WaterMeshBuilder
 
         if (verts.Count == 0) return null;
 
+        var tileWaterY = new float[tileCount];
+        Array.Fill(tileWaterY, float.NaN);
+        for (int t = 0; t < tileCount; t++)
+        {
+            int c = component[t];
+            if (c >= 0) tileWaterY[t] = compY[c];
+        }
+
         return new WaterMesh
         {
             Vertices = verts.ToArray(),
-            Indices = indices.ToArray()
+            Indices = indices.ToArray(),
+            TileWaterY = tileWaterY,
+            MapX = mapX,
+            MapZ = mapZ,
         };
     }
 

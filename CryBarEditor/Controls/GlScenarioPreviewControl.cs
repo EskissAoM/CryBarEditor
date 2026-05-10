@@ -325,6 +325,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         layout(location = 0) in vec2 aQuad;
         layout(location = 1) in vec3 aWorldPos;
         layout(location = 2) in vec4 aColor;
+        layout(location = 3) in float aUnderwater;
         uniform mat4 uView;
         uniform mat4 uProj;
         uniform float uSize;
@@ -335,6 +336,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         out vec2 vUv;
         out vec4 vColor;
         out float vFade;
+        out float vUnderwater;
         void main() {
             // Apply the same Y scale as terrain, then lift above the (already scaled) ground.
             vec3 wp = vec3(aWorldPos.x, aWorldPos.y * uYScale + 0.4, aWorldPos.z);
@@ -346,6 +348,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             gl_Position = uProj * viewPos;
             vUv = aQuad;
             vColor = aColor;
+            vUnderwater = aUnderwater;
             float d = distance(uCamPos, wp);
             vFade = 1.0 - smoothstep(uFadeNear, uFadeFar, d);
         }
@@ -355,12 +358,15 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         in vec2 vUv;
         in vec4 vColor;
         in float vFade;
+        in float vUnderwater;
         out vec4 fragColor;
         void main() {
             float r = length(vUv);
             if (r > 1.0) discard;
             float edge = smoothstep(0.92, 1.0, r);
             vec4 col = mix(vColor, vec4(0.0, 0.0, 0.0, 1.0), edge);
+            vec3 waterTint = vec3(0.20, 0.40, 0.55);
+            col.rgb = mix(col.rgb, mix(col.rgb, waterTint, 0.55), vUnderwater);
             col.a *= mix(0.35, 1.0, clamp(vFade, 0.0, 1.0));
             fragColor = col;
         }
@@ -784,13 +790,17 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (_entityCount == 0) return;
         if (_glVertexAttribDivisor == null) return;
 
-        // Per instance: pos.xyz + color.rgba.
+        // Per instance: pos.xyz + color.rgba + underwater flag.
         // AoMR stores entity X/Z in half-tile units (1 tile = 2 stored units).
-        const int floatsPerInstance = 7;
+        const int floatsPerInstance = 8;
         int total = _entityCount * floatsPerInstance;
         var inst = ArrayPool<float>.Shared.Rent(total);
         try
         {
+            float[]? tileWaterY = data.WaterMesh?.TileWaterY;
+            int waterMapX = data.WaterMesh?.MapX ?? 0;
+            int waterMapZ = data.WaterMesh?.MapZ ?? 0;
+
             for (int i = 0; i < _entityCount; i++)
             {
                 var m = data.Entities[i];
@@ -802,6 +812,19 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
                 inst[o + 2] = pos.Z * 0.5f;
                 var c = CryBar.Scenario.PlayerColors.GetRgb(m.PlayerId);
                 inst[o + 3] = c.R; inst[o + 4] = c.G; inst[o + 5] = c.B; inst[o + 6] = 1f;
+
+                float underwater = 0f;
+                if (tileWaterY is not null)
+                {
+                    int tx = (int)(pos.X * 0.5f);
+                    int tz = (int)(pos.Z * 0.5f);
+                    if ((uint)tx < (uint)waterMapX && (uint)tz < (uint)waterMapZ)
+                    {
+                        float wy = tileWaterY[tz * waterMapX + tx];
+                        if (!float.IsNaN(wy) && pos.Y < wy) underwater = 1f;
+                    }
+                }
+                inst[o + 7] = underwater;
             }
 
             gl.BindVertexArray(_billboardVao);
@@ -822,6 +845,9 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             gl.EnableVertexAttribArray(2);
             gl.VertexAttribPointer(2, 4, GL_FLOAT_TYPE, 0, stride, new IntPtr(3 * sizeof(float)));
             _glVertexAttribDivisor(2, 1);
+            gl.EnableVertexAttribArray(3);
+            gl.VertexAttribPointer(3, 1, GL_FLOAT_TYPE, 0, stride, new IntPtr(7 * sizeof(float)));
+            _glVertexAttribDivisor(3, 1);
 
             gl.BindVertexArray(0);
         }
@@ -1043,11 +1069,15 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (_waterIndexCount == 0) return;
         gl.Enable(GL_BLEND);
         if (_glBlendFunc != null) _glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        // No depth writes so submerged billboards depth-test against the seabed,
+        // not the surface, and remain visible through the water.
+        gl.DepthMask(0);
         gl.UseProgram(_waterProgram);
         gl.UniformMatrix4fv(_uWaterMvp, 1, false, &mvpCopy.M11);
         gl.Uniform1f(_uWaterYScale, HeightScale);
         gl.BindVertexArray(_waterVao);
         gl.DrawElements(GL_TRIANGLES, _waterIndexCount, GL_UNSIGNED_INT_TYPE, IntPtr.Zero);
+        gl.DepthMask(1);
         gl.Disable(GL_BLEND);
     }
 

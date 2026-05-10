@@ -15,7 +15,7 @@ The purpose of this tool is to enable fast and easy modding of Age of Mythology 
 - **Read FMOD banks** (play, view and export FMOD events)
 - **Preview 3D TMM models** (export to OBJ or glTF with or without materials)
 - **Round-trip 3D models** (TMM/TMA/DDT <-> GLB) - export a model + animations to a single GLB, edit it in Blender, and re-import it back into TMM/TMA/DDT
-- **Read Scenario(mythscn) files** (export to XML and back) - **currently experimental**
+- **Scenario (mythscn) editor** (export to XML and back + view and edit scenarios)
 - **Dependency Finder and Graph** (easily find what other files are references in a file)
 - Pick a **Root directory** (usually `\games` folder) for fast switching between BAR and other files
 - Pick an **Export root directory** for fast exporting either from BAR or from Root directory
@@ -128,6 +128,8 @@ Otherwise I recommend you check out the official documentation in game's folder.
 ![CryBarEditor_11](https://assets.cryshana.me/fYJTyJ4ODeAN.avif)
 ### GLB -> TMM/TMA/DDT conversion
 ![CryBarEditor_12](https://assets.cryshana.me/bZcCeQUDcW4H.avif)
+### Scenario editor
+![CryBarEditor_13](https://assets.cryshana.me/R87lot9tUxkj.avif)
 ### Extra CLI tool
 Not part of editor, but a separate tool download. The CLI `crybar.exe` implements most of the functions that the editor supports. Can be used for scripting.
 
