@@ -129,12 +129,15 @@
                                        VerticalAlignment="Center" Foreground="#ddd"/>
                             <NumericUpDown Grid.Column="1" x:Name="_entityPosX"
                                            FormatString="0.00" Increment="0.5"
+                                           ShowButtonSpinner="False"
                                            ValueChanged="OnEntityPosChanged"/>
                             <NumericUpDown Grid.Column="2" x:Name="_entityPosY"
                                            FormatString="0.00" Increment="0.5"
+                                           ShowButtonSpinner="False"
                                            ValueChanged="OnEntityPosChanged" Margin="4,0,0,0"/>
                             <NumericUpDown Grid.Column="3" x:Name="_entityPosZ"
                                            FormatString="0.00" Increment="0.5"
+                                           ShowButtonSpinner="False"
                                            ValueChanged="OnEntityPosChanged" Margin="4,0,0,0"/>
                         </Grid>
                         <Grid ColumnDefinitions="Auto,*">
@@ -143,6 +146,7 @@
                             <NumericUpDown Grid.Column="1" x:Name="_entityYaw"
                                            FormatString="0.0"
                                            Minimum="-360" Maximum="360" Increment="5"
+                                           ShowButtonSpinner="False"
                                            ValueChanged="OnEntityYawChanged"/>
                         </Grid>
                         <Button x:Name="_entityDeleteBtn" Content="Delete"
@@ -173,6 +177,7 @@
                                        VerticalAlignment="Center" Foreground="#ddd"/>
                             <NumericUpDown Grid.Column="1" x:Name="_tileHeightNum"
                                            FormatString="0.00" Increment="0.25"
+                                           ShowButtonSpinner="False"
                                            ValueChanged="OnTileHeightChanged"/>
                             <Button Grid.Column="2" Content="-1"
                                     Click="OnTileHeightDecrement" Margin="4,0,0,0"
