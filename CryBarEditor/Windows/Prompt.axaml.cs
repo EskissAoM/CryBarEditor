@@ -37,6 +37,9 @@ public partial class Prompt : SimpleWindow
     public bool PromptIsSuccess => _type == PromptType.Success;
     public bool PromptIsInformation => _type == PromptType.Information;
     public bool PromptIsProgress => _type == PromptType.Progress;
+    public bool PromptIsConfirm => _type == PromptType.Confirm;
+
+    public bool Confirmed { get; private set; }
 
     public bool ShowProgressIcon { get => _showProgress; set { _showProgress = value; OnSelfChanged(); } }
     public bool ShowSuccessIcon { get => _showSuccess; set { _showSuccess = value; OnSelfChanged(); } }
@@ -57,6 +60,7 @@ public partial class Prompt : SimpleWindow
         OnPropertyChanged(nameof(PromptIsSuccess));
         OnPropertyChanged(nameof(PromptIsInformation));
         OnPropertyChanged(nameof(PromptIsProgress));
+        OnPropertyChanged(nameof(PromptIsConfirm));
 
         if (type == PromptType.Success) 
             ShowSuccessIcon = true;
@@ -98,6 +102,18 @@ public partial class Prompt : SimpleWindow
         Close();
     }
 
+    void ConfirmButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        Confirmed = true;
+        Close();
+    }
+
+    void CancelButton_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        Confirmed = false;
+        Close();
+    }
+
     void OpenLink_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (_linkUrl == null) return;
@@ -133,5 +149,6 @@ public enum PromptType
     Information,
     Error,
     Success,
-    Progress
+    Progress,
+    Confirm
 }

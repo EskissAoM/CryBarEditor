@@ -109,8 +109,19 @@
 				<Button Grid.Column="3" Content="Close"
 						Click="CloseButtonClick"
 						IsCancel="True"
+						IsVisible="{Binding !PromptIsConfirm}"
 						IsEnabled="{Binding CanClose}"
 						IsDefault="True" />
+				<StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="5"
+							IsVisible="{Binding PromptIsConfirm}">
+					<Button Content="Cancel"
+							Click="CancelButton_Click"
+							IsCancel="True" />
+					<Button Content="Confirm"
+							Click="ConfirmButton_Click"
+							Background="#4772b5"
+							IsDefault="True" />
+				</StackPanel>
 			</Grid>
 		</Grid>
 	</Border>

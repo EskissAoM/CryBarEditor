@@ -734,6 +734,13 @@ public partial class MainWindow : SimpleWindow
         await prompt.ShowDialog(this);
     }
 
+    public async Task<bool> Confirm(string title, string text)
+    {
+        var prompt = new Prompt(PromptType.Confirm, title, text);
+        await prompt.ShowDialog(this);
+        return prompt.Confirmed;
+    }
+
     Prompt ShowProgress(string title, Progress<string?> progress)
     {
         var prompt = new Prompt(PromptType.Progress, title, progress_reporter: progress);
