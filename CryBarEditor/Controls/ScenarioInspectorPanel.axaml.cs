@@ -45,6 +45,7 @@ public partial class ScenarioInspectorPanel : UserControl
     bool _suppressEntityChange;
 
     static List<PlayerOption>? _playerOptions;
+    static readonly int[] _waterTypeOptions = Enumerable.Range(0, 256).ToArray();
 
     void SelectBarClick(object? sender, RoutedEventArgs e) => SelectBarRequested?.Invoke();
 
@@ -91,7 +92,6 @@ public partial class ScenarioInspectorPanel : UserControl
             _selectedSection.IsVisible = false;
             _tileEditPanel.IsVisible = false;
             _entityEditPanel.IsVisible = false;
-            _selectedFields.IsVisible = false;
             return;
         }
 
@@ -107,7 +107,6 @@ public partial class ScenarioInspectorPanel : UserControl
     {
         _tileEditPanel.IsVisible = true;
         _entityEditPanel.IsVisible = false;
-        _selectedFields.IsVisible = false;
 
         var sel = data.Selection;
         int count = sel.Tiles.Count;
@@ -160,7 +159,7 @@ public partial class ScenarioInspectorPanel : UserControl
 
         // Water types are byte 0..255 (255 = no water). Show plain ints in the combo.
         if (_tileWaterCombo.ItemsSource is null)
-            _tileWaterCombo.ItemsSource = Enumerable.Range(0, 256).ToArray();
+            _tileWaterCombo.ItemsSource = _waterTypeOptions;
         _suppressWaterChange = true;
         _tileWaterCombo.SelectedIndex = waterMixed ? -1 : (waterType ?? -1);
         _suppressWaterChange = false;
@@ -177,7 +176,6 @@ public partial class ScenarioInspectorPanel : UserControl
     {
         _tileEditPanel.IsVisible = false;
         _entityEditPanel.IsVisible = true;
-        _selectedFields.IsVisible = false;
 
         var sel = data.Selection;
         int count = sel.Entities.Count;
@@ -355,15 +353,7 @@ public partial class ScenarioInspectorPanel : UserControl
         ExecuteCommand?.Invoke(cmd);
     }
 
-    /// <summary>
-    /// Resolves (group, texture) against the scenario's TerrainGroups array,
-    /// appending if missing.
-    ///   - existing group + existing texture -> returns (g, s)
-    ///   - existing group + new texture      -> appends to group.Textures
-    ///   - new group                         -> appends a new TerrainGroup
-    /// Append-only: never removes or reindexes existing entries (orphans are
-    /// harmless on disk, and existing tiles' (g, s) stay valid).
-    /// </summary>
+    // Append-only: never reindex existing entries (existing tiles keep their (g, s)).
     static (byte g, ushort s) ResolveOrAppendTerrain(ScenarioTerrain terrain, string group, string texture)
     {
         for (int gi = 0; gi < terrain.TerrainGroups.Length; gi++)
@@ -373,9 +363,7 @@ public partial class ScenarioInspectorPanel : UserControl
             for (int si = 0; si < grp.Textures.Length; si++)
                 if (grp.Textures[si] == texture) return ((byte)gi, (ushort)si);
 
-            // Append texture to existing group. TerrainTextureGroup is init-only
-            // (Name + Textures both required), so we replace the slot with a new
-            // instance that has the extended texture array.
+            // TerrainTextureGroup is init-only; replace slot with extended array.
             var newTexs = new string[grp.Textures.Length + 1];
             System.Array.Copy(grp.Textures, newTexs, grp.Textures.Length);
             newTexs[grp.Textures.Length] = texture;
@@ -383,8 +371,6 @@ public partial class ScenarioInspectorPanel : UserControl
             return ((byte)gi, (ushort)(newTexs.Length - 1));
         }
 
-        // Append a new TerrainGroup. TerrainGroups itself is settable on
-        // ScenarioTerrain (see comment on the property), so we swap the array.
         var newGroup = new TerrainTextureGroup { Name = group, Textures = new[] { texture } };
         var newGroups = new TerrainTextureGroup[terrain.TerrainGroups.Length + 1];
         System.Array.Copy(terrain.TerrainGroups, newGroups, terrain.TerrainGroups.Length);
@@ -393,21 +379,13 @@ public partial class ScenarioInspectorPanel : UserControl
         return ((byte)(newGroups.Length - 1), 0);
     }
 
-    /// <summary>
-    /// Builds a fallback TerrainTypesCache from the scenario's own TerrainGroups
-    /// (used when terrain_types.xml.XMB isn't reachable). Preserves scenario-file
-    /// order so existing textures sit in the same picker rows the user is used to.
-    /// </summary>
+    // Fallback when terrain_types.xml.XMB isn't reachable. Preserves scenario-file order.
     static TerrainTypesCache BuildScenarioFallbackCache(ScenarioTerrain terrain)
     {
-        var byGroup = new Dictionary<string, IReadOnlyList<string>>(System.StringComparer.Ordinal);
         var all = new List<(string Group, string Texture)>();
         foreach (var grp in terrain.TerrainGroups)
-        {
-            byGroup[grp.Name] = grp.Textures;
             foreach (var t in grp.Textures) all.Add((grp.Name, t));
-        }
-        return new TerrainTypesCache { ByGroup = byGroup, All = all };
+        return new TerrainTypesCache { All = all };
     }
 
     void OnTileWaterChanged(object? sender, SelectionChangedEventArgs e)
@@ -628,11 +606,7 @@ public partial class ScenarioInspectorPanel : UserControl
 
     // ----- Save bar (formerly ScenarioToolbar) -----
 
-    /// <summary>
-    /// Wires the inspector's save bar to a scenario editor. Pass null to detach
-    /// (no scenario loaded). The optional sourcePath shows in the path label
-    /// when the editor has not yet been saved (i.e. SavePath is null).
-    /// </summary>
+    // Pass null to detach. sourcePath shows when editor.SavePath is null (never saved).
     public void BindEditor(ScenarioEditor? editor, string? sourcePath)
     {
         if (_boundEditor is not null) _boundEditor.Changed -= RefreshSaveBar;
@@ -710,8 +684,6 @@ public partial class ScenarioInspectorPanel : UserControl
     }
 }
 
-// Bound DataTemplate item for the entity Player ComboBox; uses PlayerColors
-// for the swatch fill so renderer + inspector pick the same color.
 public sealed class PlayerOption
 {
     public required byte PlayerId { get; init; }

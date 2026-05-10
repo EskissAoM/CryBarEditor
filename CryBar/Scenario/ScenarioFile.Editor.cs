@@ -84,7 +84,7 @@ public partial class ScenarioFile
                     flagsById.TryGetValue((ushort)entities[i].EntityId, out flags[i]);
             }
 
-            z1.Data = Z1Writer.Write(entities, protoNames, version, flags);
+            z1.Data = Z1Writer.Write(entities, version, flags);
         }
 
         // Re-emit the J1 sub-section list back into the top-level J1 section bytes.

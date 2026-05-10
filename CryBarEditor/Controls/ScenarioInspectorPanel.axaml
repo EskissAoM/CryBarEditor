@@ -133,10 +133,6 @@
                                                  Foreground="#888"/>
                         </Button>
                     </Grid>
-                    <TextBlock x:Name="_selectedFields" Foreground="#ddd"
-                               FontFamily="Cascadia Code,Consolas" TextWrapping="Wrap"
-                               IsVisible="False"/>
-
                     <!-- Entity edit controls. Visible only when Selection.Kind == Entities. -->
                     <StackPanel x:Name="_entityEditPanel" Spacing="6" IsVisible="False">
                         <Grid ColumnDefinitions="Auto,*">

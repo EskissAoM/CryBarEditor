@@ -19,9 +19,7 @@ public sealed class ScenarioPreviewData : IDisposable
     public required ScenarioFile Scenario { get; init; }
     public required ScenarioTerrain Terrain { get; init; }
     public required ScenarioTextureSet TextureSet { get; init; }
-    // Mutable so the renderer can re-source these from live terrain when a
-    // command publishes RenderHint.TerrainGeometry/TerrainTexture/TerrainWater.
-    // The cached arrays are stale once heights/tile groups change in place.
+    // Mutable so the renderer can rebuild from live terrain on command hints.
     public required TerrainMesh TerrainMesh { get; set; }
     public WaterMesh? WaterMesh { get; set; }
     public required List<ScenarioEntity> Entities { get; init; }
@@ -42,12 +40,7 @@ public sealed class ScenarioPreviewData : IDisposable
             _textureSources[sliceIndex] = source;
     }
 
-    /// <summary>
-    /// Resizes the internal per-slice arrays (SliceReady, TextureSources) to
-    /// at least <paramref name="capacity"/> entries. Used after a runtime
-    /// EnsureSlot append on TextureSet so the per-slice tracking arrays don't
-    /// fall behind Names.Count.
-    /// </summary>
+    // Grow per-slice tracking arrays after EnsureSlot extends TextureSet.Names.
     public void EnsureSlotCapacity(int capacity)
     {
         if (capacity <= _sliceReady.Length) return;
@@ -63,32 +56,25 @@ public sealed class ScenarioPreviewData : IDisposable
     public CancellationTokenSource Cancellation { get; } = new();
     public ScenarioSelection Selection { get; } = new();
 
-    // Mediator that owns undo/redo + dirty tracking. Wired in TryBuild after the
-    // entity list is materialised so the editor and renderer share the SAME
-    // List<ScenarioEntity> instance (mutations from commands are visible everywhere).
+    // Editor and renderer share the SAME List<ScenarioEntity> -- command mutations
+    // are visible to both via in-place edits.
     public ScenarioEditor Editor { get; private set; } = null!;
 
-    // Lazy full game-wide proto-name list (from proto.xml.XMB) populated by
-    // MainWindow on first proto picker open. Null until then. The picker falls
-    // back to ProtoTable when this stays null (no FileIndex / proto.xml not found).
+    // Lazy game-wide proto names (proto.xml.XMB). Null until first picker open;
+    // picker falls back to ProtoTable when null.
     public List<string>? ProtoNamesCache { get; set; }
 
-    // Lazy full game-wide terrain (group, texture) list (from
-    // data/map_definitions/terrain_types.xml.XMB) populated by MainWindow on
-    // first terrain picker open. Null until then. The picker falls back to a
-    // synthetic cache built from the scenario's own TerrainGroups when this
-    // stays null (no FileIndex / terrain_types.xml not found).
+    // Lazy game-wide terrain (group, texture) list. Null until first picker open;
+    // picker falls back to a synthetic cache built from the scenario's TerrainGroups.
     public TerrainTypesCache? TerrainTypesCache { get; set; }
 
-    // Live, editable scenario TM table -- the proto names referenced by entity
-    // protoIndex. Populated in TryBuild from the first TM/PT sub-section.
-    // SetEntityProtos appends to this when the user picks a name not yet
-    // present, and FlushParsedViews regenerates the TM bytes from it on save.
+    // Editable scenario TM table (proto names indexed by entity ProtoIndex).
+    // SetEntityProtos appends; FlushParsedViews writes back on save.
     public List<string> ProtoTable { get; } = new();
 
     Dictionary<uint, int>? _entityIdToIndex;
-    // Lazy id -> Entities[] index lookup. Built on first access; subsequent
-    // overlay/inspector rebuilds reuse the same dictionary.
+    // Lazy id -> Entities[] index lookup. Invalidate via InvalidateEntityIndex()
+    // whenever the Entities list is mutated (DeleteEntities, future AddEntities).
     public IReadOnlyDictionary<uint, int> EntityIdToIndex
     {
         get
@@ -103,6 +89,8 @@ public sealed class ScenarioPreviewData : IDisposable
             return _entityIdToIndex;
         }
     }
+
+    public void InvalidateEntityIndex() => _entityIdToIndex = null;
 
     public static ScenarioPreviewData? TryBuild(ScenarioFile scenario)
     {
@@ -137,8 +125,6 @@ public sealed class ScenarioPreviewData : IDisposable
         data._sliceReady = new bool[textureSet.Names.Count];
         data._textureSources = new TextureSource[textureSet.Names.Count];
 
-        // Populate the editable scenario proto table from the first TM/PT sub-section.
-        // SetEntityProtos appends to this list; FlushParsedViews writes it back on save.
         var j1 = scenario.GetJ1();
         if (j1 is not null && j1.Parsed)
         {
@@ -152,8 +138,6 @@ public sealed class ScenarioPreviewData : IDisposable
             }
         }
 
-        // Same terrain + entities list passed to the editor as the renderer reads,
-        // so command Apply mutations are immediately visible in both places.
         data.Editor = new ScenarioEditor(scenario, terrain, data.Entities);
         return data;
     }

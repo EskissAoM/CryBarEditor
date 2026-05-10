@@ -16,20 +16,16 @@ namespace CryBar.Scenario.Writers;
 ///   old format: inline at suffix[0..8]
 public static class Z1Writer
 {
-    public static byte[] Write(IReadOnlyList<ScenarioEntity> entities, IReadOnlyList<string> protoNames)
-    {
-        ArgumentNullException.ThrowIfNull(entities);
-        return Write(entities, protoNames, version: 0);
-    }
+    public static byte[] Write(IReadOnlyList<ScenarioEntity> entities)
+        => Write(entities, version: 0, entityFlags: null);
 
-    public static byte[] Write(IReadOnlyList<ScenarioEntity> entities, IReadOnlyList<string> protoNames, byte version)
-        => Write(entities, protoNames, version, entityFlags: null);
+    public static byte[] Write(IReadOnlyList<ScenarioEntity> entities, byte version)
+        => Write(entities, version, entityFlags: null);
 
     /// entityFlags lets callers preserve non-zero flag words on round-trip
     /// (ScenarioEntity doesn't model them). null = all zero (vanilla).
     public static byte[] Write(
         IReadOnlyList<ScenarioEntity> entities,
-        IReadOnlyList<string> protoNames,
         byte version,
         IReadOnlyList<ushort>? entityFlags)
     {

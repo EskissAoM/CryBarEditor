@@ -50,7 +50,8 @@ public class Z1WriterTests
         var entities = ScenarioEntityListBuilder.Build(scenario);
         Assert.NotEmpty(entities);
 
-        var rewritten = Z1Writer.Write(entities, protos, version);
+        _ = protos;
+        var rewritten = Z1Writer.Write(entities, version);
 
         Assert.True(originalZ1.AsSpan().SequenceEqual(rewritten),
             $"Z1 byte mismatch: original={originalZ1.Length} rewritten={rewritten.Length}");
@@ -81,7 +82,7 @@ public class Z1WriterTests
     [Fact]
     public void Write_EmptyList_ProducesValidZ1Header()
     {
-        var bytes = Z1Writer.Write([], []);
+        var bytes = Z1Writer.Write([]);
         Assert.True(bytes.Length >= 5);
         Assert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(bytes));
         Assert.Equal(0, bytes[4]);
@@ -111,7 +112,7 @@ public class Z1WriterTests
             H1Suffix = []
         };
 
-        var bytes = Z1Writer.Write([entity], []);
+        var bytes = Z1Writer.Write([entity]);
 
         // u32 count + 1 byte version
         Assert.Equal(1u, BinaryPrimitives.ReadUInt32LittleEndian(bytes));
@@ -171,7 +172,7 @@ public class Z1WriterTests
             H1Suffix = suffix
         };
 
-        var bytes = Z1Writer.Write([entity], []);
+        var bytes = Z1Writer.Write([entity]);
 
         // Suffix begins immediately after the EN section. Layout up to suffix:
         //   5 (z1 hdr) + 4 (id+flags) + 6 (H1 hdr) + 6 (EN hdr) + 76 (en body) = 97
@@ -211,7 +212,7 @@ public class Z1WriterTests
             H1Suffix = suffix
         };
 
-        var bytes = Z1Writer.Write([entity], []);
+        var bytes = Z1Writer.Write([entity]);
         int suffixStart = 5 + 4 + 6 + 6 + (28 + 12 + 36);
 
         Assert.Equal(0xBEEFu, BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(suffixStart)));

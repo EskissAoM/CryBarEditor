@@ -92,10 +92,8 @@ public partial class MainWindow
 
         if (_scenarioGl is not null)
         {
-            _scenarioGl.MoveCommitted -= OnDragMoveCommitted;
-            _scenarioGl.MoveCommitted += OnDragMoveCommitted;
-            _scenarioGl.RotateCommitted -= OnDragMoveCommitted;
-            _scenarioGl.RotateCommitted += OnDragMoveCommitted;
+            _scenarioGl.GestureCommitted -= OnGestureCommitted;
+            _scenarioGl.GestureCommitted += OnGestureCommitted;
             // Texture array realloc wipes slices to placeholder; refill all.
             _scenarioGl.TextureArrayResized -= OnScenarioTextureArrayResized;
             _scenarioGl.TextureArrayResized += OnScenarioTextureArrayResized;
@@ -121,14 +119,15 @@ public partial class MainWindow
                                 | RenderHint.TerrainWater   | RenderHint.EntityList);
 
         // Selection may reference dead ids; prune before renderer rebuilds.
+        // Also invalidate the id->index cache: DeleteEntities shifts indices.
         if ((effective & RenderHint.EntityList) != 0)
         {
-            var liveIds = new HashSet<uint>();
-            foreach (var e in data.Entities) liveIds.Add(e.EntityId);
+            data.InvalidateEntityIndex();
+            var liveIds = data.EntityIdToIndex;
             List<uint>? toRemove = null;
             foreach (var id in data.Selection.Entities)
             {
-                if (!liveIds.Contains(id))
+                if (!liveIds.ContainsKey(id))
                 {
                     toRemove ??= new List<uint>();
                     toRemove.Add(id);
@@ -142,21 +141,12 @@ public partial class MainWindow
         _scenarioInspector.UpdateSelection(data);
     }
 
-    void OnDragMoveCommitted(IScenarioCommand? cmd)
-    {
-        // Routed through editor.Execute so the drag is undoable like every
-        // other mutation. Null cmd (no entities actually moved) is a no-op
-        // inside Execute itself, so we don't need to guard here.
-        _scenarioData?.Editor.Execute(cmd);
-    }
+    // Routed through editor.Execute so gestures are undoable. Null cmd is a
+    // no-op inside Execute itself.
+    void OnGestureCommitted(IScenarioCommand? cmd) => _scenarioData?.Editor.Execute(cmd);
 
-    /// <summary>
-    /// Best-effort absolute path for the currently-previewed scenario. Used
-    /// only as a fallback start-folder for "Save As" when ScenarioLastSaveDirectory
-    /// is empty AND the editor has never been saved before. Returns null for
-    /// BAR-archive entries (no on-disk path) and for everything that isn't a
-    /// loose file selection.
-    /// </summary>
+    // Loose-file path of the previewed scenario, or null for BAR entries / no selection.
+    // Used as a Save As start-folder fallback.
     string? ResolveScenarioSourcePath()
     {
         if (_currentlyPreviewedItem is RootFileEntry rfe && Directory.Exists(_rootDirectory))
@@ -286,10 +276,8 @@ public partial class MainWindow
 
     void OnInspectorClearSelection() => _scenarioData?.Selection.Clear();
 
-    // Shift+click box selection. Forms a 3D box (cuboid) between the last
-    // single-click anchor and the new hit, includes everything inside with a
-    // generous height tolerance so units a few tiles up/down a hill still get
-    // grabbed. Returns true when handled; false falls through to plain click.
+    // Shift+click box-selects everything in the cuboid between the last single-click
+    // anchor and this hit. Y tolerance covers entities on hills.
     const float BoxSelectHeightTolerance = 10f;
     bool TryShiftBoxSelect(PickHit hit)
     {
@@ -469,12 +457,7 @@ public partial class MainWindow
             FlushPendingScenario3D();
     }
 
-    /// <summary>
-    /// Lazily loads the full game-wide proto-name list from proto.xml.XMB and
-    /// caches it on the scenario data. Returns null if the FileIndex isn't
-    /// available, proto.xml isn't indexed, or parsing fails -- callers fall
-    /// back to the scenario's own ProtoTable in those cases.
-    /// </summary>
+    // Lazy game-wide proto-name list. Null on failure -> caller falls back to ProtoTable.
     async ValueTask<List<string>?> GetOrLoadProtoNamesAsync(ScenarioPreviewData data)
     {
         if (data.ProtoNamesCache is not null) return data.ProtoNamesCache;
@@ -502,12 +485,7 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>
-    /// Walks proto.xml: top-level <proto> contains <unit name="..."> children.
-    /// XmlReader (not XDocument) keeps this AOT-friendly. Sorted alphabetically
-    /// for picker browse-ability; the picker has its own filter so the order is
-    /// just for the eye.
-    /// </summary>
+    // XmlReader (not XDocument) for AOT-friendliness. Alphabetical for browse-ability.
     static List<string> ParseProtoNamesFromXml(string xmlText)
     {
         var names = new List<string>();
@@ -523,13 +501,8 @@ public partial class MainWindow
         return names;
     }
 
-    /// <summary>
-    /// Lazily loads the full game-wide terrain (group, texture) list from
-    /// data/map_definitions/terrain_types.xml.XMB and caches it on the scenario
-    /// data. Returns null if the FileIndex isn't available, terrain_types.xml
-    /// isn't indexed, or parsing fails -- callers fall back to a synthetic
-    /// cache built from the scenario's own TerrainGroups in those cases.
-    /// </summary>
+    // Lazy game-wide (group, texture) list. Null on failure -> caller falls back
+    // to BuildScenarioFallbackCache.
     async ValueTask<TerrainTypesCache?> GetOrLoadTerrainTypesAsync(ScenarioPreviewData data)
     {
         if (data.TerrainTypesCache is not null) return data.TerrainTypesCache;
@@ -557,14 +530,8 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>
-    /// Walks terrain_types.xml: &lt;terraintypes&gt; contains &lt;type name="..."&gt;
-    /// children, each of which contains &lt;uiclass&gt; wrappers whose
-    /// &lt;subtype&gt; element text values are the texture paths. The same
-    /// texture path can appear multiple times under different &lt;uiclass&gt;
-    /// (different ui categories, same underlying texture) -- we de-dup per
-    /// group and sort alphabetically. XmlReader (not XDocument) for AOT.
-    /// </summary>
+    // <terraintypes><type name=...><uiclass><subtype>TEX</subtype>...
+    // De-dup per group (same tex appears under multiple ui categories). XmlReader for AOT.
     static TerrainTypesCache ParseTerrainTypesFromXml(string xmlText)
     {
         var byGroup = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
@@ -596,38 +563,32 @@ public partial class MainWindow
             }
         }
 
-        // Sort groups alphabetically; within each group sort texture paths.
         var groupNames = new List<string>(byGroup.Keys);
         groupNames.Sort(StringComparer.OrdinalIgnoreCase);
 
-        var sortedByGroup = new Dictionary<string, IReadOnlyList<string>>(byGroup.Count, StringComparer.Ordinal);
         var all = new List<(string Group, string Texture)>();
         foreach (var g in groupNames)
         {
             var list = new List<string>(byGroup[g]);
             list.Sort(StringComparer.OrdinalIgnoreCase);
-            sortedByGroup[g] = list;
             foreach (var t in list) all.Add((g, t));
         }
 
-        return new TerrainTypesCache { ByGroup = sortedByGroup, All = all };
+        return new TerrainTypesCache { All = all };
     }
 
     void HideScenarioPreview()
     {
         _pendingScenario3D = null;
 
-        // Detach the inspector (save bar + command dispatch) from the going-away
-        // editor so the dirty dot clears and proto/tile pickers stop dispatching
-        // commands at a stale ScenarioEditor instance.
+        // Detach inspector before the editor goes away.
         _scenarioInspector.BindEditor(null, sourcePath: null);
         _scenarioInspector.ExecuteCommand = null;
         _scenarioInspector.LoadProtoNamesAsync = null;
         _scenarioInspector.LoadTerrainTypesAsync = null;
         if (_scenarioGl is not null)
         {
-            _scenarioGl.MoveCommitted -= OnDragMoveCommitted;
-            _scenarioGl.RotateCommitted -= OnDragMoveCommitted;
+            _scenarioGl.GestureCommitted -= OnGestureCommitted;
             _scenarioGl.TextureArrayResized -= OnScenarioTextureArrayResized;
         }
 

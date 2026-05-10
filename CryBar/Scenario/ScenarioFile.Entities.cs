@@ -344,9 +344,7 @@ public partial class ScenarioFile
         // Fast path: every entity is typed -> emit via Z1Writer in a single call.
         if (order.Count == typedEntities.Count)
         {
-            // ProtoNames are unused by Z1Writer.Write today (each entity carries its
-            // own ProtoIndex), so passing an empty list is safe.
-            var bytes = Z1Writer.Write(typedEntities, [], version, typedFlags);
+            var bytes = Z1Writer.Write(typedEntities, version, typedFlags);
             return new ScenarioSection("Z1", bytes);
         }
 
@@ -382,7 +380,7 @@ public partial class ScenarioFile
                 // Single-entity Z1 emit, then strip the 5-byte Z1 header.
                 var single = new[] { typedEntities[rec.typedIndex] };
                 var singleFlags = new[] { rec.flags };
-                var inner = Z1Writer.Write(single, [], version, singleFlags);
+                var inner = Z1Writer.Write(single, version, singleFlags);
                 // inner = [u32 1][byte version][envelope+H1...]; copy from offset 5.
                 ms.Write(inner, 5, inner.Length - 5);
             }

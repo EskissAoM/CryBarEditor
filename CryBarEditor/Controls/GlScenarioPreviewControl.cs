@@ -101,8 +101,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     int _entitySelectInstanceCount;
     bool _entitySelectDirty;
 
-    // Yaw arrow: a 2-vertex line per selected entity pointing along the entity's
-    // forward direction. Reuses _entitySelectDirty.
+    // Yaw arrow: 2-vertex line per entity along forward; reuses _entitySelectDirty.
     int _yawArrowProgram;
     int _yawArrowVao, _yawArrowVbo;
     int _uYawArrowMvp, _uYawArrowYScale;
@@ -146,27 +145,15 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     const int HoldMs = 400;
     const float RotateDegPerPixel = 0.5f;
-    public static readonly (float R, float G, float B, float A) RingColorMove = (0.20f, 0.80f, 1.00f, 1.0f);
-    public static readonly (float R, float G, float B, float A) RingColorRotate = (0.40f, 1.00f, 0.40f, 1.0f);
-    public static readonly (float R, float G, float B, float A) RingColorDefault = (1.00f, 0.82f, 0.30f, 1.0f);
-    (float R, float G, float B, float A) _ringColor = (1.00f, 0.82f, 0.30f, 1.0f);
+    static readonly (float R, float G, float B, float A) RingColorMove = (0.20f, 0.80f, 1.00f, 1.0f);
+    static readonly (float R, float G, float B, float A) RingColorRotate = (0.40f, 1.00f, 0.40f, 1.0f);
+    static readonly (float R, float G, float B, float A) RingColorDefault = (1.00f, 0.82f, 0.30f, 1.0f);
+    (float R, float G, float B, float A) _ringColor = RingColorDefault;
 
-    public IReadOnlyDictionary<uint, Vector3> PreviewOffsets => _previewOffset;
-    public bool IsMoveModeActive => _moveMode;
-    public bool IsRotateModeActive => _rotateMode;
-    public event Action<IScenarioCommand?>? RotateCommitted;
+    public event Action<IScenarioCommand?>? GestureCommitted;
 
-    public event Action<IScenarioCommand?>? MoveCommitted;
-
-    /// <summary>
-    /// Fires when the GL texture array is reallocated to a larger size at
-    /// runtime (i.e. after the user picked a texture not yet in the
-    /// TextureSet, growing Names.Count past the previously-allocated slice
-    /// count). The reallocation wipes existing slices to placeholder, so the
-    /// host should re-run its texture-load pipeline to refill them.
-    /// Not raised on the initial allocation per scenario -- that case is
-    /// already covered by the host's regular load on FlushPendingScenario3D.
-    /// </summary>
+    // Fires on runtime reallocation only (not initial alloc). The realloc wipes
+    // slices to placeholder, so the host must re-run texture loading.
     public event Action? TextureArrayResized;
 
     readonly ConcurrentQueue<Action<GlInterface>> _glActionQueue = new();
@@ -219,6 +206,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _entitiesUploaded = false;
         _tileSelectDirty = true;
         _entitySelectDirty = true;
+        _hasEmittedCursorHit = false;
+        _lastEmittedCursorHit = null;
         if (data is not null)
         {
             data.Selection.Changed += OnSelectionChanged;
@@ -247,45 +236,32 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         RequestNextFrameRendering();
     }
 
-    /// <summary>
-    /// Called by the editor host after a command Apply/Undo/Redo. Flips the
-    /// upload flags relevant to the published RenderHint so the next render
-    /// pass rebuilds only the buffers that actually changed.
-    /// </summary>
+    // Called by the editor host after a command Apply/Undo/Redo. Reuses the
+    // existing TextureSet so slice indices stay aligned with already-uploaded slices.
     public void OnDataMutated(RenderHint hint)
     {
         if (hint == RenderHint.None) return;
 
-        // Terrain texture or geometry edit -> rebuild the cached TerrainMesh
-        // from the live ScenarioTerrain. The mesh's vertex/index/slice arrays
-        // are baked at TryBuild time; in-place mutations to terrain.Heights
-        // and tile group/sub bytes are otherwise invisible to the GPU upload.
-        // Reuse the EXISTING TextureSet so slice indices (and the GL slice
-        // textures already uploaded against them) stay aligned.
         if (_data is not null && (hint & (RenderHint.TerrainTexture | RenderHint.TerrainGeometry)) != 0)
         {
             _data.TerrainMesh = TerrainMeshBuilder.Build(_data.Terrain, _data.TextureSet);
             _meshUploaded = false;
         }
 
-        // Water mesh tracks per-tile water type AND vertex heights, so geometry
-        // and water edits both rebuild it from the live terrain.
+        // Water mesh tracks heights AND per-tile water type.
         if (_data is not null && (hint & (RenderHint.TerrainWater | RenderHint.TerrainGeometry)) != 0)
         {
             _data.WaterMesh = WaterMeshBuilder.Build(_data.Terrain);
             _waterUploaded = false;
         }
 
-        // Entity list (add/remove) or per-entity field (proto/player/pos/rot)
-        // edits -> billboards + ring overlay both re-emit instance data.
         if ((hint & (RenderHint.EntityList | RenderHint.EntityField)) != 0)
         {
             _entitiesUploaded = false;
             _entitySelectDirty = true;
         }
 
-        // Tile-edit hints don't touch the tile-selection ring directly, but the
-        // ring's vertex y reads heights, so geometry-edit forces a rebuild.
+        // Tile selection ring reads vertex heights; geometry edits invalidate it.
         if ((hint & RenderHint.TerrainGeometry) != 0)
             _tileSelectDirty = true;
 
@@ -791,41 +767,48 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         // Per instance: pos.xyz + color.rgba.
         // AoMR stores entity X/Z in half-tile units (1 tile = 2 stored units).
         const int floatsPerInstance = 7;
-        var inst = new float[_entityCount * floatsPerInstance];
-        for (int i = 0; i < _entityCount; i++)
+        int total = _entityCount * floatsPerInstance;
+        var inst = ArrayPool<float>.Shared.Rent(total);
+        try
         {
-            var m = data.Entities[i];
-            int o = i * floatsPerInstance;
-            // Apply preview drag offset so the billboard follows the cursor during a move.
-            var pos = m.Position;
-            if (_previewOffset.TryGetValue(m.EntityId, out var off)) pos += off;
-            inst[o + 0] = pos.X * 0.5f;
-            inst[o + 1] = pos.Y;
-            inst[o + 2] = pos.Z * 0.5f;
-            var c = CryBar.Scenario.PlayerColors.GetRgb(m.PlayerId);
-            inst[o + 3] = c.R; inst[o + 4] = c.G; inst[o + 5] = c.B; inst[o + 6] = 1f;
+            for (int i = 0; i < _entityCount; i++)
+            {
+                var m = data.Entities[i];
+                int o = i * floatsPerInstance;
+                var pos = m.Position;
+                if (_previewOffset.TryGetValue(m.EntityId, out var off)) pos += off;
+                inst[o + 0] = pos.X * 0.5f;
+                inst[o + 1] = pos.Y;
+                inst[o + 2] = pos.Z * 0.5f;
+                var c = CryBar.Scenario.PlayerColors.GetRgb(m.PlayerId);
+                inst[o + 3] = c.R; inst[o + 4] = c.G; inst[o + 5] = c.B; inst[o + 6] = 1f;
+            }
+
+            gl.BindVertexArray(_billboardVao);
+
+            gl.BindBuffer(GL_ARRAY_BUFFER, _billboardQuadVbo);
+            gl.EnableVertexAttribArray(0);
+            gl.VertexAttribPointer(0, 2, GL_FLOAT_TYPE, 0, 2 * sizeof(float), IntPtr.Zero);
+            _glVertexAttribDivisor(0, 0);
+
+            gl.BindBuffer(GL_ARRAY_BUFFER, _billboardInstanceVbo);
+            fixed (float* p = inst)
+                gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(total * sizeof(float)), (IntPtr)p, GL_DYNAMIC_DRAW);
+
+            int stride = floatsPerInstance * sizeof(float);
+            gl.EnableVertexAttribArray(1);
+            gl.VertexAttribPointer(1, 3, GL_FLOAT_TYPE, 0, stride, IntPtr.Zero);
+            _glVertexAttribDivisor(1, 1);
+            gl.EnableVertexAttribArray(2);
+            gl.VertexAttribPointer(2, 4, GL_FLOAT_TYPE, 0, stride, new IntPtr(3 * sizeof(float)));
+            _glVertexAttribDivisor(2, 1);
+
+            gl.BindVertexArray(0);
         }
-
-        gl.BindVertexArray(_billboardVao);
-
-        gl.BindBuffer(GL_ARRAY_BUFFER, _billboardQuadVbo);
-        gl.EnableVertexAttribArray(0);
-        gl.VertexAttribPointer(0, 2, GL_FLOAT_TYPE, 0, 2 * sizeof(float), IntPtr.Zero);
-        _glVertexAttribDivisor(0, 0);
-
-        gl.BindBuffer(GL_ARRAY_BUFFER, _billboardInstanceVbo);
-        fixed (float* p = inst)
-            gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(inst.Length * sizeof(float)), (IntPtr)p, GL_DYNAMIC_DRAW);
-
-        int stride = floatsPerInstance * sizeof(float);
-        gl.EnableVertexAttribArray(1);
-        gl.VertexAttribPointer(1, 3, GL_FLOAT_TYPE, 0, stride, IntPtr.Zero);
-        _glVertexAttribDivisor(1, 1);
-        gl.EnableVertexAttribArray(2);
-        gl.VertexAttribPointer(2, 4, GL_FLOAT_TYPE, 0, stride, new IntPtr(3 * sizeof(float)));
-        _glVertexAttribDivisor(2, 1);
-
-        gl.BindVertexArray(0);
+        finally
+        {
+            ArrayPool<float>.Shared.Return(inst);
+        }
     }
 
     // World-space half-radius of the marker disc. Anchored to world units so the
@@ -879,46 +862,51 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (count == 0) { _entitySelectInstanceCount = 0; return; }
 
         const int floatsPerInstance = 7;
-        var inst = new float[count * floatsPerInstance];
-        int o = 0;
-        var idToIdx = _data.EntityIdToIndex;
-        foreach (uint id in sel.Entities)
+        var inst = ArrayPool<float>.Shared.Rent(count * floatsPerInstance);
+        try
         {
-            if (!idToIdx.TryGetValue(id, out int idx)) continue;
-            var m = _data.Entities[idx];
-            // Apply preview drag offset so the ring follows entities while moving.
-            var pos = m.Position;
-            if (_previewOffset.TryGetValue(id, out var off)) pos += off;
-            inst[o + 0] = pos.X * 0.5f;
-            inst[o + 1] = pos.Y;
-            inst[o + 2] = pos.Z * 0.5f;
-            // Ring color: yellow normally, cyan while drag-moving.
-            inst[o + 3] = _ringColor.R; inst[o + 4] = _ringColor.G; inst[o + 5] = _ringColor.B; inst[o + 6] = _ringColor.A;
-            o += floatsPerInstance;
+            int o = 0;
+            var idToIdx = _data.EntityIdToIndex;
+            foreach (uint id in sel.Entities)
+            {
+                if (!idToIdx.TryGetValue(id, out int idx)) continue;
+                var m = _data.Entities[idx];
+                var pos = m.Position;
+                if (_previewOffset.TryGetValue(id, out var off)) pos += off;
+                inst[o + 0] = pos.X * 0.5f;
+                inst[o + 1] = pos.Y;
+                inst[o + 2] = pos.Z * 0.5f;
+                inst[o + 3] = _ringColor.R; inst[o + 4] = _ringColor.G; inst[o + 5] = _ringColor.B; inst[o + 6] = _ringColor.A;
+                o += floatsPerInstance;
+            }
+            int instanceCount = o / floatsPerInstance;
+
+            gl.BindVertexArray(_entitySelectVao);
+
+            gl.BindBuffer(GL_ARRAY_BUFFER, _entitySelectQuadVbo);
+            gl.EnableVertexAttribArray(0);
+            gl.VertexAttribPointer(0, 2, GL_FLOAT_TYPE, 0, 2 * sizeof(float), IntPtr.Zero);
+            _glVertexAttribDivisor(0, 0);
+
+            gl.BindBuffer(GL_ARRAY_BUFFER, _entitySelectInstanceVbo);
+            fixed (float* p = inst)
+                gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(o * sizeof(float)), (IntPtr)p, GL_DYNAMIC_DRAW);
+
+            int stride = floatsPerInstance * sizeof(float);
+            gl.EnableVertexAttribArray(1);
+            gl.VertexAttribPointer(1, 3, GL_FLOAT_TYPE, 0, stride, IntPtr.Zero);
+            _glVertexAttribDivisor(1, 1);
+            gl.EnableVertexAttribArray(2);
+            gl.VertexAttribPointer(2, 4, GL_FLOAT_TYPE, 0, stride, new IntPtr(3 * sizeof(float)));
+            _glVertexAttribDivisor(2, 1);
+
+            gl.BindVertexArray(0);
+            _entitySelectInstanceCount = instanceCount;
         }
-        int instanceCount = o / floatsPerInstance;
-
-        gl.BindVertexArray(_entitySelectVao);
-
-        gl.BindBuffer(GL_ARRAY_BUFFER, _entitySelectQuadVbo);
-        gl.EnableVertexAttribArray(0);
-        gl.VertexAttribPointer(0, 2, GL_FLOAT_TYPE, 0, 2 * sizeof(float), IntPtr.Zero);
-        _glVertexAttribDivisor(0, 0);
-
-        gl.BindBuffer(GL_ARRAY_BUFFER, _entitySelectInstanceVbo);
-        fixed (float* p = inst)
-            gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(o * sizeof(float)), (IntPtr)p, GL_DYNAMIC_DRAW);
-
-        int stride = floatsPerInstance * sizeof(float);
-        gl.EnableVertexAttribArray(1);
-        gl.VertexAttribPointer(1, 3, GL_FLOAT_TYPE, 0, stride, IntPtr.Zero);
-        _glVertexAttribDivisor(1, 1);
-        gl.EnableVertexAttribArray(2);
-        gl.VertexAttribPointer(2, 4, GL_FLOAT_TYPE, 0, stride, new IntPtr(3 * sizeof(float)));
-        _glVertexAttribDivisor(2, 1);
-
-        gl.BindVertexArray(0);
-        _entitySelectInstanceCount = instanceCount;
+        finally
+        {
+            ArrayPool<float>.Shared.Return(inst);
+        }
     }
 
     unsafe void UploadYawArrows(GlInterface gl)
@@ -927,46 +915,52 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         int count = _data.Entities.Count;
         if (count == 0) { _yawArrowVertexCount = 0; return; }
 
-        // World-space line: 0.8 game units (~0.4 visual) -- reaches the disc edge
-        // from the center. Black for high contrast against any player color.
+        // World-space line: 0.8 game units (~0.4 visual) -- reaches the disc edge.
+        // Black for high contrast against any player color.
         const float ArrowLengthGame = 0.8f;
-        const int floatsPerVertex = 7;       // pos.xyz + color.rgba
+        const int floatsPerVertex = 7;
         const int floatsPerLine = floatsPerVertex * 2;
-        var verts = new float[count * floatsPerLine];
-        int o = 0;
-        for (int i = 0; i < count; i++)
+        int total = count * floatsPerLine;
+        var verts = ArrayPool<float>.Shared.Rent(total);
+        try
         {
-            var m = _data.Entities[i];
-            var pos = m.Position;
-            if (_previewOffset.TryGetValue(m.EntityId, out var off)) pos += off;
-            // Live rotation preview: replace the entity's rotation with old + delta
-            // while it's being rotate-dragged.
-            Matrix3x3 rot = (_rotateMode && _rotateOldYaws.TryGetValue(m.EntityId, out var oldYaw))
-                ? Matrix3x3.FromYawDegrees(oldYaw + _rotatePreviewDelta)
-                : m.Rotation;
-            var fwd = rot.Multiply(new Vector3(0, 0, 1));
-            float endX = pos.X + fwd.X * ArrowLengthGame;
-            float endZ = pos.Z + fwd.Z * ArrowLengthGame;
+            int o = 0;
+            for (int i = 0; i < count; i++)
+            {
+                var m = _data.Entities[i];
+                var pos = m.Position;
+                if (_previewOffset.TryGetValue(m.EntityId, out var off)) pos += off;
+                Matrix3x3 rot = (_rotateMode && _rotateOldYaws.TryGetValue(m.EntityId, out var oldYaw))
+                    ? Matrix3x3.FromYawDegrees(oldYaw + _rotatePreviewDelta)
+                    : m.Rotation;
+                var fwd = rot.Multiply(new Vector3(0, 0, 1));
+                float endX = pos.X + fwd.X * ArrowLengthGame;
+                float endZ = pos.Z + fwd.Z * ArrowLengthGame;
 
-            verts[o++] = pos.X * 0.5f; verts[o++] = pos.Y; verts[o++] = pos.Z * 0.5f;
-            verts[o++] = 0f; verts[o++] = 0f; verts[o++] = 0f; verts[o++] = 1f;
-            verts[o++] = endX * 0.5f;  verts[o++] = pos.Y; verts[o++] = endZ * 0.5f;
-            verts[o++] = 0f; verts[o++] = 0f; verts[o++] = 0f; verts[o++] = 1f;
+                verts[o++] = pos.X * 0.5f; verts[o++] = pos.Y; verts[o++] = pos.Z * 0.5f;
+                verts[o++] = 0f; verts[o++] = 0f; verts[o++] = 0f; verts[o++] = 1f;
+                verts[o++] = endX * 0.5f;  verts[o++] = pos.Y; verts[o++] = endZ * 0.5f;
+                verts[o++] = 0f; verts[o++] = 0f; verts[o++] = 0f; verts[o++] = 1f;
+            }
+
+            gl.BindVertexArray(_yawArrowVao);
+            gl.BindBuffer(GL_ARRAY_BUFFER, _yawArrowVbo);
+            fixed (float* p = verts)
+                gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(o * sizeof(float)), (IntPtr)p, GL_DYNAMIC_DRAW);
+
+            int stride = floatsPerVertex * sizeof(float);
+            gl.EnableVertexAttribArray(0);
+            gl.VertexAttribPointer(0, 3, GL_FLOAT_TYPE, 0, stride, IntPtr.Zero);
+            gl.EnableVertexAttribArray(1);
+            gl.VertexAttribPointer(1, 4, GL_FLOAT_TYPE, 0, stride, new IntPtr(3 * sizeof(float)));
+            gl.BindVertexArray(0);
+
+            _yawArrowVertexCount = o / floatsPerVertex;
         }
-
-        gl.BindVertexArray(_yawArrowVao);
-        gl.BindBuffer(GL_ARRAY_BUFFER, _yawArrowVbo);
-        fixed (float* p = verts)
-            gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(o * sizeof(float)), (IntPtr)p, GL_DYNAMIC_DRAW);
-
-        int stride = floatsPerVertex * sizeof(float);
-        gl.EnableVertexAttribArray(0);
-        gl.VertexAttribPointer(0, 3, GL_FLOAT_TYPE, 0, stride, IntPtr.Zero);
-        gl.EnableVertexAttribArray(1);
-        gl.VertexAttribPointer(1, 4, GL_FLOAT_TYPE, 0, stride, new IntPtr(3 * sizeof(float)));
-        gl.BindVertexArray(0);
-
-        _yawArrowVertexCount = o / floatsPerVertex;
+        finally
+        {
+            ArrayPool<float>.Shared.Return(verts);
+        }
     }
 
     unsafe void DrawYawArrows(GlInterface gl, Matrix4x4 mvp)
@@ -1011,6 +1005,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     public readonly record struct WorldRayHit(int TileX, int TileZ, int VertexX, int VertexZ, float Height);
 
     public event Action<WorldRayHit?>? CursorHit;
+    WorldRayHit? _lastEmittedCursorHit;
+    bool _hasEmittedCursorHit;
 
     public event Action<PickHit, bool, bool>? LeftClicked;
     public event Action<PickHit, bool>? RightClicked;
@@ -1066,40 +1062,45 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         int rowStride = mapX + 1;
         var heights = _data.Terrain.Heights;
         // 4 edges per tile, 2 endpoints per edge, 3 floats per endpoint = 24 floats per tile.
-        var verts = new float[count * 24];
-        int o = 0;
-        foreach (int tileIdx in sel.Tiles)
+        const int floatsPerTile = 24;
+        int total = count * floatsPerTile;
+        var verts = ArrayPool<float>.Shared.Rent(total);
+        try
         {
-            int tx = tileIdx % mapX;
-            int tz = tileIdx / mapX;
-            float h00 = heights[tz       * rowStride + tx    ];
-            float h10 = heights[tz       * rowStride + tx + 1];
-            float h11 = heights[(tz + 1) * rowStride + tx + 1];
-            float h01 = heights[(tz + 1) * rowStride + tx    ];
+            int o = 0;
+            foreach (int tileIdx in sel.Tiles)
+            {
+                int tx = tileIdx % mapX;
+                int tz = tileIdx / mapX;
+                float h00 = heights[tz       * rowStride + tx    ];
+                float h10 = heights[tz       * rowStride + tx + 1];
+                float h11 = heights[(tz + 1) * rowStride + tx + 1];
+                float h01 = heights[(tz + 1) * rowStride + tx    ];
 
-            // Edge 1: (tx, tz) -> (tx+1, tz)
-            verts[o++] = tx;     verts[o++] = h00; verts[o++] = tz;
-            verts[o++] = tx + 1; verts[o++] = h10; verts[o++] = tz;
-            // Edge 2: (tx+1, tz) -> (tx+1, tz+1)
-            verts[o++] = tx + 1; verts[o++] = h10; verts[o++] = tz;
-            verts[o++] = tx + 1; verts[o++] = h11; verts[o++] = tz + 1;
-            // Edge 3: (tx+1, tz+1) -> (tx, tz+1)
-            verts[o++] = tx + 1; verts[o++] = h11; verts[o++] = tz + 1;
-            verts[o++] = tx;     verts[o++] = h01; verts[o++] = tz + 1;
-            // Edge 4: (tx, tz+1) -> (tx, tz)
-            verts[o++] = tx;     verts[o++] = h01; verts[o++] = tz + 1;
-            verts[o++] = tx;     verts[o++] = h00; verts[o++] = tz;
+                verts[o++] = tx;     verts[o++] = h00; verts[o++] = tz;
+                verts[o++] = tx + 1; verts[o++] = h10; verts[o++] = tz;
+                verts[o++] = tx + 1; verts[o++] = h10; verts[o++] = tz;
+                verts[o++] = tx + 1; verts[o++] = h11; verts[o++] = tz + 1;
+                verts[o++] = tx + 1; verts[o++] = h11; verts[o++] = tz + 1;
+                verts[o++] = tx;     verts[o++] = h01; verts[o++] = tz + 1;
+                verts[o++] = tx;     verts[o++] = h01; verts[o++] = tz + 1;
+                verts[o++] = tx;     verts[o++] = h00; verts[o++] = tz;
+            }
+
+            gl.BindVertexArray(_tileSelectVao);
+            gl.BindBuffer(GL_ARRAY_BUFFER, _tileSelectVbo);
+            fixed (float* p = verts)
+                gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(total * sizeof(float)), (IntPtr)p, GL_DYNAMIC_DRAW);
+            gl.EnableVertexAttribArray(0);
+            gl.VertexAttribPointer(0, 3, GL_FLOAT_TYPE, 0, 3 * sizeof(float), IntPtr.Zero);
+            gl.BindVertexArray(0);
+
+            _tileSelectVertexCount = count * 8;
         }
-
-        gl.BindVertexArray(_tileSelectVao);
-        gl.BindBuffer(GL_ARRAY_BUFFER, _tileSelectVbo);
-        fixed (float* p = verts)
-            gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(verts.Length * sizeof(float)), (IntPtr)p, GL_DYNAMIC_DRAW);
-        gl.EnableVertexAttribArray(0);
-        gl.VertexAttribPointer(0, 3, GL_FLOAT_TYPE, 0, 3 * sizeof(float), IntPtr.Zero);
-        gl.BindVertexArray(0);
-
-        _tileSelectVertexCount = count * 8;
+        finally
+        {
+            ArrayPool<float>.Shared.Return(verts);
+        }
     }
 
     unsafe void DrawTileSelection(GlInterface gl, Matrix4x4 mvp)
@@ -1345,8 +1346,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     {
         if (_data is null) return;
 
-        // Re-capture cursor's world raycast as the move anchor (avoids any jump
-        // caused by cursor drift during the hold).
+        // Re-capture anchor on entry to avoid jumps from cursor drift during the hold.
         var cursor = _lastPointerPos;
         if (!TryRaycastTerrain(cursor, out var anchor)) return;
 
@@ -1537,7 +1537,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             : null;
 
         ExitMoveModeVisuals();
-        MoveCommitted?.Invoke(cmd);
+        GestureCommitted?.Invoke(cmd);
     }
 
     void CancelMoveMode() => ExitMoveModeVisuals();
@@ -1580,7 +1580,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             : null;
 
         ExitRotateModeVisuals();
-        RotateCommitted?.Invoke(cmd);
+        GestureCommitted?.Invoke(cmd);
     }
 
     void CancelRotateMode() => ExitRotateModeVisuals();
@@ -1607,10 +1607,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         float dy = (float)(pos.Y - _lastPointerPos.Y);
         _lastPointerPos = pos;
 
-        // Avalonia doesn't fire OnPointerPressed for additional buttons while
-        // a pointer is captured; check current button state on every move so
-        // chord-style cancel (right-press during left-drag move, vice versa)
-        // works.
+        // Avalonia doesn't fire OnPointerPressed for chord buttons during capture;
+        // poll current state every move so right-during-move (and vice versa) cancels.
         var moveProps = e.GetCurrentPoint(this).Properties;
         if (_moveMode && moveProps.IsRightButtonPressed)
         {
@@ -1629,30 +1627,17 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         {
             if (TryRaycastTerrain(pos, out var hit))
             {
-                // Coordinate spaces in play here:
-                //   - Terrain raycast hit: visual XZ (tile coords; renderer uploads
-                //     terrain verts as `verts[off+0] = vx` directly, no scale).
-                //   - SampleTerrainHeightWorld also expects visual XZ.
-                //   - Entity Position is stored in half-tile units (1 tile = 2 units);
-                //     billboard upload applies `* 0.5f` to project Position into the
-                //     terrain's visual XZ space.
-                // Convert the visual delta back to entity (scenario) units before
-                // adding it to entity Position, then re-project to visual when
-                // sampling the terrain for Y-snap.
+                // Terrain raycast is visual XZ; entity Position is half-tile units (2x).
+                // Convert delta to scenario units before adding to Position; re-project
+                // to visual when sampling for Y-snap.
                 float dxScen = (hit.X - _moveAnchorWorld.X) * 2f;
                 float dzScen = (hit.Z - _moveAnchorWorld.Z) * 2f;
                 _previewOffset.Clear();
                 foreach (var (id, oldPos) in _moveOldPositions)
                 {
-                    float newScenX = oldPos.X + dxScen;
-                    float newScenZ = oldPos.Z + dzScen;
-                    float visualX = newScenX * 0.5f;
-                    float visualZ = newScenZ * 0.5f;
-                    // Y-snap: bilerp the terrain height at the new visual XZ. The stored
-                    // entity Position.Y is in unscaled height units, so back out HeightScale.
+                    float visualX = (oldPos.X + dxScen) * 0.5f;
+                    float visualZ = (oldPos.Z + dzScen) * 0.5f;
                     float newY = SampleTerrainHeightWorld(visualX, visualZ) / HeightScale;
-                    // Offset is consumed in entity-unit space (renderer adds it to
-                    // Position before applying * 0.5f), so keep dx/dz in scenario units.
                     _previewOffset[id] = new Vector3(dxScen, newY - oldPos.Y, dzScen);
                 }
                 _entitySelectDirty = true;
@@ -1674,10 +1659,9 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             return;
         }
 
+        // Hold-armed: suppress orbit/pan; tick enters move/rotate mode, early release fires click.
         if (_holdArmed || _rotateHoldArmed)
         {
-            // While a hold timer is running, suppress orbit/pan; we either enter
-            // move/rotate mode on tick or fire Left/RightClicked on early release.
             e.Handled = true;
             return;
         }
@@ -1784,19 +1768,27 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     {
         var sub = CursorHit;
         if (sub is null) return;
-        if (_data is null) { sub(null); return; }
-        if (!TryUnprojectRay(pos, out var nearW, out var dir)) { sub(null); return; }
 
+        WorldRayHit? next = ComputeCursorHit(pos);
+        if (_hasEmittedCursorHit && Nullable.Equals(next, _lastEmittedCursorHit)) return;
+        _lastEmittedCursorHit = next;
+        _hasEmittedCursorHit = true;
+        sub(next);
+    }
+
+    WorldRayHit? ComputeCursorHit(Avalonia.Point pos)
+    {
+        if (_data is null) return null;
+        if (!TryUnprojectRay(pos, out var nearW, out var dir)) return null;
         // Plane intersect at y = avg height; cheap proxy for a real heightmap raycast.
-        // The rendered terrain is scaled by HeightScale, so the plane Y has to match.
-        if (MathF.Abs(dir.Y) < 1e-5f) { sub(null); return; }
+        if (MathF.Abs(dir.Y) < 1e-5f) return null;
         float t = (_avgHeight * HeightScale - nearW.Y) / dir.Y;
-        if (t < 0) { sub(null); return; }
+        if (t < 0) return null;
         var hit = nearW + dir * t;
 
         int mapX = _data.Terrain.MapSizeX;
         int mapZ = _data.Terrain.MapSizeZ;
-        if (hit.X < 0 || hit.X > mapX || hit.Z < 0 || hit.Z > mapZ) { sub(null); return; }
+        if (hit.X < 0 || hit.X > mapX || hit.Z < 0 || hit.Z > mapZ) return null;
 
         int tileX = Math.Clamp((int)MathF.Floor(hit.X), 0, mapX - 1);
         int tileZ = Math.Clamp((int)MathF.Floor(hit.Z), 0, mapZ - 1);
@@ -1805,8 +1797,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
         int vIdx = vertexZ * (mapX + 1) + vertexX;
         float height = vIdx < _data.Terrain.Heights.Length ? _data.Terrain.Heights[vIdx] : 0f;
-
-        sub(new WorldRayHit(tileX, tileZ, vertexX, vertexZ, height));
+        return new WorldRayHit(tileX, tileZ, vertexX, vertexZ, height);
     }
 
     PickHit ComputePickHit(Avalonia.Point pos)
