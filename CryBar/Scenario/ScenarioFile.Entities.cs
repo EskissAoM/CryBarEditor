@@ -1,6 +1,8 @@
 using System.Buffers.Binary;
+using System.Numerics;
 using System.Text;
 using System.Xml;
+using CryBar.Scenario.Writers;
 
 namespace CryBar.Scenario;
 
@@ -298,9 +300,15 @@ public partial class ScenarioFile
 
         var version = byte.Parse(verAttr);
 
-        var entities = new List<byte[]>();
-        using var ms = new MemoryStream();
-        using var bw = new BinaryWriter(ms);
+        // Collect entities + flags + per-entity legacy raw H1 bodies. The legacy
+        // fallback path (old XML exports that lacked an H1Hdr blob) cannot be
+        // expressed as a ScenarioEntity, so we keep its bytes verbatim and weave
+        // them in alongside the typed entities at emit time.
+        var typedEntities = new List<ScenarioEntity>();
+        var typedFlags = new List<ushort>();
+        // Each item is (isLegacy, ushort flags, ushort id, byte[] legacyH1OrNull, int typedIndex).
+        // typedIndex is -1 for legacy entries, else the index into typedEntities.
+        var order = new List<(bool legacy, ushort flags, ushort id, byte[]? legacyH1, int typedIndex)>();
 
         if (!reader.IsEmptyElement)
         {
@@ -310,21 +318,22 @@ public partial class ScenarioFile
                 if (reader.NodeType != XmlNodeType.Element) { reader.Read(); continue; }
                 if (reader.Name == "Entity")
                 {
-                    using var ems = new MemoryStream();
-                    using var ebw = new BinaryWriter(ems);
                     var id = ushort.Parse(reader.GetAttribute("id")!);
                     var flagsStr = reader.GetAttribute("flags");
                     var flags = !string.IsNullOrEmpty(flagsStr)
                         ? ushort.Parse(flagsStr.Replace("0x", ""), System.Globalization.NumberStyles.HexNumber)
                         : (ushort)0;
-                    ebw.Write(id);
-                    ebw.Write(flags);
 
-                    var h1Data = RebuildEntityH1(reader);
-                    ebw.Write((byte)'H'); ebw.Write((byte)'1');
-                    ebw.Write((uint)h1Data.Length);
-                    ebw.Write(h1Data);
-                    entities.Add(ems.ToArray());
+                    if (TryReadEntityFromXml(reader, id, out var entity, out var legacyH1))
+                    {
+                        typedEntities.Add(entity);
+                        typedFlags.Add(flags);
+                        order.Add((false, flags, id, null, typedEntities.Count - 1));
+                    }
+                    else
+                    {
+                        order.Add((true, flags, id, legacyH1, -1));
+                    }
                 }
                 else reader.Skip();
             }
@@ -332,15 +341,63 @@ public partial class ScenarioFile
         }
         else reader.Read();
 
-        bw.Write((uint)entities.Count);
-        bw.Write(version);
-        foreach (var e in entities) bw.Write(e);
+        // Fast path: every entity is typed -> emit via Z1Writer in a single call.
+        if (order.Count == typedEntities.Count)
+        {
+            // ProtoNames are unused by Z1Writer.Write today (each entity carries its
+            // own ProtoIndex), so passing an empty list is safe.
+            var bytes = Z1Writer.Write(typedEntities, [], version, typedFlags);
+            return new ScenarioSection("Z1", bytes);
+        }
+
+        // Mixed path: at least one legacy entry. Emit Z1 manually, calling Z1Writer
+        // per typed entity to reuse the byte assembly logic and falling through to
+        // the legacy raw bytes for the rest.
+        using var ms = new MemoryStream();
+        Span<byte> u32 = stackalloc byte[4];
+        Span<byte> env = stackalloc byte[4];
+        Span<byte> hdr = stackalloc byte[6];
+        hdr[0] = (byte)'H'; hdr[1] = (byte)'1';
+
+        BinaryPrimitives.WriteUInt32LittleEndian(u32, (uint)order.Count);
+        ms.Write(u32);
+        ms.WriteByte(version);
+
+        for (int i = 0; i < order.Count; i++)
+        {
+            var rec = order[i];
+            if (rec.legacy)
+            {
+                // Per-entity envelope: id + flags
+                BinaryPrimitives.WriteUInt16LittleEndian(env, rec.id);
+                BinaryPrimitives.WriteUInt16LittleEndian(env.Slice(2), rec.flags);
+                ms.Write(env);
+                // "H1" marker + size + body
+                BinaryPrimitives.WriteUInt32LittleEndian(hdr.Slice(2), (uint)rec.legacyH1!.Length);
+                ms.Write(hdr);
+                ms.Write(rec.legacyH1, 0, rec.legacyH1.Length);
+            }
+            else
+            {
+                // Single-entity Z1 emit, then strip the 5-byte Z1 header.
+                var single = new[] { typedEntities[rec.typedIndex] };
+                var singleFlags = new[] { rec.flags };
+                var inner = Z1Writer.Write(single, [], version, singleFlags);
+                // inner = [u32 1][byte version][envelope+H1...]; copy from offset 5.
+                ms.Write(inner, 5, inner.Length - 5);
+            }
+        }
 
         return new ScenarioSection("Z1", ms.ToArray());
     }
 
-    /// <summary>Reader is on &lt;Entity&gt; start; advances past end.</summary>
-    static byte[] RebuildEntityH1(XmlReader reader)
+    /// <summary>
+    /// Attempts to read an &lt;Entity&gt; element into a typed <see cref="ScenarioEntity"/>.
+    /// Returns false (with the legacy byte body) when the XML uses the older 38-byte
+    /// header format that pre-dates the H1Hdr blob; the caller writes those bytes
+    /// verbatim. Reader is on Entity start; advances past end either way.
+    /// </summary>
+    static bool TryReadEntityFromXml(XmlReader reader, ushort entityId, out ScenarioEntity entity, out byte[] legacyH1)
     {
         var playerAttr = reader.GetAttribute("player");
         var protoIndexAttr = reader.GetAttribute("protoIndex");
@@ -424,70 +481,111 @@ public partial class ScenarioFile
         }
         else reader.Read();
 
-        // Patch player, position, rotation into the header at correct offsets
-        if (header.Length >= 22 && GetEntityOffsets(header, out int posOff, out int rotOff, out int enEnd))
+        // Patch protoIndex into inline P1 within trail (old format: no named P1 sub-sections).
+        // This must mirror the legacy emitter so byte-equivalence holds.
+        if (protoIndex.HasValue && subSections.All(s => s.marker != "P1") && h1Trail != null && h1Trail.Length >= 8)
         {
+            BinaryPrimitives.WriteUInt32LittleEndian(h1Trail.AsSpan(0), protoIndex.Value);
+            BinaryPrimitives.WriteUInt32LittleEndian(h1Trail.AsSpan(4), protoIndex.Value);
+        }
+
+        // Modern path: header is the full EN section (incl 6-byte "EN" + size header).
+        if (header.Length >= 22 && GetEntityOffsets(header, out int posOff, out int rotOff, out int enEnd) && enEnd == header.Length)
+        {
+            // Decode current bytes (we will overwrite with XML attributes if present).
+            byte playerId = header[14];
             if (!string.IsNullOrEmpty(playerAttr))
-                BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(14), int.Parse(playerAttr));
+                playerId = (byte)int.Parse(playerAttr);
 
-            // XML uses game-axis order (x=gameX, z=gameZ); file stores (gameZ, gameY, gameX).
-            if (!string.IsNullOrEmpty(zAttr)) BitConverter.TryWriteBytes(header.AsSpan(posOff), float.Parse(zAttr));
-            if (!string.IsNullOrEmpty(yAttr)) BitConverter.TryWriteBytes(header.AsSpan(posOff + 4), float.Parse(yAttr));
-            if (!string.IsNullOrEmpty(xAttr)) BitConverter.TryWriteBytes(header.AsSpan(posOff + 8), float.Parse(xAttr));
+            // File order: (gameZ, gameY, gameX). Position.X = gameX, .Y = gameY, .Z = gameZ.
+            float gameZ = BitConverter.ToSingle(header, posOff);
+            float gameY = BitConverter.ToSingle(header, posOff + 4);
+            float gameX = BitConverter.ToSingle(header, posOff + 8);
+            if (!string.IsNullOrEmpty(zAttr)) gameZ = float.Parse(zAttr);
+            if (!string.IsNullOrEmpty(yAttr)) gameY = float.Parse(yAttr);
+            if (!string.IsNullOrEmpty(xAttr)) gameX = float.Parse(xAttr);
 
+            var rotFloats = new float[9];
+            for (int i = 0; i < 9; i++) rotFloats[i] = BitConverter.ToSingle(header, rotOff + i * 4);
             if (!string.IsNullOrEmpty(rotAttr))
             {
                 var parts = rotAttr.Split(',');
-                for (int i = 0; i < Math.Min(parts.Length, 9); i++)
-                    BitConverter.TryWriteBytes(header.AsSpan(rotOff + i * 4), float.Parse(parts[i]));
+                for (int i = 0; i < Math.Min(parts.Length, 9); i++) rotFloats[i] = float.Parse(parts[i]);
             }
 
-            // Patch protoIndex into inline P1 within trail (old format: no named P1 sub-sections)
-            if (protoIndex.HasValue && subSections.All(s => s.marker != "P1") && h1Trail != null && h1Trail.Length >= 8)
+            var prefix = header.AsSpan(6, posOff - 6).ToArray();
+            int tailStart = rotOff + 36;
+            var enTail = enEnd > tailStart ? header.AsSpan(tailStart, enEnd - tailStart).ToArray() : Array.Empty<byte>();
+
+            // H1Suffix = sub-sections concatenated + h1Trail.
+            int suffixSize = 0;
+            foreach (var (_, data) in subSections) suffixSize += 6 + data.Length;
+            if (h1Trail != null) suffixSize += h1Trail.Length;
+            var suffix = new byte[suffixSize];
+            int off = 0;
+            foreach (var (marker, data) in subSections)
             {
-                BinaryPrimitives.WriteUInt32LittleEndian(h1Trail.AsSpan(0), protoIndex.Value);
-                BinaryPrimitives.WriteUInt32LittleEndian(h1Trail.AsSpan(4), protoIndex.Value);
+                suffix[off] = (byte)marker[0];
+                suffix[off + 1] = (byte)marker[1];
+                BinaryPrimitives.WriteUInt32LittleEndian(suffix.AsSpan(off + 2, 4), (uint)data.Length);
+                data.CopyTo(suffix, off + 6);
+                off += 6 + data.Length;
             }
+            if (h1Trail != null) h1Trail.CopyTo(suffix, off);
+
+            entity = new ScenarioEntity
+            {
+                EntityId = entityId,
+                ProtoIndex = (int)(protoIndex ?? 0),
+                ProtoName = "?",
+                PlayerId = playerId,
+                Position = new Vector3(gameX, gameY, gameZ),
+                Rotation = new Matrix3x3(
+                    rotFloats[0], rotFloats[1], rotFloats[2],
+                    rotFloats[3], rotFloats[4], rotFloats[5],
+                    rotFloats[6], rotFloats[7], rotFloats[8]),
+                H1Prefix = prefix,
+                H1EnTail = enTail,
+                H1Suffix = suffix
+            };
+            legacyH1 = [];
+            return true;
         }
-        else
+
+        // Legacy fallback: old 38-byte header format (for XMLs exported before the H1Hdr change).
+        // We can't represent this with the typed model, so build the raw H1 body and let the
+        // caller write it verbatim.
+        if (header.Length == 0) header = new byte[38];
+        if (header.Length <= 38 && !string.IsNullOrEmpty(playerAttr) && header.Length > 14)
+            header[14] = byte.Parse(playerAttr);
+
+        using var legacyMs = new MemoryStream();
+        legacyMs.Write(header);
+
+        var posBytes = new byte[12];
+        var rotBytes = new byte[36];
+        if (!string.IsNullOrEmpty(zAttr)) BitConverter.TryWriteBytes(posBytes.AsSpan(0), float.Parse(zAttr));
+        if (!string.IsNullOrEmpty(yAttr)) BitConverter.TryWriteBytes(posBytes.AsSpan(4), float.Parse(yAttr));
+        if (!string.IsNullOrEmpty(xAttr)) BitConverter.TryWriteBytes(posBytes.AsSpan(8), float.Parse(xAttr));
+        if (!string.IsNullOrEmpty(rotAttr))
         {
-            // Legacy fallback: old 38-byte header format (for XMLs exported before this change)
-            if (header.Length == 0) header = new byte[38];
-            if (header.Length <= 38)
-            {
-                if (!string.IsNullOrEmpty(playerAttr) && header.Length > 14)
-                    header[14] = byte.Parse(playerAttr);
-            }
-
-            // Write position/rotation as separate blocks after header (legacy layout)
-            using var legacyMs = new MemoryStream();
-            legacyMs.Write(header);
-
-            var posBytes = new byte[12];
-            var rotBytes = new byte[36];
-            if (!string.IsNullOrEmpty(zAttr)) BitConverter.TryWriteBytes(posBytes.AsSpan(0), float.Parse(zAttr));
-            if (!string.IsNullOrEmpty(yAttr)) BitConverter.TryWriteBytes(posBytes.AsSpan(4), float.Parse(yAttr));
-            if (!string.IsNullOrEmpty(xAttr)) BitConverter.TryWriteBytes(posBytes.AsSpan(8), float.Parse(xAttr));
-            if (!string.IsNullOrEmpty(rotAttr))
-            {
-                var parts = rotAttr.Split(',');
-                for (int i = 0; i < Math.Min(parts.Length, 9); i++)
-                    BitConverter.TryWriteBytes(rotBytes.AsSpan(i * 4), float.Parse(parts[i]));
-            }
-            legacyMs.Write(posBytes);
-            legacyMs.Write(rotBytes);
-
-            WriteSubSectionsAndTrail(legacyMs, subSections, h1Trail);
-            return legacyMs.ToArray();
+            var parts = rotAttr.Split(',');
+            for (int i = 0; i < Math.Min(parts.Length, 9); i++)
+                BitConverter.TryWriteBytes(rotBytes.AsSpan(i * 4), float.Parse(parts[i]));
         }
+        legacyMs.Write(posBytes);
+        legacyMs.Write(rotBytes);
+        WriteSubSectionsAndTrail(legacyMs, subSections, h1Trail);
 
-        using var ms = new MemoryStream();
-        ms.Write(header);
-
-        WriteSubSectionsAndTrail(ms, subSections, h1Trail);
-        return ms.ToArray();
+        entity = null!;
+        legacyH1 = legacyMs.ToArray();
+        return false;
     }
 
+    /// <summary>
+    /// Helper used by the legacy-XML fallback in <see cref="TryReadEntityFromXml"/>:
+    /// concatenates named sub-sections and an optional trail blob.
+    /// </summary>
     static void WriteSubSectionsAndTrail(MemoryStream ms, List<(string marker, byte[] data)> subSections, byte[]? trail)
     {
         using var bw = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
