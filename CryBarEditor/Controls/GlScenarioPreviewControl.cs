@@ -126,7 +126,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     Avalonia.Point _leftPressPos;
     Avalonia.Point _rightPressPos;
 
-    // Drag-to-move: 500ms hold on a selected entity arms drag mode.
+    // Drag-to-move: HoldMs hold on a selected entity arms drag mode.
     DispatcherTimer? _holdTimer;
     bool _holdArmed;
     bool _moveMode;
@@ -136,7 +136,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     readonly Dictionary<uint, Vector3> _previewOffset = new();
     bool _windowDeactivateHooked;
 
-    // Drag-to-rotate: 500ms RIGHT hold on a selected entity arms rotate mode.
+    // Drag-to-rotate: HoldMs RIGHT hold on a selected entity arms rotate mode.
     DispatcherTimer? _rotateHoldTimer;
     bool _rotateHoldArmed;
     bool _rotateMode;
@@ -144,7 +144,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     readonly Dictionary<uint, float> _rotateOldYaws = new();
     float _rotatePreviewDelta; // degrees, applied to all rotating entities
 
-    const int HoldMs = 500;
+    const int HoldMs = 400;
     const float RotateDegPerPixel = 0.5f;
     public static readonly (float R, float G, float B, float A) RingColorMove = (0.20f, 0.80f, 1.00f, 1.0f);
     public static readonly (float R, float G, float B, float A) RingColorRotate = (0.40f, 1.00f, 0.40f, 1.0f);
@@ -1346,7 +1346,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (_data is null) return;
 
         // Re-capture cursor's world raycast as the move anchor (avoids any jump
-        // caused by cursor drift during the 500ms hold).
+        // caused by cursor drift during the hold).
         var cursor = _lastPointerPos;
         if (!TryRaycastTerrain(cursor, out var anchor)) return;
 
@@ -1457,7 +1457,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         base.OnPointerReleased(e);
         var props = e.GetCurrentPoint(this).Properties;
 
-        // Released while hold-armed (still within 500ms) -> click, not move.
+        // Released while hold-armed (still within HoldMs) -> click, not move.
         // Falls through to the regular slice-C LeftClicked path so multi-select collapses.
         if (_holdArmed && e.InitialPressMouseButton == Avalonia.Input.MouseButton.Left)
         {

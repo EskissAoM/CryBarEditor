@@ -572,8 +572,8 @@
 															</TextBlock>
 															<TextBlock Text="MOUSE - for selected entity" FontWeight="Bold" Foreground="#ddd" Margin="0,8,0,0"/>
 															<TextBlock Foreground="#bbb" FontSize="12">
-															  <Run Text="Left hold (500 ms) + drag" Foreground="#cfd8e8"/><Run Text=" - move entity"/><LineBreak/>
-															  <Run Text="Right hold (500 ms) + drag" Foreground="#cfd8e8"/><Run Text=" - rotate entity"/><LineBreak/>
+															  <Run Text="Left hold + drag" Foreground="#cfd8e8"/><Run Text=" - move entity"/><LineBreak/>
+															  <Run Text="Right hold + drag" Foreground="#cfd8e8"/><Run Text=" - rotate entity"/><LineBreak/>
 															  <Run Text="Right click cancels move; Left click cancels rotate"/>
 															</TextBlock>
 															<TextBlock Text="KEYS" FontWeight="Bold" Foreground="#ddd" Margin="0,8,0,0"/>
