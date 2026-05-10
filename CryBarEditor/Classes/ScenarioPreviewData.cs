@@ -19,8 +19,11 @@ public sealed class ScenarioPreviewData : IDisposable
     public required ScenarioFile Scenario { get; init; }
     public required ScenarioTerrain Terrain { get; init; }
     public required ScenarioTextureSet TextureSet { get; init; }
-    public required TerrainMesh TerrainMesh { get; init; }
-    public WaterMesh? WaterMesh { get; init; }
+    // Mutable so the renderer can re-source these from live terrain when a
+    // command publishes RenderHint.TerrainGeometry/TerrainTexture/TerrainWater.
+    // The cached arrays are stale once heights/tile groups change in place.
+    public required TerrainMesh TerrainMesh { get; set; }
+    public WaterMesh? WaterMesh { get; set; }
     public required List<ScenarioEntity> Entities { get; init; }
 
     bool[] _sliceReady = [];
@@ -47,6 +50,13 @@ public sealed class ScenarioPreviewData : IDisposable
     // MainWindow on first proto picker open. Null until then. The picker falls
     // back to ProtoTable when this stays null (no FileIndex / proto.xml not found).
     public List<string>? ProtoNamesCache { get; set; }
+
+    // Lazy full game-wide terrain (group, texture) list (from
+    // data/map_definitions/terrain_types.xml.XMB) populated by MainWindow on
+    // first terrain picker open. Null until then. The picker falls back to a
+    // synthetic cache built from the scenario's own TerrainGroups when this
+    // stays null (no FileIndex / terrain_types.xml not found).
+    public TerrainTypesCache? TerrainTypesCache { get; set; }
 
     // Live, editable scenario TM table -- the proto names referenced by entity
     // protoIndex. Populated in TryBuild from the first TM/PT sub-section.

@@ -225,16 +225,25 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     {
         if (hint == RenderHint.None) return;
 
-        // Terrain texture or geometry edit -> rebuild the heightfield mesh.
-        // UploadMesh re-bakes both per-vertex slope and per-tile slice indices
-        // from the live ScenarioTerrain, so a single flag covers both hints.
-        if ((hint & (RenderHint.TerrainTexture | RenderHint.TerrainGeometry)) != 0)
+        // Terrain texture or geometry edit -> rebuild the cached TerrainMesh
+        // from the live ScenarioTerrain. The mesh's vertex/index/slice arrays
+        // are baked at TryBuild time; in-place mutations to terrain.Heights
+        // and tile group/sub bytes are otherwise invisible to the GPU upload.
+        // Reuse the EXISTING TextureSet so slice indices (and the GL slice
+        // textures already uploaded against them) stay aligned.
+        if (_data is not null && (hint & (RenderHint.TerrainTexture | RenderHint.TerrainGeometry)) != 0)
+        {
+            _data.TerrainMesh = TerrainMeshBuilder.Build(_data.Terrain, _data.TextureSet);
             _meshUploaded = false;
+        }
 
         // Water mesh tracks per-tile water type AND vertex heights, so geometry
-        // edits also force a water rebuild.
-        if ((hint & (RenderHint.TerrainWater | RenderHint.TerrainGeometry)) != 0)
+        // and water edits both rebuild it from the live terrain.
+        if (_data is not null && (hint & (RenderHint.TerrainWater | RenderHint.TerrainGeometry)) != 0)
+        {
+            _data.WaterMesh = WaterMeshBuilder.Build(_data.Terrain);
             _waterUploaded = false;
+        }
 
         // Entity list (add/remove) or per-entity field (proto/player/pos/rot)
         // edits -> billboards + ring overlay both re-emit instance data.
