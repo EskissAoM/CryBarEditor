@@ -1,0 +1,49 @@
+<Window
+	x:Class="CryBarEditor.Windows.PickerWindow"
+	xmlns="https://github.com/avaloniaui"
+	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+	xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+	xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+	xmlns:ce="using:CryBarEditor.Windows"
+	Title="{Binding TitleText}"
+	Width="500"
+	Height="600"
+	d:DesignHeight="600"
+	d:DesignWidth="500"
+	Background="#171717"
+	Foreground="#d9d9d9"
+	DataContext="{Binding RelativeSource={RelativeSource Self}}"
+	WindowStartupLocation="CenterOwner"
+	mc:Ignorable="d"
+	x:DataType="ce:PickerWindow">
+	<Grid Margin="12" RowDefinitions="Auto,*,Auto">
+		<TextBox
+			Name="_filterBox"
+			Grid.Row="0"
+			PlaceholderText="Filter..." />
+		<ListBox
+			Name="_list"
+			Grid.Row="1"
+			Margin="0,8"
+			Background="#1e1e1e">
+			<ListBox.ItemTemplate>
+				<DataTemplate x:DataType="x:String">
+					<TextBlock Foreground="#d9d9d9" Text="{Binding}" />
+				</DataTemplate>
+			</ListBox.ItemTemplate>
+		</ListBox>
+		<StackPanel
+			Grid.Row="2"
+			HorizontalAlignment="Right"
+			Orientation="Horizontal"
+			Spacing="8">
+			<Button Click="OnCancel" Content="Cancel" />
+			<Button
+				Name="_confirmBtn"
+				Background="#4772b5"
+				Click="OnConfirm"
+				Content="Confirm"
+				IsEnabled="False" />
+		</StackPanel>
+	</Grid>
+</Window>
