@@ -161,7 +161,6 @@
 					<Separator />
 					<MenuItem Header="Scenario to XML" Click="MenuItem_ConvertScenarioToXML" />
 					<MenuItem Header="XML to Scenario" Click="MenuItem_ConvertXMLtoScenario" />
-					<MenuItem Header="Scenario extract TRG" Click="MenuItem_ExtractTRGfromScenario" />
 					<Separator />
 					<MenuItem Header="TRG to XML" Click="MenuItem_ConvertTRGtoXML" />
 					<MenuItem Header="XML to TRG" Click="MenuItem_ConvertXMLtoTRG" />
@@ -172,7 +171,8 @@
 				</MenuItem>
 				<MenuItem Header="Actions">
 					<MenuItem Header="Make XS script RM friendly" Click="MenuItem_XStoRM" />
-					<MenuItem Header="Open scenario for editing..." Click="MenuItem_OpenScenarioForEditing" />
+					<MenuItem Header="Open scenario for editing" Click="MenuItem_OpenScenarioForEditing" />
+					<MenuItem Header="Extract TRG from scenario" Click="MenuItem_ExtractTRGfromScenario" />
 				</MenuItem>
 				<MenuItem Header="Compress">
 					<MenuItem Header="Alz4" Click="MenuItem_CompressAlz4" />
