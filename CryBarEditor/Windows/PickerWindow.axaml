@@ -76,8 +76,14 @@
 				 SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
 				 DoubleTapped="ListBox_DoubleTapped">
 			<ListBox.ItemTemplate>
-				<DataTemplate x:DataType="x:String">
-					<TextBlock Text="{Binding}" />
+				<DataTemplate x:DataType="ce:PickerItem">
+					<StackPanel Orientation="Horizontal" Spacing="0">
+						<TextBlock Text="{Binding Group}" Foreground="{Binding GroupBrush}"
+								   IsVisible="{Binding ShowGroup}" />
+						<TextBlock Text="|" Foreground="#606060"
+								   IsVisible="{Binding ShowGroup}" />
+						<TextBlock Text="{Binding Display}" />
+					</StackPanel>
 				</DataTemplate>
 			</ListBox.ItemTemplate>
 		</ListBox>

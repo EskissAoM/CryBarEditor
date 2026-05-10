@@ -274,19 +274,19 @@ public partial class ScenarioInspectorPanel : UserControl
 
         var terrain = _data.Terrain;
 
-        // Build flat picker list "groupName / texName" with a parallel (g, s) ref array.
-        var labels = new List<string>();
+        // Build flat picker list with group + display split, plus parallel (g, s) ref array.
+        var items = new List<PickerItem>();
         var refs = new List<(byte g, ushort s)>();
         for (byte g = 0; g < terrain.TerrainGroups.Length; g++)
         {
             var grp = terrain.TerrainGroups[g];
             for (ushort s = 0; s < grp.Textures.Length; s++)
             {
-                labels.Add($"{grp.Name} / {grp.Textures[s]}");
+                items.Add(new PickerItem { Group = grp.Name, Display = grp.Textures[s] });
                 refs.Add((g, s));
             }
         }
-        if (labels.Count == 0) return;
+        if (items.Count == 0) return;
 
         // Preselect the first selected tile's current texture.
         int firstTileIdx = sel.Tiles.First();
@@ -297,12 +297,10 @@ public partial class ScenarioInspectorPanel : UserControl
         var owner = TopLevel.GetTopLevel(this) as Avalonia.Controls.Window;
         if (owner is null) return;
 
-        var picker = new PickerWindow("Pick tile texture", labels, preselect >= 0 ? preselect : null);
+        var picker = new PickerWindow("Pick tile texture", items, preselect >= 0 ? preselect : null);
         await picker.ShowDialog(owner);
 
-        if (picker.PickedItem is null) return;
-        int idx = labels.IndexOf(picker.PickedItem);
-        if (idx < 0) return;
+        if (picker.PickedIndex is not int idx) return;
         var (newG, newS) = refs[idx];
 
         var tileList = sel.Tiles.ToArray();
