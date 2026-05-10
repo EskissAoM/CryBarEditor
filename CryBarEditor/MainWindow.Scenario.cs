@@ -83,6 +83,7 @@ public partial class MainWindow
 
         _scenarioInspector.ExecuteCommand = cmd => data.Editor.Execute(cmd);
         _scenarioInspector.LoadProtoNamesAsync = async () => await GetOrLoadProtoNamesAsync(data);
+        _scenarioInspector.LoadTerrainTypesAsync = async () => await GetOrLoadTerrainTypesAsync(data);
 
         _scenarioToolbar.Bind(data.Editor, sourcePath: ResolveScenarioSourcePath());
         _scenarioToolbar.SaveRequested    -= OnToolbarSave;
@@ -96,9 +97,21 @@ public partial class MainWindow
         {
             _scenarioGl.MoveCommitted -= OnDragMoveCommitted;
             _scenarioGl.MoveCommitted += OnDragMoveCommitted;
+            // Re-load all textures when the GL texture array gets grown at
+            // runtime. EnsureSlot on the inspector pushes a new slice past
+            // _allocatedSlices; the GL controller wipes existing slices to
+            // placeholder during the realloc and signals here so we refill.
+            _scenarioGl.TextureArrayResized -= OnScenarioTextureArrayResized;
+            _scenarioGl.TextureArrayResized += OnScenarioTextureArrayResized;
         }
 
         _ = LoadScenarioTexturesAsync(data, data.Cancellation.Token);
+    }
+
+    void OnScenarioTextureArrayResized()
+    {
+        if (_scenarioData is { } data)
+            _ = LoadScenarioTexturesAsync(data, data.Cancellation.Token);
     }
 
     void OnEditorChanged(ScenarioPreviewData data)
@@ -470,6 +483,96 @@ public partial class MainWindow
         return names;
     }
 
+    /// <summary>
+    /// Lazily loads the full game-wide terrain (group, texture) list from
+    /// data/map_definitions/terrain_types.xml.XMB and caches it on the scenario
+    /// data. Returns null if the FileIndex isn't available, terrain_types.xml
+    /// isn't indexed, or parsing fails -- callers fall back to a synthetic
+    /// cache built from the scenario's own TerrainGroups in those cases.
+    /// </summary>
+    async ValueTask<TerrainTypesCache?> GetOrLoadTerrainTypesAsync(ScenarioPreviewData data)
+    {
+        if (data.TerrainTypesCache is not null) return data.TerrainTypesCache;
+        if (_fileIndex is null) return null;
+
+        var entries = _fileIndex.Find("terrain_types.xml.XMB");
+        if (entries.Count == 0) return null;
+
+        try
+        {
+            using var raw = await ReadFromIndexEntryPooledAsync(entries[0]);
+            if (raw == null) return null;
+
+            using var decompressed = BarCompression.EnsureDecompressedPooled(raw, out _);
+            var xmlText = ConversionHelper.ConvertXmbToXmlText(decompressed.Span);
+            if (xmlText == null) return null;
+
+            var cache = ParseTerrainTypesFromXml(xmlText);
+            data.TerrainTypesCache = cache;
+            return cache;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Walks terrain_types.xml: &lt;terraintypes&gt; contains &lt;type name="..."&gt;
+    /// children, each of which contains &lt;uiclass&gt; wrappers whose
+    /// &lt;subtype&gt; element text values are the texture paths. The same
+    /// texture path can appear multiple times under different &lt;uiclass&gt;
+    /// (different ui categories, same underlying texture) -- we de-dup per
+    /// group and sort alphabetically. XmlReader (not XDocument) for AOT.
+    /// </summary>
+    static TerrainTypesCache ParseTerrainTypesFromXml(string xmlText)
+    {
+        var byGroup = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        using var reader = System.Xml.XmlReader.Create(new System.IO.StringReader(xmlText));
+
+        string? curGroup = null;
+        while (reader.Read())
+        {
+            if (reader.NodeType == System.Xml.XmlNodeType.Element)
+            {
+                if (reader.Name == "type")
+                {
+                    curGroup = reader.GetAttribute("name");
+                    if (!string.IsNullOrEmpty(curGroup) && !byGroup.ContainsKey(curGroup))
+                        byGroup[curGroup] = new HashSet<string>(StringComparer.Ordinal);
+                }
+                else if (reader.Name == "subtype" && !string.IsNullOrEmpty(curGroup))
+                {
+                    // ReadElementContentAsString moves the reader past the end tag,
+                    // so we don't manually track depth.
+                    var tex = reader.ReadElementContentAsString();
+                    if (!string.IsNullOrEmpty(tex))
+                        byGroup[curGroup].Add(tex);
+                }
+            }
+            else if (reader.NodeType == System.Xml.XmlNodeType.EndElement && reader.Name == "type")
+            {
+                curGroup = null;
+            }
+        }
+
+        // Sort groups alphabetically; within each group sort texture paths.
+        var groupNames = new List<string>(byGroup.Keys);
+        groupNames.Sort(StringComparer.OrdinalIgnoreCase);
+
+        var sortedByGroup = new Dictionary<string, IReadOnlyList<string>>(byGroup.Count, StringComparer.Ordinal);
+        var all = new List<(string Group, string Texture)>();
+        foreach (var g in groupNames)
+        {
+            var list = new List<string>(byGroup[g]);
+            list.Sort(StringComparer.OrdinalIgnoreCase);
+            sortedByGroup[g] = list;
+            foreach (var t in list) all.Add((g, t));
+        }
+
+        return new TerrainTypesCache { ByGroup = sortedByGroup, All = all };
+    }
+
     void HideScenarioPreview()
     {
         _pendingScenario3D = null;
@@ -480,8 +583,12 @@ public partial class MainWindow
         _scenarioToolbar.Bind(null, sourcePath: null);
         _scenarioInspector.ExecuteCommand = null;
         _scenarioInspector.LoadProtoNamesAsync = null;
+        _scenarioInspector.LoadTerrainTypesAsync = null;
         if (_scenarioGl is not null)
+        {
             _scenarioGl.MoveCommitted -= OnDragMoveCommitted;
+            _scenarioGl.TextureArrayResized -= OnScenarioTextureArrayResized;
+        }
 
         // Dispose() cancels the data's CTS, which propagates to the in-flight load.
         _scenarioData?.Dispose();

@@ -2455,8 +2455,12 @@ public class IntegrationTests
 
     /// <summary>
     /// Walks every campaign mythscn, builds an index over every BAR under the game folder,
-    /// and asserts every referenced terrain texture name resolves. Surfaces any names that
-    /// don't resolve so the resolver's probe variants can be tightened.
+    /// and asserts every TILE-REFERENCED terrain texture name resolves. The TextureSet
+    /// also contains declared-but-unused textures (those declared in TerrainGroups but
+    /// not currently mapped to any tile) and we don't require those to resolve -- they
+    /// can legitimately be sentinel groups like 'water' that the engine handles specially.
+    /// Surfaces any tile-referenced names that don't resolve so the resolver's probe
+    /// variants can be tightened.
     /// </summary>
     [SkippableFact]
     public void ScenarioTextureResolution_AllReferencedTexturesResolve()
@@ -2487,9 +2491,16 @@ public class IntegrationTests
             var terrain = ScenarioTerrain.TryParse(scenario);
             if (terrain is null) continue;
 
+            // Filter to (g, s) pairs that some tile actually uses.
+            var usedPairs = new HashSet<(byte, ushort)>();
+            int n = Math.Min(terrain.TileGroups.Length, terrain.TileSubs.Length);
+            for (int i = 0; i < n; i++) usedPairs.Add((terrain.TileGroups[i], terrain.TileSubs[i]));
+
             var set = ScenarioTextureSet.Build(terrain);
-            foreach (var name in set.Names)
+            foreach (var (gs, slice) in set.SliceIndices)
             {
+                if (!usedPairs.Contains(gs)) continue;
+                var name = set.Names[slice];
                 referencedCount++;
                 var fname = Path.GetFileName(name.Replace('\\', '/'));
                 if (fname.Length == 0) { unresolved.Add(name); continue; }
@@ -2595,9 +2606,17 @@ public class IntegrationTests
         var index = new FileIndex();
         FileIndexBuilder.IndexBarFiles(index, [barPath]);
 
+        // Only the (g, s) pairs actually used by tiles need to resolve. Declared-but-unused
+        // entries (e.g. the special 'water' sentinel group) are allowed to miss.
+        var usedPairs = new HashSet<(byte, ushort)>();
+        int n0 = Math.Min(terrain!.TileGroups.Length, terrain.TileSubs.Length);
+        for (int i = 0; i < n0; i++) usedPairs.Add((terrain.TileGroups[i], terrain.TileSubs[i]));
+
         var unresolved = new List<string>();
-        foreach (var n in texSet.Names)
+        foreach (var (gs, slice) in texSet.SliceIndices)
         {
+            if (!usedPairs.Contains(gs)) continue;
+            var n = texSet.Names[slice];
             var hits = index.FindByPartialPath(n + "_basecolor.ddt");
             if (hits.Count == 0) hits = index.FindByPartialPath(n + ".ddt");
             if (hits.Count == 0) unresolved.Add(n);

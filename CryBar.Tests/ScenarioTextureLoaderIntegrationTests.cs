@@ -56,12 +56,23 @@ public class ScenarioTextureLoaderIntegrationTests
 
         var resolver = new ScenarioTextureLoader.NameResolver(index, ReadEntry);
 
-        int total = data!.TextureSet.Names.Count;
-        Assert.True(total > 0, "Fixture has zero referenced textures");
+        // Filter to (g, s) pairs that some tile actually uses. Declared-but-unused
+        // entries (e.g. the 'water' sentinel group) are allowed to miss.
+        var terrain = data!.Terrain;
+        var usedPairs = new HashSet<(byte, ushort)>();
+        int n0 = Math.Min(terrain.TileGroups.Length, terrain.TileSubs.Length);
+        for (int i = 0; i < n0; i++) usedPairs.Add((terrain.TileGroups[i], terrain.TileSubs[i]));
+
+        var tileNames = new List<string>();
+        foreach (var (gs, slice) in data.TextureSet.SliceIndices)
+            if (usedPairs.Contains(gs)) tileNames.Add(data.TextureSet.Names[slice]);
+
+        int total = tileNames.Count;
+        Assert.True(total > 0, "Fixture has zero tile-referenced textures");
 
         var unresolved = new List<string>();
         var resolved = new List<string>();
-        foreach (var name in data.TextureSet.Names)
+        foreach (var name in tileNames)
         {
             var (buf, _) = await resolver.TryResolveWithSourceAsync(name);
             if (buf is null || buf.Length == 0) unresolved.Add(name);
@@ -100,9 +111,23 @@ public class ScenarioTextureLoaderIntegrationTests
 
         await ScenarioTextureLoader.LoadAllAsync(data!, resolver, UploadStub, onProgress: null, CancellationToken.None);
 
-        var total = data!.TextureSet.Names.Count;
-        Assert.Equal(total, uploaded);
-        for (int i = 0; i < total; i++)
-            Assert.True(data.SliceReady[i], $"slice {i} ({data.TextureSet.Names[i]}) was not marked ready");
+        // Only tile-referenced slices must be Ready. Declared-but-unused entries
+        // (e.g. the 'water' sentinel group) may legitimately fail to resolve.
+        var terrain = data!.Terrain;
+        var usedPairs = new HashSet<(byte, ushort)>();
+        int n0 = Math.Min(terrain.TileGroups.Length, terrain.TileSubs.Length);
+        for (int i = 0; i < n0; i++) usedPairs.Add((terrain.TileGroups[i], terrain.TileSubs[i]));
+
+        foreach (var (gs, slice) in data.TextureSet.SliceIndices)
+        {
+            if (!usedPairs.Contains(gs)) continue;
+            Assert.True(data.SliceReady[slice], $"slice {slice} ({data.TextureSet.Names[slice]}) was not marked ready");
+        }
+
+        // Upload count is at most the number of resolved + decoded slices; it
+        // must be >= number of tile-referenced slices since those all resolve.
+        int tileReferenced = data.TextureSet.SliceIndices.Count(kv => usedPairs.Contains(kv.Key));
+        Assert.True(uploaded >= tileReferenced,
+            $"uploaded {uploaded} < tile-referenced {tileReferenced}");
     }
 }

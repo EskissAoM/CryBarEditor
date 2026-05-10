@@ -28,7 +28,11 @@ public sealed class ScenarioPreviewData : IDisposable
 
     bool[] _sliceReady = [];
     public IReadOnlyList<bool> SliceReady => _sliceReady;
-    internal void MarkSliceReady(int index) => _sliceReady[index] = true;
+    internal void MarkSliceReady(int index)
+    {
+        if ((uint)index < (uint)_sliceReady.Length)
+            _sliceReady[index] = true;
+    }
 
     TextureSource[] _textureSources = [];
     public IReadOnlyList<TextureSource> TextureSources => _textureSources;
@@ -36,6 +40,24 @@ public sealed class ScenarioPreviewData : IDisposable
     {
         if ((uint)sliceIndex < (uint)_textureSources.Length)
             _textureSources[sliceIndex] = source;
+    }
+
+    /// <summary>
+    /// Resizes the internal per-slice arrays (SliceReady, TextureSources) to
+    /// at least <paramref name="capacity"/> entries. Used after a runtime
+    /// EnsureSlot append on TextureSet so the per-slice tracking arrays don't
+    /// fall behind Names.Count.
+    /// </summary>
+    public void EnsureSlotCapacity(int capacity)
+    {
+        if (capacity <= _sliceReady.Length) return;
+        var newReady = new bool[capacity];
+        Array.Copy(_sliceReady, newReady, _sliceReady.Length);
+        _sliceReady = newReady;
+
+        var newSources = new TextureSource[capacity];
+        Array.Copy(_textureSources, newSources, _textureSources.Length);
+        _textureSources = newSources;
     }
 
     public CancellationTokenSource Cancellation { get; } = new();

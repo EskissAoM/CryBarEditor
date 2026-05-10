@@ -30,6 +30,11 @@ public partial class ScenarioInspectorPanel : UserControl
     // to the scenario's own TM table.
     public System.Func<System.Threading.Tasks.Task<List<string>?>>? LoadProtoNamesAsync;
 
+    // MainWindow wires this so the terrain texture picker can lazy-load the FULL
+    // game terrain list from terrain_types.xml.XMB on first open. Null is fine
+    // -- caller falls back to the scenario's own TerrainGroups.
+    public System.Func<System.Threading.Tasks.Task<TerrainTypesCache?>>? LoadTerrainTypesAsync;
+
     ScenarioPreviewData? _data;
 
     // Suppress flags guard against ValueChanged/SelectionChanged firing while we
@@ -282,25 +287,42 @@ public partial class ScenarioInspectorPanel : UserControl
 
         var terrain = _data.Terrain;
 
-        // Build flat picker list with group + display split, plus parallel (g, s) ref array.
-        var items = new List<PickerItem>();
-        var refs = new List<(byte g, ushort s)>();
-        for (byte g = 0; g < terrain.TerrainGroups.Length; g++)
-        {
-            var grp = terrain.TerrainGroups[g];
-            for (ushort s = 0; s < grp.Textures.Length; s++)
-            {
-                items.Add(new PickerItem { Group = grp.Name, Display = grp.Textures[s] });
-                refs.Add((g, s));
-            }
-        }
-        if (items.Count == 0) return;
+        // Try the full game-wide terrain list first (cached, then loaded lazily
+        // from terrain_types.xml.XMB). Fall back to a synthetic cache built from
+        // the scenario's own TerrainGroups when the XMB isn't reachable -- the
+        // picker still works, just limited to swapping among existing entries.
+        var cache = _data.TerrainTypesCache;
+        if (cache is null && LoadTerrainTypesAsync is not null)
+            cache = await LoadTerrainTypesAsync();
+        cache ??= BuildScenarioFallbackCache(terrain);
+        if (cache.All.Count == 0) return;
 
-        // Preselect the first selected tile's current texture.
+        // Build picker items from cache.All (already (group, texture) tuples in display order).
+        var items = new List<PickerItem>(cache.All.Count);
+        foreach (var (group, tex) in cache.All)
+            items.Add(new PickerItem { Group = group, Display = tex });
+
+        // Preselect the first selected tile's current (group, texture) by NAME match
+        // against cache.All -- the cache index won't match the scenario's (g, s).
         int firstTileIdx = sel.Tiles.First();
         byte curG = terrain.TileGroups[firstTileIdx];
         ushort curS = terrain.TileSubs[firstTileIdx];
-        int preselect = refs.FindIndex(r => r.g == curG && r.s == curS);
+        string? curGroupName = curG < terrain.TerrainGroups.Length
+            ? terrain.TerrainGroups[curG].Name : null;
+        string? curTexName = curG < terrain.TerrainGroups.Length
+            && curS < terrain.TerrainGroups[curG].Textures.Length
+            ? terrain.TerrainGroups[curG].Textures[curS] : null;
+        int preselect = -1;
+        if (curGroupName is not null && curTexName is not null)
+        {
+            for (int i = 0; i < cache.All.Count; i++)
+            {
+                if (cache.All[i].Group == curGroupName && cache.All[i].Texture == curTexName)
+                {
+                    preselect = i; break;
+                }
+            }
+        }
 
         var owner = TopLevel.GetTopLevel(this) as Avalonia.Controls.Window;
         if (owner is null) return;
@@ -309,11 +331,84 @@ public partial class ScenarioInspectorPanel : UserControl
         await picker.ShowDialog(owner);
 
         if (picker.PickedIndex is not int idx) return;
-        var (newG, newS) = refs[idx];
+        var (newGroupName, newTexName) = cache.All[idx];
+
+        // Resolve in scenario's TerrainGroups; append (group/texture) if missing.
+        // ResolveOrAppendTerrain mutates terrain.TerrainGroups in place so TnWriter
+        // emits the extended array on save.
+        var (newG, newS) = ResolveOrAppendTerrain(terrain, newGroupName, newTexName);
+
+        // Mirror the (g, s) into the cached TextureSet so the mesh rebuild does
+        // not return slice = -1 for the picked tiles. For newly-appended pairs
+        // the GL renderer detects the slice-count growth on next frame, fires
+        // its TextureArrayResized event, and the host re-runs the full texture
+        // load -- no explicit one-shot request needed here.
+        _data.TextureSet.EnsureSlot(newG, newS, newTexName, out var addedSliceIndex);
+        if (addedSliceIndex is not null)
+        {
+            // Grow the per-slice tracking arrays so the texture loader doesn't
+            // index past the original size when the reload fires.
+            _data.EnsureSlotCapacity(_data.TextureSet.Names.Count);
+        }
 
         var tileList = sel.Tiles.ToArray();
         var cmd = SetTileTextures.Create(terrain, tileList, newG, newS);
         ExecuteCommand?.Invoke(cmd);
+    }
+
+    /// <summary>
+    /// Resolves (group, texture) against the scenario's TerrainGroups array,
+    /// appending if missing.
+    ///   - existing group + existing texture -> returns (g, s)
+    ///   - existing group + new texture      -> appends to group.Textures
+    ///   - new group                         -> appends a new TerrainGroup
+    /// Append-only: never removes or reindexes existing entries (orphans are
+    /// harmless on disk, and existing tiles' (g, s) stay valid).
+    /// </summary>
+    static (byte g, ushort s) ResolveOrAppendTerrain(ScenarioTerrain terrain, string group, string texture)
+    {
+        for (int gi = 0; gi < terrain.TerrainGroups.Length; gi++)
+        {
+            var grp = terrain.TerrainGroups[gi];
+            if (grp.Name != group) continue;
+            for (int si = 0; si < grp.Textures.Length; si++)
+                if (grp.Textures[si] == texture) return ((byte)gi, (ushort)si);
+
+            // Append texture to existing group. TerrainTextureGroup is init-only
+            // (Name + Textures both required), so we replace the slot with a new
+            // instance that has the extended texture array.
+            var newTexs = new string[grp.Textures.Length + 1];
+            System.Array.Copy(grp.Textures, newTexs, grp.Textures.Length);
+            newTexs[grp.Textures.Length] = texture;
+            terrain.TerrainGroups[gi] = new TerrainTextureGroup { Name = grp.Name, Textures = newTexs };
+            return ((byte)gi, (ushort)(newTexs.Length - 1));
+        }
+
+        // Append a new TerrainGroup. TerrainGroups itself is settable on
+        // ScenarioTerrain (see comment on the property), so we swap the array.
+        var newGroup = new TerrainTextureGroup { Name = group, Textures = new[] { texture } };
+        var newGroups = new TerrainTextureGroup[terrain.TerrainGroups.Length + 1];
+        System.Array.Copy(terrain.TerrainGroups, newGroups, terrain.TerrainGroups.Length);
+        newGroups[^1] = newGroup;
+        terrain.TerrainGroups = newGroups;
+        return ((byte)(newGroups.Length - 1), 0);
+    }
+
+    /// <summary>
+    /// Builds a fallback TerrainTypesCache from the scenario's own TerrainGroups
+    /// (used when terrain_types.xml.XMB isn't reachable). Preserves scenario-file
+    /// order so existing textures sit in the same picker rows the user is used to.
+    /// </summary>
+    static TerrainTypesCache BuildScenarioFallbackCache(ScenarioTerrain terrain)
+    {
+        var byGroup = new Dictionary<string, IReadOnlyList<string>>(System.StringComparer.Ordinal);
+        var all = new List<(string Group, string Texture)>();
+        foreach (var grp in terrain.TerrainGroups)
+        {
+            byGroup[grp.Name] = grp.Textures;
+            foreach (var t in grp.Textures) all.Add((grp.Name, t));
+        }
+        return new TerrainTypesCache { ByGroup = byGroup, All = all };
     }
 
     void OnTileWaterChanged(object? sender, SelectionChangedEventArgs e)

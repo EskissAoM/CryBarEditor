@@ -140,6 +140,17 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     public event Action<IScenarioCommand?>? MoveCommitted;
 
+    /// <summary>
+    /// Fires when the GL texture array is reallocated to a larger size at
+    /// runtime (i.e. after the user picked a texture not yet in the
+    /// TextureSet, growing Names.Count past the previously-allocated slice
+    /// count). The reallocation wipes existing slices to placeholder, so the
+    /// host should re-run its texture-load pipeline to refill them.
+    /// Not raised on the initial allocation per scenario -- that case is
+    /// already covered by the host's regular load on FlushPendingScenario3D.
+    /// </summary>
+    public event Action? TextureArrayResized;
+
     readonly ConcurrentQueue<Action<GlInterface>> _glActionQueue = new();
 
     // Function pointers for GL calls Avalonia's GlInterface doesn't expose.
@@ -631,11 +642,21 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         // Allocate texture array once per scenario (or whenever slice count grew).
         // _meshUploaded is flipped on edits to force mesh re-upload, but it must NOT
         // re-allocate the texture array -- that would wipe all loaded DDT slices back
-        // to the olive placeholder. Track allocation separately.
+        // to the olive placeholder. Track allocation separately. When an existing
+        // array is grown (slice count increased after EnsureSlot append), all
+        // previous slices ARE wiped to placeholder by the realloc -- in that case
+        // we raise TextureArrayResized so the host kicks a full reload.
         int neededSlices = Math.Max(1, _data.TextureSet.Names.Count);
         if (_allocatedSlices < neededSlices)
         {
+            bool wasGrow = _allocatedSlices > 0;
             EnsureTextureArrayAllocated(gl, _data);
+            if (wasGrow)
+            {
+                var ev = TextureArrayResized;
+                if (ev is not null)
+                    Dispatcher.UIThread.Post(() => ev());
+            }
         }
         if (!_meshUploaded)
         {

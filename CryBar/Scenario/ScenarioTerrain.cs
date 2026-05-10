@@ -28,7 +28,12 @@ public sealed class ScenarioTerrain
     /// WaterMeshBuilder reads it as `value != 255`.
     /// </summary>
     public required byte[] WaterType { get; init; }
-    public required TerrainTextureGroup[] TerrainGroups { get; init; }
+    // Settable (not init-only) because the inspector's terrain picker may append
+    // new (group, texture) entries from the full game-wide terrain list when the
+    // user picks something not yet referenced by the scenario. TnWriter then
+    // emits the extended array on save. Append-only -- existing entries are
+    // never removed/reindexed (orphans are harmless on disk).
+    public required TerrainTextureGroup[] TerrainGroups { get; set; }
 
     // Round-trip metadata. None are required so existing TryParse callers and
     // synthetic-fixture tests that only care about the typed fields don't have
