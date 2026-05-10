@@ -21,21 +21,40 @@
                            FontSize="11"
                            IsVisible="False"/>
                 <Grid x:Name="_saveBarRow" ColumnDefinitions="Auto,*,Auto,Auto,Auto" IsVisible="False">
-                    <StackPanel Grid.Column="0" x:Name="_dirtyIndicator"
-                                Orientation="Horizontal" Spacing="6"
-                                VerticalAlignment="Center"
-                                IsVisible="False">
-                        <Ellipse Width="10" Height="10" Fill="#FFB300" VerticalAlignment="Center"/>
-                        <TextBlock Text="unsaved" Foreground="#FFB300" VerticalAlignment="Center"/>
+                    <StackPanel Grid.Column="0" Orientation="Vertical" Spacing="4"
+                                VerticalAlignment="Bottom">
+                        <StackPanel x:Name="_dirtyIndicator"
+                                    Orientation="Horizontal" Spacing="6"
+                                    IsVisible="False">
+                            <Ellipse Width="10" Height="10" Fill="#FFB300" VerticalAlignment="Center"/>
+                            <TextBlock Text="unsaved" Foreground="#FFB300" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <Button x:Name="_undoBtn" Click="OnUndoClick"
+                                    Width="26" Height="26" Padding="0"
+                                    Background="#2c3a4f" Foreground="#cfd8e8"
+                                    ToolTip.Tip="Undo (Ctrl+Z)">
+                                <micons:MaterialIcon Kind="Undo" Width="16" Height="16"/>
+                            </Button>
+                            <Button x:Name="_redoBtn" Click="OnRedoClick"
+                                    Width="26" Height="26" Padding="0"
+                                    Background="#2c3a4f" Foreground="#cfd8e8"
+                                    ToolTip.Tip="Redo (Ctrl+Shift+Z)">
+                                <micons:MaterialIcon Kind="Redo" Width="16" Height="16"/>
+                            </Button>
+                        </StackPanel>
                     </StackPanel>
                     <Button Grid.Column="2" x:Name="_saveBtn" Content="Save"
                             Click="OnSaveClick" IsVisible="False" Margin="0,0,4,0"
+                            VerticalAlignment="Bottom"
                             Background="#2c3a4f" Foreground="#cfd8e8" Padding="8,4"/>
                     <Button Grid.Column="3" x:Name="_saveAsBtn" Content="Save As..."
                             Click="OnSaveAsClick" Margin="0,0,4,0"
+                            VerticalAlignment="Bottom"
                             Background="#2c3a4f" Foreground="#cfd8e8" Padding="8,4"/>
                     <Button Grid.Column="4" x:Name="_discardBtn" Content="Discard"
                             Click="OnDiscardClick"
+                            VerticalAlignment="Bottom"
                             Background="#5a2c2c" Foreground="#f1d6d6" Padding="8,4"/>
                 </Grid>
                 <Grid x:Name="_warningsRow" ColumnDefinitions="*,Auto" IsVisible="False">

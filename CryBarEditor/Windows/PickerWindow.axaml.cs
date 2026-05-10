@@ -106,6 +106,13 @@ public partial class PickerWindow : SimpleWindow
             SelectedItem = _allItems[idx];
             _list.ScrollIntoView(_allItems[idx]);
         }
+        else if (FilteredItems.Count > 0)
+        {
+            // Auto-highlight first item so Enter immediately confirms.
+            SelectedItem = FilteredItems[0];
+        }
+
+        Opened += (_, _) => _filterBox.Focus();
     }
 
     void RefreshFiltered()
@@ -134,7 +141,14 @@ public partial class PickerWindow : SimpleWindow
         }
         OnPropertyChanged(nameof(StatusText));
 
-        SelectedItem = prevStillVisible ? prevSelected : null;
+        // Keep prev selection if still visible; otherwise highlight the first
+        // filtered item so Enter (default button) instantly confirms it.
+        if (prevStillVisible)
+            SelectedItem = prevSelected;
+        else if (FilteredItems.Count > 0)
+            SelectedItem = FilteredItems[0];
+        else
+            SelectedItem = null;
     }
 
     void ListBox_DoubleTapped(object? sender, Avalonia.Input.TappedEventArgs e)

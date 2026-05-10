@@ -656,6 +656,8 @@ public partial class ScenarioInspectorPanel : UserControl
         _saveBtn.IsEnabled = hasSavePath && dirty;
         _saveAsBtn.IsEnabled = hasEditor;
         _discardBtn.IsEnabled = dirty;
+        _undoBtn.IsEnabled = hasEditor && _boundEditor!.CanUndo;
+        _redoBtn.IsEnabled = hasEditor && _boundEditor!.CanRedo;
 
         if (!hasEditor)
         {
@@ -688,6 +690,8 @@ public partial class ScenarioInspectorPanel : UserControl
     void OnSaveClick(object? sender, RoutedEventArgs e) => SaveRequested?.Invoke();
     void OnSaveAsClick(object? sender, RoutedEventArgs e) => SaveAsRequested?.Invoke();
     void OnDiscardClick(object? sender, RoutedEventArgs e) => DiscardRequested?.Invoke();
+    void OnUndoClick(object? sender, RoutedEventArgs e) => _boundEditor?.Undo();
+    void OnRedoClick(object? sender, RoutedEventArgs e) => _boundEditor?.Redo();
 
     public void SetManualBarStatus(string? path, bool loadFailed)
     {
