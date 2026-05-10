@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -11,10 +10,36 @@ namespace CryBarEditor.Windows;
 public partial class PickerWindow : SimpleWindow
 {
     readonly IReadOnlyList<string> _allItems;
-    readonly ObservableCollection<string> _filtered = new();
+
+    string _filter = "";
+    string? _selectedItem;
 
     public string TitleText { get; }
     public string? PickedItem { get; private set; }
+
+    public string Filter
+    {
+        get => _filter;
+        set { _filter = value; OnSelfChanged(); RefreshFiltered(); }
+    }
+
+    public string? SelectedItem
+    {
+        get => _selectedItem;
+        set
+        {
+            _selectedItem = value;
+            OnSelfChanged();
+            if (_confirmBtn != null)
+                _confirmBtn.IsEnabled = value != null;
+        }
+    }
+
+    public string StatusText => _filter.Length == 0
+        ? $"{FilteredItems.Count} item{(FilteredItems.Count == 1 ? "" : "s")}"
+        : $"{FilteredItems.Count} of {_allItems.Count}";
+
+    public ObservableCollectionExtended<string> FilteredItems { get; } = new();
 
     public PickerWindow() : this("Picker", System.Array.Empty<string>(), null) { }
 
@@ -24,47 +49,48 @@ public partial class PickerWindow : SimpleWindow
         _allItems = items;
         InitializeComponent();
 
-        foreach (var s in items) _filtered.Add(s);
-        _list.ItemsSource = _filtered;
+        RefreshFiltered();
 
         if (preselectIndex is int idx && idx >= 0 && idx < items.Count)
         {
-            _list.SelectedIndex = idx;
+            SelectedItem = items[idx];
             _list.ScrollIntoView(items[idx]);
         }
-
-        _filterBox.TextChanged += (_, _) => RefreshFilter();
-        _filterBox.KeyDown += (_, e) =>
-        {
-            if (e.Key == Avalonia.Input.Key.Enter && _filtered.Count == 1)
-            {
-                _list.SelectedIndex = 0;
-                OnConfirm(this, new RoutedEventArgs());
-            }
-        };
-        _list.SelectionChanged += (_, _) =>
-            _confirmBtn.IsEnabled = _list.SelectedItem is string;
     }
 
-    void RefreshFilter()
+    void RefreshFiltered()
     {
-        var q = _filterBox.Text ?? "";
-        _filtered.Clear();
-        if (string.IsNullOrEmpty(q))
+        var prevSelected = _selectedItem;
+        FilteredItems.Clear();
+        var filter = _filter.Trim();
+        if (filter.Length == 0)
         {
-            foreach (var s in _allItems) _filtered.Add(s);
+            foreach (var s in _allItems) FilteredItems.Add(s);
         }
         else
         {
             foreach (var s in _allItems)
-                if (s.Contains(q, System.StringComparison.OrdinalIgnoreCase))
-                    _filtered.Add(s);
+                if (s.Contains(filter, System.StringComparison.OrdinalIgnoreCase))
+                    FilteredItems.Add(s);
         }
+        OnPropertyChanged(nameof(StatusText));
+
+        // Preserve selection when still in the filtered list, otherwise clear it
+        if (prevSelected != null && FilteredItems.Contains(prevSelected))
+            SelectedItem = prevSelected;
+        else
+            SelectedItem = null;
+    }
+
+    void ListBox_DoubleTapped(object? sender, Avalonia.Input.TappedEventArgs e)
+    {
+        if (SelectedItem != null)
+            OnConfirm(this, new RoutedEventArgs());
     }
 
     void OnConfirm(object? sender, RoutedEventArgs e)
     {
-        if (_list.SelectedItem is string s)
+        if (SelectedItem is string s)
         {
             PickedItem = s;
             Close();
