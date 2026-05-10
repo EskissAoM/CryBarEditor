@@ -95,7 +95,41 @@
                         </Button>
                     </Grid>
                     <TextBlock x:Name="_selectedFields" Foreground="#ddd"
-                               FontFamily="Cascadia Code,Consolas" TextWrapping="Wrap"/>
+                               FontFamily="Cascadia Code,Consolas" TextWrapping="Wrap"
+                               IsVisible="False"/>
+
+                    <!-- Tile edit controls. Visible only when Selection.Kind == Tiles. -->
+                    <StackPanel x:Name="_tileEditPanel" Spacing="6" IsVisible="False">
+                        <Grid ColumnDefinitions="Auto,*">
+                            <TextBlock Grid.Column="0" Text="Texture" Margin="0,0,8,0"
+                                       VerticalAlignment="Center" Foreground="#ddd"/>
+                            <Button Grid.Column="1" x:Name="_tileTextureBtn"
+                                    HorizontalAlignment="Stretch"
+                                    Click="OnTileTextureClick" Content="(none)"
+                                    Background="#2c3a4f" Foreground="#cfd8e8" Padding="8,4"/>
+                        </Grid>
+                        <Grid ColumnDefinitions="Auto,*">
+                            <TextBlock Grid.Column="0" Text="Water type" Margin="0,0,8,0"
+                                       VerticalAlignment="Center" Foreground="#ddd"/>
+                            <ComboBox Grid.Column="1" x:Name="_tileWaterCombo"
+                                      HorizontalAlignment="Stretch"
+                                      SelectionChanged="OnTileWaterChanged"/>
+                        </Grid>
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                            <TextBlock Grid.Column="0" Text="Height" Margin="0,0,8,0"
+                                       VerticalAlignment="Center" Foreground="#ddd"/>
+                            <NumericUpDown Grid.Column="1" x:Name="_tileHeightNum"
+                                           FormatString="0.00" Increment="0.25"
+                                           ValueChanged="OnTileHeightChanged"/>
+                            <Button Grid.Column="2" Content="-1"
+                                    Click="OnTileHeightDecrement" Margin="4,0,0,0"
+                                    Background="#2c3a4f" Foreground="#cfd8e8"/>
+                            <Button Grid.Column="3" Content="+1"
+                                    Click="OnTileHeightIncrement" Margin="4,0,0,0"
+                                    Background="#2c3a4f" Foreground="#cfd8e8"/>
+                        </Grid>
+                    </StackPanel>
+
                     <Button x:Name="_selectedClearButton" Content="Clear selection"
                             Click="ClearSelectionClick"
                             HorizontalAlignment="Stretch" Margin="0,4,0,0"
