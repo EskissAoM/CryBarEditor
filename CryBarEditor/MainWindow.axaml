@@ -507,17 +507,16 @@
 							</Grid>
 						</Grid>
 
-						<Grid x:Name="_scenarioRoot" IsVisible="False" RowDefinitions="Auto,Auto,*"
+						<Grid x:Name="_scenarioRoot" IsVisible="False" RowDefinitions="Auto,*"
 							  Focusable="True" KeyDown="ScenarioRoot_KeyDown">
-							<controls:ScenarioToolbar Grid.Row="0" x:Name="_scenarioToolbar" />
-							<TabStrip Grid.Row="1" x:Name="_scenarioTabStrip"
+							<TabStrip Grid.Row="0" x:Name="_scenarioTabStrip"
 									  Classes="structuredPreviewTabs"
 									  SelectedIndex="0"
 									  SelectionChanged="ScenarioTab_SelectionChanged">
 								<TabStripItem>XML</TabStripItem>
 								<TabStripItem>3D View</TabStripItem>
 							</TabStrip>
-							<Grid Grid.Row="2">
+							<Grid Grid.Row="1">
 								<!-- _txtEditor is reparented here in ShowScenarioPreview to reuse its
 									 large-doc / TextMate / folding pipeline. -->
 								<ContentControl x:Name="_scenarioXmlHost" Background="#1c1c1c"/>

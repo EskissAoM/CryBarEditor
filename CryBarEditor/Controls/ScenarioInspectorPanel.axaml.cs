@@ -17,9 +17,22 @@ public partial class ScenarioInspectorPanel : UserControl
     public ScenarioInspectorPanel()
     {
         InitializeComponent();
+        RefreshSaveBar();
     }
 
     public event System.Action? SelectBarRequested;
+
+    // Save-bar state. The inspector hosts the Save / Save As / Discard buttons
+    // (and the dirty indicator) that were previously in a separate ScenarioToolbar
+    // row above the scenario tab strip; merging them in here reclaims vertical
+    // space for the 3D viewer. MainWindow wires SaveRequested et al. to its
+    // existing handlers via BindEditor().
+    ScenarioEditor? _boundEditor;
+    string? _boundSourcePath;
+
+    public event System.Action? SaveRequested;
+    public event System.Action? SaveAsRequested;
+    public event System.Action? DiscardRequested;
 
     // MainWindow wires this in Task 24 to dispatch through ScenarioEditor.Execute.
     // Null until then; handlers no-op when null.
@@ -626,6 +639,62 @@ public partial class ScenarioInspectorPanel : UserControl
         var cmd = DeleteEntities.Create(_data.Entities, ids);
         ExecuteCommand?.Invoke(cmd);
     }
+
+    // ----- Save bar (formerly ScenarioToolbar) -----
+
+    /// <summary>
+    /// Wires the inspector's save bar to a scenario editor. Pass null to detach
+    /// (no scenario loaded). The optional sourcePath shows in the path label
+    /// when the editor has not yet been saved (i.e. SavePath is null).
+    /// </summary>
+    public void BindEditor(ScenarioEditor? editor, string? sourcePath)
+    {
+        if (_boundEditor is not null) _boundEditor.Changed -= RefreshSaveBar;
+        _boundEditor = editor;
+        _boundSourcePath = sourcePath;
+        if (_boundEditor is not null) _boundEditor.Changed += RefreshSaveBar;
+        RefreshSaveBar();
+    }
+
+    void RefreshSaveBar()
+    {
+        var hasEditor = _boundEditor is not null;
+        var dirty = hasEditor && _boundEditor!.IsDirty;
+        // Save stays hidden until the user has explicitly chosen a target via
+        // Save As (editor.SavePath becomes non-null). Prevents accidentally
+        // overwriting the source mythscn while browsing game files.
+        var hasSavePath = hasEditor && _boundEditor!.SavePath is not null;
+
+        _saveBarRow.IsVisible = hasEditor;
+        _dirtyIndicator.IsVisible = dirty;
+        _saveBtn.IsVisible = hasSavePath;
+        _saveBtn.IsEnabled = hasSavePath && dirty;
+        _saveAsBtn.IsEnabled = hasEditor;
+        _discardBtn.IsEnabled = dirty;
+
+        if (!hasEditor)
+        {
+            _savePathLabel.IsVisible = false;
+            return;
+        }
+
+        var path = _boundEditor!.SavePath ?? _boundSourcePath ?? "";
+        _savePathLabel.Text = ShortenPath(path);
+        _savePathLabel.IsVisible = !string.IsNullOrEmpty(path);
+    }
+
+    // Trim a path to its last two segments so the label fits the inspector
+    // column; full path stays available via tooltip / underlying text.
+    static string ShortenPath(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return "";
+        var parts = path.Replace('\\', '/').TrimEnd('/').Split('/');
+        return parts.Length <= 2 ? path : ".../" + string.Join('/', parts[^2..]);
+    }
+
+    void OnSaveClick(object? sender, RoutedEventArgs e) => SaveRequested?.Invoke();
+    void OnSaveAsClick(object? sender, RoutedEventArgs e) => SaveAsRequested?.Invoke();
+    void OnDiscardClick(object? sender, RoutedEventArgs e) => DiscardRequested?.Invoke();
 
     public void SetManualBarStatus(string? path, bool loadFailed)
     {

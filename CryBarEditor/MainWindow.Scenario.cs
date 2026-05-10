@@ -85,13 +85,16 @@ public partial class MainWindow
         _scenarioInspector.LoadProtoNamesAsync = async () => await GetOrLoadProtoNamesAsync(data);
         _scenarioInspector.LoadTerrainTypesAsync = async () => await GetOrLoadTerrainTypesAsync(data);
 
-        _scenarioToolbar.Bind(data.Editor, sourcePath: ResolveScenarioSourcePath());
-        _scenarioToolbar.SaveRequested    -= OnToolbarSave;
-        _scenarioToolbar.SaveAsRequested  -= OnToolbarSaveAs;
-        _scenarioToolbar.DiscardRequested -= OnToolbarDiscard;
-        _scenarioToolbar.SaveRequested    += OnToolbarSave;
-        _scenarioToolbar.SaveAsRequested  += OnToolbarSaveAs;
-        _scenarioToolbar.DiscardRequested += OnToolbarDiscard;
+        // Save bar is now hosted inside the inspector itself (the standalone
+        // ScenarioToolbar control was retired so the 3D viewport can claim that
+        // vertical space). Bind / event names are unchanged, just relocated.
+        _scenarioInspector.BindEditor(data.Editor, sourcePath: ResolveScenarioSourcePath());
+        _scenarioInspector.SaveRequested    -= OnToolbarSave;
+        _scenarioInspector.SaveAsRequested  -= OnToolbarSaveAs;
+        _scenarioInspector.DiscardRequested -= OnToolbarDiscard;
+        _scenarioInspector.SaveRequested    += OnToolbarSave;
+        _scenarioInspector.SaveAsRequested  += OnToolbarSaveAs;
+        _scenarioInspector.DiscardRequested += OnToolbarDiscard;
 
         if (_scenarioGl is not null)
         {
@@ -577,10 +580,10 @@ public partial class MainWindow
     {
         _pendingScenario3D = null;
 
-        // Detach toolbar + inspector from the going-away editor so the dirty
-        // dot clears and proto/tile pickers stop dispatching commands at
-        // a stale ScenarioEditor instance.
-        _scenarioToolbar.Bind(null, sourcePath: null);
+        // Detach the inspector (save bar + command dispatch) from the going-away
+        // editor so the dirty dot clears and proto/tile pickers stop dispatching
+        // commands at a stale ScenarioEditor instance.
+        _scenarioInspector.BindEditor(null, sourcePath: null);
         _scenarioInspector.ExecuteCommand = null;
         _scenarioInspector.LoadProtoNamesAsync = null;
         _scenarioInspector.LoadTerrainTypesAsync = null;
