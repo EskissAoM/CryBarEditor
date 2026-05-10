@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.Media;
 using CryBar.Scenario;
 using CryBar.Scenario.Editor;
 using CryBar.Scenario.Editor.Commands;
@@ -7,6 +8,7 @@ using CryBarEditor.Classes;
 using CryBarEditor.Windows;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 
 namespace CryBarEditor.Controls;
 
@@ -30,6 +32,10 @@ public partial class ScenarioInspectorPanel : UserControl
     // would feed ghost commands into the editor).
     bool _suppressWaterChange;
     bool _suppressHeightChange;
+    bool _suppressEntityChange;
+
+    // Cached player options used by the entity ComboBox. Built once on first use.
+    static List<PlayerOption>? _playerOptions;
 
     void SelectBarClick(object? sender, RoutedEventArgs e) => SelectBarRequested?.Invoke();
 
@@ -75,6 +81,7 @@ public partial class ScenarioInspectorPanel : UserControl
         {
             _selectedSection.IsVisible = false;
             _tileEditPanel.IsVisible = false;
+            _entityEditPanel.IsVisible = false;
             _selectedFields.IsVisible = false;
             return;
         }
@@ -89,8 +96,8 @@ public partial class ScenarioInspectorPanel : UserControl
 
     void UpdateTileSelection(ScenarioPreviewData data)
     {
-        // Toggle which sub-panel is visible. (Entity panel arrives in Task 21.)
         _tileEditPanel.IsVisible = true;
+        _entityEditPanel.IsVisible = false;
         _selectedFields.IsVisible = false;
 
         var sel = data.Selection;
@@ -157,9 +164,9 @@ public partial class ScenarioInspectorPanel : UserControl
 
     void UpdateEntitySelection(ScenarioPreviewData data)
     {
-        // Entity edit panel arrives in Task 21; for now keep the read-only fields visible.
         _tileEditPanel.IsVisible = false;
-        _selectedFields.IsVisible = true;
+        _entityEditPanel.IsVisible = true;
+        _selectedFields.IsVisible = false;
 
         var sel = data.Selection;
         int count = sel.Entities.Count;
@@ -168,8 +175,9 @@ public partial class ScenarioInspectorPanel : UserControl
         var idToIdx = data.EntityIdToIndex;
 
         string? proto = null; bool protoMixed = false;
-        int? player = null; bool playerMixed = false;
-        bool positionMixed = false; System.Numerics.Vector3? position = null;
+        byte? player = null; bool playerMixed = false;
+        Vector3? position = null; bool positionMixed = false;
+        float? yaw = null; bool yawMixed = false;
 
         var lines = new System.Text.StringBuilder();
         foreach (uint id in sel.Entities)
@@ -184,25 +192,76 @@ public partial class ScenarioInspectorPanel : UserControl
             else if (!playerMixed && player != m.PlayerId) playerMixed = true;
 
             if (position is null) position = m.Position;
-            else if (!positionMixed && System.Numerics.Vector3.DistanceSquared(position.Value, m.Position) > 1e-4f)
+            else if (!positionMixed && Vector3.DistanceSquared(position.Value, m.Position) > 1e-4f)
                 positionMixed = true;
+
+            float ey = m.Rotation.ExtractYawDegrees();
+            if (yaw is null) yaw = ey;
+            else if (!yawMixed && System.Math.Abs(((ey - yaw.Value + 540f) % 360f) - 180f) > 0.1f)
+                yawMixed = true;
 
             if (count > 1) lines.AppendLine($"[{id}] {m.ProtoName}");
         }
 
-        string posText = position is null
-            ? "?"
-            : positionMixed
-                ? "MIXED"
-                : $"({position.Value.X:F2}, {position.Value.Y:F2}, {position.Value.Z:F2})";
+        // Populate proto button caption.
+        _entityProtoBtn.Content = protoMixed ? "MIXED" : (proto ?? "(none)");
 
-        _selectedFields.Text =
-            $"Proto: {(protoMixed ? "MIXED" : proto ?? "?")}\n" +
-            $"Player: {(playerMixed ? "MIXED" : player?.ToString() ?? "?")}\n" +
-            $"Position: {posText}";
+        // Player ComboBox: build options once, then select.
+        if (_entityPlayerCombo.ItemsSource is null)
+        {
+            _playerOptions ??= BuildPlayerOptions();
+            _entityPlayerCombo.ItemsSource = _playerOptions;
+        }
+        _suppressEntityChange = true;
+        if (playerMixed || player is null)
+            _entityPlayerCombo.SelectedIndex = -1;
+        else
+            _entityPlayerCombo.SelectedIndex = player.Value < _playerOptions!.Count ? player.Value : -1;
+        _suppressEntityChange = false;
+
+        // Position fields. MIXED -> blank.
+        _suppressEntityChange = true;
+        if (positionMixed || position is null)
+        {
+            _entityPosX.Value = null;
+            _entityPosY.Value = null;
+            _entityPosZ.Value = null;
+        }
+        else
+        {
+            _entityPosX.Value = (decimal)position.Value.X;
+            _entityPosY.Value = (decimal)position.Value.Y;
+            _entityPosZ.Value = (decimal)position.Value.Z;
+        }
+
+        if (yawMixed || yaw is null)
+            _entityYaw.Value = null;
+        else
+            _entityYaw.Value = (decimal)yaw.Value;
+        _suppressEntityChange = false;
 
         _selectedListButton.IsVisible = count > 1;
         if (count > 1) _selectedListText.Text = lines.ToString().TrimEnd();
+    }
+
+    static List<PlayerOption> BuildPlayerOptions()
+    {
+        var list = new List<PlayerOption>(PlayerColors.Count);
+        for (byte i = 0; i < PlayerColors.Count; i++)
+        {
+            var c = PlayerColors.GetRgb(i);
+            var brush = new SolidColorBrush(Color.FromRgb(
+                (byte)System.Math.Clamp(c.R * 255f, 0f, 255f),
+                (byte)System.Math.Clamp(c.G * 255f, 0f, 255f),
+                (byte)System.Math.Clamp(c.B * 255f, 0f, 255f)));
+            list.Add(new PlayerOption
+            {
+                PlayerId = i,
+                Label = $"Player {i}",
+                Brush = brush,
+            });
+        }
+        return list;
     }
 
     // ----- Tile edit handlers -----
@@ -357,6 +416,112 @@ public partial class ScenarioInspectorPanel : UserControl
         }
     }
 
+    // ----- Entity edit handlers -----
+
+    async void OnEntityProtoClick(object? sender, RoutedEventArgs e)
+    {
+        if (_data is null) return;
+        var sel = _data.Selection;
+        if (sel.Kind != ScenarioSelectionKind.Entities || sel.Entities.Count == 0) return;
+
+        // Proto cache is populated lazily by MainWindow on first open (Task 24).
+        // No-op until then; the user just sees nothing happen.
+        var protoNames = _data.ProtoNamesCache;
+        if (protoNames is null || protoNames.Count == 0) return;
+
+        // Preselect the first selected entity's current proto.
+        var idToIdx = _data.EntityIdToIndex;
+        int preselect = -1;
+        foreach (uint id in sel.Entities)
+        {
+            if (idToIdx.TryGetValue(id, out int idx))
+            {
+                int p = _data.Entities[idx].ProtoIndex;
+                if (p >= 0 && p < protoNames.Count) preselect = p;
+                break;
+            }
+        }
+
+        var owner = TopLevel.GetTopLevel(this) as Avalonia.Controls.Window;
+        if (owner is null) return;
+
+        var picker = new PickerWindow("Pick proto", protoNames, preselect >= 0 ? preselect : null);
+        await picker.ShowDialog(owner);
+
+        if (picker.PickedItem is null) return;
+        int newIdx = protoNames.IndexOf(picker.PickedItem);
+        if (newIdx < 0) return;
+
+        var ids = sel.Entities.ToArray();
+        var cmd = SetEntityProtos.Create(_data.Entities, ids, newIdx, protoNames[newIdx]);
+        ExecuteCommand?.Invoke(cmd);
+    }
+
+    void OnEntityPlayerChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressEntityChange) return;
+        if (_data is null) return;
+        var sel = _data.Selection;
+        if (sel.Kind != ScenarioSelectionKind.Entities || sel.Entities.Count == 0) return;
+
+        int sIdx = _entityPlayerCombo.SelectedIndex;
+        if (sIdx < 0 || _playerOptions is null || sIdx >= _playerOptions.Count) return;
+
+        byte newPlayer = _playerOptions[sIdx].PlayerId;
+        var ids = sel.Entities.ToArray();
+        var cmd = SetEntityPlayers.Create(_data.Entities, ids, newPlayer);
+        ExecuteCommand?.Invoke(cmd);
+    }
+
+    void OnEntityPosChanged(object? sender, NumericUpDownValueChangedEventArgs e)
+    {
+        if (_suppressEntityChange) return;
+        if (_data is null) return;
+        var sel = _data.Selection;
+        if (sel.Kind != ScenarioSelectionKind.Entities || sel.Entities.Count == 0) return;
+
+        if (_entityPosX.Value is not decimal dx) return;
+        if (_entityPosY.Value is not decimal dy) return;
+        if (_entityPosZ.Value is not decimal dz) return;
+
+        var pos = new Vector3((float)dx, (float)dy, (float)dz);
+        var ids = sel.Entities.ToArray();
+        var newPos = new Vector3[ids.Length];
+        for (int i = 0; i < ids.Length; i++) newPos[i] = pos;
+
+        var cmd = SetEntityPositions.Create(_data.Entities, ids, newPos);
+        ExecuteCommand?.Invoke(cmd);
+    }
+
+    void OnEntityYawChanged(object? sender, NumericUpDownValueChangedEventArgs e)
+    {
+        if (_suppressEntityChange) return;
+        if (_data is null) return;
+        var sel = _data.Selection;
+        if (sel.Kind != ScenarioSelectionKind.Entities || sel.Entities.Count == 0) return;
+
+        if (_entityYaw.Value is not decimal dyaw) return;
+
+        var rot = Matrix3x3.FromYawDegrees((float)dyaw);
+        var ids = sel.Entities.ToArray();
+        var newRot = new Matrix3x3[ids.Length];
+        for (int i = 0; i < ids.Length; i++) newRot[i] = rot;
+
+        var cmd = SetEntityRotations.Create(_data.Entities, ids, newRot);
+        ExecuteCommand?.Invoke(cmd);
+    }
+
+    void OnEntityDeleteClick(object? sender, RoutedEventArgs e)
+    {
+        if (_data is null) return;
+        var sel = _data.Selection;
+        if (sel.Kind != ScenarioSelectionKind.Entities || sel.Entities.Count == 0) return;
+
+        var ids = sel.Entities.ToArray();
+        var cmd = DeleteEntities.Create(_data.Entities, ids);
+        ExecuteCommand?.Invoke(cmd);
+    }
+
     public void SetManualBarStatus(string? path, bool loadFailed)
     {
         if (path is null)
@@ -373,3 +538,13 @@ public partial class ScenarioInspectorPanel : UserControl
         _manualBarPathText.IsVisible = true;
     }
 }
+
+// Bound DataTemplate item for the entity Player ComboBox; uses PlayerColors
+// for the swatch fill so renderer + inspector pick the same color.
+public sealed class PlayerOption
+{
+    public required byte PlayerId { get; init; }
+    public required string Label { get; init; }
+    public required IBrush Brush { get; init; }
+}
+

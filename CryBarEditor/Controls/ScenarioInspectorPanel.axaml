@@ -98,6 +98,59 @@
                                FontFamily="Cascadia Code,Consolas" TextWrapping="Wrap"
                                IsVisible="False"/>
 
+                    <!-- Entity edit controls. Visible only when Selection.Kind == Entities. -->
+                    <StackPanel x:Name="_entityEditPanel" Spacing="6" IsVisible="False">
+                        <Grid ColumnDefinitions="Auto,*">
+                            <TextBlock Grid.Column="0" Text="Proto" Margin="0,0,8,0"
+                                       VerticalAlignment="Center" Foreground="#ddd"/>
+                            <Button Grid.Column="1" x:Name="_entityProtoBtn"
+                                    HorizontalAlignment="Stretch"
+                                    Click="OnEntityProtoClick" Content="(none)"
+                                    Background="#2c3a4f" Foreground="#cfd8e8" Padding="8,4"/>
+                        </Grid>
+                        <Grid ColumnDefinitions="Auto,*">
+                            <TextBlock Grid.Column="0" Text="Player" Margin="0,0,8,0"
+                                       VerticalAlignment="Center" Foreground="#ddd"/>
+                            <ComboBox Grid.Column="1" x:Name="_entityPlayerCombo"
+                                      HorizontalAlignment="Stretch"
+                                      SelectionChanged="OnEntityPlayerChanged">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="controls:PlayerOption">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <Rectangle Width="14" Height="14" Fill="{Binding Brush}"/>
+                                            <TextBlock Text="{Binding Label}"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                        </Grid>
+                        <Grid ColumnDefinitions="Auto,*,*,*">
+                            <TextBlock Grid.Column="0" Text="Position" Margin="0,0,8,0"
+                                       VerticalAlignment="Center" Foreground="#ddd"/>
+                            <NumericUpDown Grid.Column="1" x:Name="_entityPosX"
+                                           FormatString="0.00" Increment="0.5"
+                                           ValueChanged="OnEntityPosChanged"/>
+                            <NumericUpDown Grid.Column="2" x:Name="_entityPosY"
+                                           FormatString="0.00" Increment="0.5"
+                                           ValueChanged="OnEntityPosChanged" Margin="4,0,0,0"/>
+                            <NumericUpDown Grid.Column="3" x:Name="_entityPosZ"
+                                           FormatString="0.00" Increment="0.5"
+                                           ValueChanged="OnEntityPosChanged" Margin="4,0,0,0"/>
+                        </Grid>
+                        <Grid ColumnDefinitions="Auto,*">
+                            <TextBlock Grid.Column="0" Text="Rotation Y" Margin="0,0,8,0"
+                                       VerticalAlignment="Center" Foreground="#ddd"/>
+                            <NumericUpDown Grid.Column="1" x:Name="_entityYaw"
+                                           FormatString="0.0"
+                                           Minimum="-360" Maximum="360" Increment="5"
+                                           ValueChanged="OnEntityYawChanged"/>
+                        </Grid>
+                        <Button x:Name="_entityDeleteBtn" Content="Delete"
+                                Click="OnEntityDeleteClick"
+                                HorizontalAlignment="Stretch" Margin="0,2,0,0"
+                                Background="#5a2c2c" Foreground="#f1d6d6" Padding="8,4"/>
+                    </StackPanel>
+
                     <!-- Tile edit controls. Visible only when Selection.Kind == Tiles. -->
                     <StackPanel x:Name="_tileEditPanel" Spacing="6" IsVisible="False">
                         <Grid ColumnDefinitions="Auto,*">
