@@ -19,7 +19,7 @@ public sealed class ScenarioPreviewData : IDisposable
     public required ScenarioTextureSet TextureSet { get; init; }
     public required TerrainMesh TerrainMesh { get; init; }
     public WaterMesh? WaterMesh { get; init; }
-    public required EntityMarker[] Entities { get; init; }
+    public required ScenarioEntity[] Entities { get; init; }
 
     bool[] _sliceReady = [];
     public IReadOnlyList<bool> SliceReady => _sliceReady;

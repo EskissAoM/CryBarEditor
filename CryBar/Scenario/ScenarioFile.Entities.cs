@@ -185,7 +185,7 @@ public partial class ScenarioFile
             writer.WriteAttributeString("protoIndex", protoIndex.ToString());
 
         // File order is (gameZ, gameY, gameX); XML attributes use game-axis names
-        // so x/z here line up with EntityMarker.Position.X / .Z downstream.
+        // so x/z here line up with ScenarioEntity.Position.X / .Z downstream.
         var gameZ = BitConverter.ToSingle(h1.Slice(posOff, 4));
         var gameY = BitConverter.ToSingle(h1.Slice(posOff + 4, 4));
         var gameX = BitConverter.ToSingle(h1.Slice(posOff + 8, 4));

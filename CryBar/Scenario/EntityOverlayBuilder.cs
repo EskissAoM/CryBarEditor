@@ -5,7 +5,7 @@ namespace CryBar.Scenario;
 
 public static class EntityOverlayBuilder
 {
-    public static EntityMarker[] Build(ScenarioFile scenario)
+    public static ScenarioEntity[] Build(ScenarioFile scenario)
     {
         if (scenario is null || !scenario.Parsed) return [];
 
@@ -30,13 +30,13 @@ public static class EntityOverlayBuilder
         return ParseZ1(z1.Data, protoNames);
     }
 
-    static EntityMarker[] ParseZ1(byte[] data, List<string> protoNames)
+    static ScenarioEntity[] ParseZ1(byte[] data, List<string> protoNames)
     {
         var span = data.AsSpan();
         if (span.Length < 5) return [];
 
         var entityCount = BinaryPrimitives.ReadUInt32LittleEndian(span);
-        var result = new List<EntityMarker>((int)Math.Min(entityCount, 10000));
+        var result = new List<ScenarioEntity>((int)Math.Min(entityCount, 10000));
         int off = 5;
 
         for (uint ei = 0; ei < entityCount && off + 4 <= span.Length; ei++)
@@ -59,12 +59,15 @@ public static class EntityOverlayBuilder
                     if (TryParseH1(sub, out var pos, out var playerId, out var protoIndex))
                     {
                         var name = (protoIndex >= 0 && protoIndex < protoNames.Count) ? protoNames[protoIndex] : "?";
-                        result.Add(new EntityMarker
+                        result.Add(new ScenarioEntity
                         {
                             Position = pos,
                             ProtoName = name,
-                            PlayerId = playerId,
-                            EntityId = entityId
+                            ProtoIndex = protoIndex,
+                            PlayerId = (byte)playerId,
+                            EntityId = entityId,
+                            Rotation = Matrix3x3.Identity,    // Task 2 fills this from H1 bytes
+                            OtherFields = []                  // Task 2 fills this
                         });
                     }
                 }
