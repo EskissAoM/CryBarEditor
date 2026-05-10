@@ -628,14 +628,18 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             return;
         }
 
-        // Allocate before draining the queue so queued slice uploads find the
-        // texture array storage ready. Without this, any TexSubImage3D arriving
-        // before the first render's TexImage3D writes to undefined storage and
-        // is silently lost.
+        // Allocate texture array once per scenario (or whenever slice count grew).
+        // _meshUploaded is flipped on edits to force mesh re-upload, but it must NOT
+        // re-allocate the texture array -- that would wipe all loaded DDT slices back
+        // to the olive placeholder. Track allocation separately.
+        int neededSlices = Math.Max(1, _data.TextureSet.Names.Count);
+        if (_allocatedSlices < neededSlices)
+        {
+            EnsureTextureArrayAllocated(gl, _data);
+        }
         if (!_meshUploaded)
         {
             UploadMesh(gl, _data);
-            EnsureTextureArrayAllocated(gl, _data);
             _meshUploaded = true;
         }
 
