@@ -72,7 +72,7 @@ public sealed class ScenarioPreviewData : IDisposable
         var textureSet = ScenarioTextureSet.Build(terrain);
         var mesh = TerrainMeshBuilder.Build(terrain, textureSet);
         var water = WaterMeshBuilder.Build(terrain);
-        var entities = EntityOverlayBuilder.Build(scenario);
+        var entities = ScenarioEntityListBuilder.Build(scenario);
 
         var data = new ScenarioPreviewData
         {

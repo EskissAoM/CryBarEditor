@@ -3,7 +3,7 @@ using System.Numerics;
 
 namespace CryBar.Scenario;
 
-public static class EntityOverlayBuilder
+public static class ScenarioEntityListBuilder
 {
     public static ScenarioEntity[] Build(ScenarioFile scenario)
     {
@@ -56,7 +56,7 @@ public static class EntityOverlayBuilder
                 if (marker == "H1" && size >= 82)
                 {
                     var sub = span.Slice(off + 6, (int)size);
-                    if (TryParseH1(sub, out var pos, out var playerId, out var protoIndex))
+                    if (TryParseH1(sub, out var pos, out var playerId, out var protoIndex, out var rotation, out var otherFields))
                     {
                         var name = (protoIndex >= 0 && protoIndex < protoNames.Count) ? protoNames[protoIndex] : "?";
                         result.Add(new ScenarioEntity
@@ -66,8 +66,8 @@ public static class EntityOverlayBuilder
                             ProtoIndex = protoIndex,
                             PlayerId = (byte)playerId,
                             EntityId = entityId,
-                            Rotation = Matrix3x3.Identity,    // Task 2 fills this from H1 bytes
-                            OtherFields = []                  // Task 2 fills this
+                            Rotation = rotation,
+                            OtherFields = otherFields
                         });
                     }
                 }
@@ -79,11 +79,21 @@ public static class EntityOverlayBuilder
         return result.ToArray();
     }
 
-    static bool TryParseH1(ReadOnlySpan<byte> h1, out Vector3 pos, out int playerId, out int protoIndex)
+    static bool TryParseH1(
+        ReadOnlySpan<byte> h1,
+        out Vector3 pos,
+        out int playerId,
+        out int protoIndex,
+        out Matrix3x3 rotation,
+        out byte[] otherFields)
     {
-        pos = default; playerId = 0; protoIndex = -1;
+        pos = default;
+        playerId = 0;
+        protoIndex = -1;
+        rotation = Matrix3x3.Identity;
+        otherFields = [];
 
-        if (!ScenarioFile.GetEntityOffsets(h1, out int posOff, out _, out int enEnd))
+        if (!ScenarioFile.GetEntityOffsets(h1, out int posOff, out int rotOff, out int enEnd))
             return false;
 
         // playerId is a single byte at offset 14, NOT an int32 -- reading 4 bytes
@@ -102,6 +112,25 @@ public static class EntityOverlayBuilder
             BitConverter.ToSingle(h1.Slice(posOff + 8, 4)),
             BitConverter.ToSingle(h1.Slice(posOff + 4, 4)),
             BitConverter.ToSingle(h1.Slice(posOff, 4)));
+
+        // Rotation matrix: 9 LE floats (36 bytes) immediately after the 12-byte position.
+        // Stored in game-space LH; do not reorient here. Round-trip must be byte-identical.
+        if (rotOff + 36 > h1.Length) return false;
+        rotation = new Matrix3x3(
+            BinaryPrimitives.ReadSingleLittleEndian(h1.Slice(rotOff, 4)),
+            BinaryPrimitives.ReadSingleLittleEndian(h1.Slice(rotOff + 4, 4)),
+            BinaryPrimitives.ReadSingleLittleEndian(h1.Slice(rotOff + 8, 4)),
+            BinaryPrimitives.ReadSingleLittleEndian(h1.Slice(rotOff + 12, 4)),
+            BinaryPrimitives.ReadSingleLittleEndian(h1.Slice(rotOff + 16, 4)),
+            BinaryPrimitives.ReadSingleLittleEndian(h1.Slice(rotOff + 20, 4)),
+            BinaryPrimitives.ReadSingleLittleEndian(h1.Slice(rotOff + 24, 4)),
+            BinaryPrimitives.ReadSingleLittleEndian(h1.Slice(rotOff + 28, 4)),
+            BinaryPrimitives.ReadSingleLittleEndian(h1.Slice(rotOff + 32, 4)));
+
+        // OtherFields: everything after the rotation matrix up to the end of the H1 sub-block.
+        // Includes optional bool, P1/P2/P3 sub-sections, and trailing ConstP1 records.
+        int trailOff = rotOff + 36;
+        otherFields = trailOff < h1.Length ? h1.Slice(trailOff).ToArray() : [];
         return true;
     }
 }
