@@ -1,0 +1,115 @@
+using System.Buffers.Binary;
+using CryBar.Scenario.Writers;
+
+namespace CryBar.Scenario;
+
+public partial class ScenarioFile
+{
+    /// <summary>
+    /// Replaces the J1.TN and J1.Z1 section bytes with newly-emitted bytes from
+    /// <see cref="TnWriter"/> and <see cref="Z1Writer"/>, using the supplied
+    /// parsed views as the source of truth. After flush, <see cref="ToBytes"/>
+    /// produces the on-disk body that the editor's Save then wraps with
+    /// <c>BarCompression.CompressL33t</c>.
+    ///
+    /// The Z1 version byte and per-entity flags word are captured from the
+    /// existing Z1 bytes so round-trip is byte-identical for un-edited fixtures.
+    /// Flags are aligned to the supplied entity list by entity id; entities
+    /// whose id is not present in the source Z1 envelope default to flags=0.
+    /// </summary>
+    public void FlushParsedViews(ScenarioTerrain terrain, IReadOnlyList<ScenarioEntity> entities)
+    {
+        ArgumentNullException.ThrowIfNull(terrain);
+        ArgumentNullException.ThrowIfNull(entities);
+        if (!Parsed) return;
+
+        var j1Section = FindSection("J1");
+        if (j1Section is null) return;
+
+        var j1 = new ScenarioJ1(j1Section.Data);
+        if (!j1.Parsed) return;
+
+        // Resolve proto-name table (first TM/PT sub-section)
+        List<string> protoNames = [];
+        foreach (var sub in j1.Sections)
+        {
+            if (sub.Marker == "TM" || sub.Marker == "PT")
+            {
+                protoNames = ReadTmStrings(sub.Data);
+                break;
+            }
+        }
+
+        // Locate TN and Z1 sub-sections in J1
+        ScenarioSection? tn = null;
+        ScenarioSection? z1 = null;
+        foreach (var sub in j1.Sections)
+        {
+            if (tn is null && sub.Marker == "TN") tn = sub;
+            else if (z1 is null && sub.Marker == "Z1") z1 = sub;
+            if (tn is not null && z1 is not null) break;
+        }
+
+        // Replace TN bytes
+        if (tn is not null)
+            tn.Data = TnWriter.Write(terrain);
+
+        // Replace Z1 bytes -- capture original version byte and per-id flags first
+        if (z1 is not null)
+        {
+            var (version, flagsById) = ReadZ1VersionAndFlags(z1.Data);
+
+            ushort[]? flags = null;
+            if (flagsById.Count > 0)
+            {
+                flags = new ushort[entities.Count];
+                for (int i = 0; i < entities.Count; i++)
+                    flagsById.TryGetValue((ushort)entities[i].EntityId, out flags[i]);
+            }
+
+            z1.Data = Z1Writer.Write(entities, protoNames, version, flags);
+        }
+
+        // Re-emit the J1 sub-section list back into the top-level J1 section bytes.
+        j1Section.Data = j1.ToBytes();
+    }
+
+    /// <summary>
+    /// Walks an existing Z1 body and extracts the version byte plus a map of
+    /// entity_id -> flags word from each per-entity envelope. Mirrors the
+    /// envelope walk in <see cref="ScenarioEntityListBuilder"/> but only
+    /// reads the 4-byte (id, flags) header.
+    /// </summary>
+    static (byte version, Dictionary<ushort, ushort> flagsById) ReadZ1VersionAndFlags(byte[] z1Body)
+    {
+        var flags = new Dictionary<ushort, ushort>();
+        if (z1Body.Length < 5) return (0, flags);
+
+        var span = z1Body.AsSpan();
+        var entityCount = BinaryPrimitives.ReadUInt32LittleEndian(span);
+        var version = span[4];
+
+        int off = 5;
+        for (uint ei = 0; ei < entityCount && off + 4 <= span.Length; ei++)
+        {
+            var entityId = BinaryPrimitives.ReadUInt16LittleEndian(span.Slice(off));
+            var flagsWord = BinaryPrimitives.ReadUInt16LittleEndian(span.Slice(off + 2));
+            flags[entityId] = flagsWord;
+            off += 4;
+
+            // Skip the H1 (and any other) sub-sections in this envelope until we
+            // hit a non-printable marker.
+            while (off + 6 <= span.Length)
+            {
+                byte b0 = span[off], b1 = span[off + 1];
+                if (b0 < 0x20 || b0 > 0x7E || b1 < 0x20 || b1 > 0x7E) break;
+
+                var size = BinaryPrimitives.ReadUInt32LittleEndian(span.Slice(off + 2));
+                if (size > 100_000 || off + 6 + size > (uint)span.Length) break;
+                off += 6 + (int)size;
+            }
+        }
+
+        return (version, flags);
+    }
+}
