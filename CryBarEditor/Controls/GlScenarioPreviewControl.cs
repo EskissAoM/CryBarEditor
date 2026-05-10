@@ -200,7 +200,14 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (_data is not null)
             _data.Selection.Changed -= OnSelectionChanged;
 
+        // Cancel any in-flight gesture so cursor / ring color / preview offsets
+        // and timer state don't leak across scenarios.
+        if (_moveMode || _holdArmed) CancelMoveMode();
+        if (_rotateMode || _rotateHoldArmed) CancelRotateMode();
+        _previewOffset.Clear();
+
         _data = data;
+        _entityCount = 0;
         _meshUploaded = false;
         _waterUploaded = false;
         _entitiesUploaded = false;

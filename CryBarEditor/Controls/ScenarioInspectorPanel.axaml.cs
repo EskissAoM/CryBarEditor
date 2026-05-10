@@ -278,79 +278,75 @@ public partial class ScenarioInspectorPanel : UserControl
 
     async void OnTileTextureClick(object? sender, RoutedEventArgs e)
     {
-        if (_data is null) return;
-        var sel = _data.Selection;
-        if (sel.Kind != ScenarioSelectionKind.Tiles || sel.Tiles.Count == 0) return;
-
-        var terrain = _data.Terrain;
-
-        // Try the full game-wide terrain list first (cached, then loaded lazily
-        // from terrain_types.xml.XMB). Fall back to a synthetic cache built from
-        // the scenario's own TerrainGroups when the XMB isn't reachable -- the
-        // picker still works, just limited to swapping among existing entries.
-        var cache = _data.TerrainTypesCache;
-        if (cache is null && LoadTerrainTypesAsync is not null)
-            cache = await LoadTerrainTypesAsync();
-        cache ??= BuildScenarioFallbackCache(terrain);
-        if (cache.All.Count == 0) return;
-
-        // Build picker items from cache.All (already (group, texture) tuples in display order).
-        var items = new List<PickerItem>(cache.All.Count);
-        foreach (var (group, tex) in cache.All)
-            items.Add(new PickerItem { Group = group, Display = tex });
-
-        // Preselect the first selected tile's current (group, texture) by NAME match
-        // against cache.All -- the cache index won't match the scenario's (g, s).
-        int firstTileIdx = sel.Tiles.First();
-        byte curG = terrain.TileGroups[firstTileIdx];
-        ushort curS = terrain.TileSubs[firstTileIdx];
-        string? curGroupName = curG < terrain.TerrainGroups.Length
-            ? terrain.TerrainGroups[curG].Name : null;
-        string? curTexName = curG < terrain.TerrainGroups.Length
-            && curS < terrain.TerrainGroups[curG].Textures.Length
-            ? terrain.TerrainGroups[curG].Textures[curS] : null;
-        int preselect = -1;
-        if (curGroupName is not null && curTexName is not null)
+        try
         {
-            for (int i = 0; i < cache.All.Count; i++)
+            var data = _data;
+            if (data is null) return;
+            var sel = data.Selection;
+            if (sel.Kind != ScenarioSelectionKind.Tiles || sel.Tiles.Count == 0) return;
+
+            var terrain = data.Terrain;
+
+            // Try game-wide list (cached, then lazy-loaded). Fall back to a synthetic
+            // cache built from scenario's own TerrainGroups when XMB isn't reachable.
+            var cache = data.TerrainTypesCache;
+            if (cache is null && LoadTerrainTypesAsync is not null)
+                cache = await LoadTerrainTypesAsync();
+            // Re-check data after the await; user may have navigated away.
+            if (!ReferenceEquals(data, _data)) return;
+            cache ??= BuildScenarioFallbackCache(terrain);
+            if (cache.All.Count == 0) return;
+
+            var items = new List<PickerItem>(cache.All.Count);
+            foreach (var (group, tex) in cache.All)
+                items.Add(new PickerItem { Group = group, Display = tex });
+
+            int firstTileIdx = sel.Tiles.First();
+            byte curG = terrain.TileGroups[firstTileIdx];
+            ushort curS = terrain.TileSubs[firstTileIdx];
+            string? curGroupName = curG < terrain.TerrainGroups.Length
+                ? terrain.TerrainGroups[curG].Name : null;
+            string? curTexName = curG < terrain.TerrainGroups.Length
+                && curS < terrain.TerrainGroups[curG].Textures.Length
+                ? terrain.TerrainGroups[curG].Textures[curS] : null;
+            int preselect = -1;
+            if (curGroupName is not null && curTexName is not null)
             {
-                if (cache.All[i].Group == curGroupName && cache.All[i].Texture == curTexName)
+                for (int i = 0; i < cache.All.Count; i++)
                 {
-                    preselect = i; break;
+                    if (cache.All[i].Group == curGroupName && cache.All[i].Texture == curTexName)
+                    {
+                        preselect = i; break;
+                    }
                 }
             }
+
+            var owner = TopLevel.GetTopLevel(this) as Avalonia.Controls.Window;
+            if (owner is null) return;
+
+            var picker = new PickerWindow("Pick tile texture", items, preselect >= 0 ? preselect : null);
+            await picker.ShowDialog(owner);
+            if (!ReferenceEquals(data, _data)) return;
+
+            if (picker.PickedIndex is not int idx) return;
+            var (newGroupName, newTexName) = cache.All[idx];
+
+            var (newG, newS) = ResolveOrAppendTerrain(terrain, newGroupName, newTexName);
+
+            // For newly-appended pairs the GL renderer detects the slice-count growth
+            // on next frame, fires TextureArrayResized, and the host re-runs the load.
+            data.TextureSet.EnsureSlot(newG, newS, newTexName, out var addedSliceIndex);
+            if (addedSliceIndex is not null)
+                data.EnsureSlotCapacity(data.TextureSet.Names.Count);
+
+            var tileList = sel.Tiles.ToArray();
+            var cmd = SetTileTextures.Create(terrain, tileList, newG, newS);
+            ExecuteCommand?.Invoke(cmd);
         }
-
-        var owner = TopLevel.GetTopLevel(this) as Avalonia.Controls.Window;
-        if (owner is null) return;
-
-        var picker = new PickerWindow("Pick tile texture", items, preselect >= 0 ? preselect : null);
-        await picker.ShowDialog(owner);
-
-        if (picker.PickedIndex is not int idx) return;
-        var (newGroupName, newTexName) = cache.All[idx];
-
-        // Resolve in scenario's TerrainGroups; append (group/texture) if missing.
-        // ResolveOrAppendTerrain mutates terrain.TerrainGroups in place so TnWriter
-        // emits the extended array on save.
-        var (newG, newS) = ResolveOrAppendTerrain(terrain, newGroupName, newTexName);
-
-        // Mirror the (g, s) into the cached TextureSet so the mesh rebuild does
-        // not return slice = -1 for the picked tiles. For newly-appended pairs
-        // the GL renderer detects the slice-count growth on next frame, fires
-        // its TextureArrayResized event, and the host re-runs the full texture
-        // load -- no explicit one-shot request needed here.
-        _data.TextureSet.EnsureSlot(newG, newS, newTexName, out var addedSliceIndex);
-        if (addedSliceIndex is not null)
+        catch (System.Exception ex)
         {
-            // Grow the per-slice tracking arrays so the texture loader doesn't
-            // index past the original size when the reload fires.
-            _data.EnsureSlotCapacity(_data.TextureSet.Names.Count);
+            ShowInspectorError("Tile texture pick failed:\n" + ex.Message);
         }
-
-        var tileList = sel.Tiles.ToArray();
-        var cmd = SetTileTextures.Create(terrain, tileList, newG, newS);
-        ExecuteCommand?.Invoke(cmd);
     }
 
     // Append-only: never reindex existing entries (existing tiles keep their (g, s)).
@@ -502,45 +498,46 @@ public partial class ScenarioInspectorPanel : UserControl
 
     async void OnEntityProtoClick(object? sender, RoutedEventArgs e)
     {
-        if (_data is null) return;
-        var sel = _data.Selection;
-        if (sel.Kind != ScenarioSelectionKind.Entities || sel.Entities.Count == 0) return;
-
-        // Try the full game-wide proto list first (cached, then loaded lazily
-        // from proto.xml.XMB). Fall back to the scenario's own TM entries if
-        // proto.xml isn't reachable (no FileIndex, no game install indexed,
-        // or parse failure) -- the picker still works, just limited to swapping
-        // among existing proto types.
-        var protoNames = _data.ProtoNamesCache;
-        if (protoNames is null && LoadProtoNamesAsync is not null)
-            protoNames = await LoadProtoNamesAsync();
-        protoNames ??= _data.ProtoTable;
-        if (protoNames.Count == 0) return;
-
-        // Preselect the first selected entity's current proto by NAME (the index
-        // in protoNames generally won't match the scenario's TM index).
-        string? curName = null;
-        var idToIdx = _data.EntityIdToIndex;
-        foreach (uint id in sel.Entities)
+        try
         {
-            if (idToIdx.TryGetValue(id, out int idx)) { curName = _data.Entities[idx].ProtoName; break; }
+            var data = _data;
+            if (data is null) return;
+            var sel = data.Selection;
+            if (sel.Kind != ScenarioSelectionKind.Entities || sel.Entities.Count == 0) return;
+
+            var protoNames = data.ProtoNamesCache;
+            if (protoNames is null && LoadProtoNamesAsync is not null)
+                protoNames = await LoadProtoNamesAsync();
+            if (!ReferenceEquals(data, _data)) return;
+            protoNames ??= data.ProtoTable;
+            if (protoNames.Count == 0) return;
+
+            string? curName = null;
+            var idToIdx = data.EntityIdToIndex;
+            foreach (uint id in sel.Entities)
+            {
+                if (idToIdx.TryGetValue(id, out int idx)) { curName = data.Entities[idx].ProtoName; break; }
+            }
+            int preselect = curName is not null ? protoNames.IndexOf(curName) : -1;
+
+            var owner = TopLevel.GetTopLevel(this) as Avalonia.Controls.Window;
+            if (owner is null) return;
+
+            var picker = new PickerWindow("Pick proto", protoNames, preselect >= 0 ? preselect : null);
+            await picker.ShowDialog(owner);
+            if (!ReferenceEquals(data, _data)) return;
+
+            if (picker.PickedItem is null) return;
+            var newProtoName = picker.PickedItem;
+
+            var ids = sel.Entities.ToArray();
+            var cmd = SetEntityProtos.Create(data.Entities, ids, newProtoName, data.ProtoTable);
+            ExecuteCommand?.Invoke(cmd);
         }
-        int preselect = curName is not null ? protoNames.IndexOf(curName) : -1;
-
-        var owner = TopLevel.GetTopLevel(this) as Avalonia.Controls.Window;
-        if (owner is null) return;
-
-        var picker = new PickerWindow("Pick proto", protoNames, preselect >= 0 ? preselect : null);
-        await picker.ShowDialog(owner);
-
-        if (picker.PickedItem is null) return;
-        var newProtoName = picker.PickedItem;
-
-        var ids = sel.Entities.ToArray();
-        // SetEntityProtos.Create resolves the name against ProtoTable, appending
-        // if it's a new game-wide proto not yet referenced by this scenario.
-        var cmd = SetEntityProtos.Create(_data.Entities, ids, newProtoName, _data.ProtoTable);
-        ExecuteCommand?.Invoke(cmd);
+        catch (System.Exception ex)
+        {
+            ShowInspectorError("Entity proto pick failed:\n" + ex.Message);
+        }
     }
 
     void OnEntityPlayerChanged(object? sender, SelectionChangedEventArgs e)
@@ -663,6 +660,14 @@ public partial class ScenarioInspectorPanel : UserControl
     {
         if (string.IsNullOrEmpty(path) || path.Length <= max) return path;
         return "..." + path[^(max - 3)..];
+    }
+
+    async void ShowInspectorError(string message)
+    {
+        var owner = TopLevel.GetTopLevel(this) as Avalonia.Controls.Window;
+        if (owner is null) return;
+        var dlg = new Prompt(PromptType.Error, "Error", message);
+        await dlg.ShowDialog(owner);
     }
 
     void OnSaveClick(object? sender, RoutedEventArgs e) => SaveRequested?.Invoke();

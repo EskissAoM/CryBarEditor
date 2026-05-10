@@ -73,21 +73,26 @@ public sealed class ScenarioSelection
 
     // Pure additive: never removes. Used by shift-click box selection to fold a
     // batch of items into the current selection without disturbing the anchor.
+    // Materialize first so an empty input doesn't wipe the user's tile selection.
     public void AddEntities(System.Collections.Generic.IEnumerable<uint> ids)
     {
+        var list = ids as System.Collections.Generic.ICollection<uint> ?? new List<uint>(ids);
+        if (list.Count == 0) return;
         bool tilesCleared = _tiles.Count > 0;
         if (tilesCleared) _tiles.Clear();
         bool changed = tilesCleared;
-        foreach (var id in ids) changed |= _entities.Add(id);
+        foreach (var id in list) changed |= _entities.Add(id);
         if (changed) Changed?.Invoke();
     }
 
     public void AddTiles(System.Collections.Generic.IEnumerable<int> idxs)
     {
+        var list = idxs as System.Collections.Generic.ICollection<int> ?? new List<int>(idxs);
+        if (list.Count == 0) return;
         bool entitiesCleared = _entities.Count > 0;
         if (entitiesCleared) _entities.Clear();
         bool changed = entitiesCleared;
-        foreach (var i in idxs) changed |= _tiles.Add(i);
+        foreach (var i in list) changed |= _tiles.Add(i);
         if (changed) Changed?.Invoke();
     }
 

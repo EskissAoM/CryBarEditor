@@ -134,11 +134,18 @@ public static class Z1Writer
             }
         }
 
-        // Old format: inline at suffix start.
+        // Old format: first u32 only when bytes 0-1 are non-printable, mirroring
+        // the parser's TryReadProtoIndex inline path. Without this guard we'd
+        // overwrite the marker bytes of any other sub-section that happens to be
+        // first in the suffix (Z2, K3, etc.).
         if (suffix.Length >= 8)
         {
-            BinaryPrimitives.WriteUInt32LittleEndian(suffix.Slice(0, 4), value);
-            BinaryPrimitives.WriteUInt32LittleEndian(suffix.Slice(4, 4), value);
+            byte b0 = suffix[0], b1 = suffix[1];
+            if (b0 < 0x20 || b0 > 0x7E || b1 < 0x20 || b1 > 0x7E)
+            {
+                BinaryPrimitives.WriteUInt32LittleEndian(suffix.Slice(0, 4), value);
+                BinaryPrimitives.WriteUInt32LittleEndian(suffix.Slice(4, 4), value);
+            }
         }
     }
 }

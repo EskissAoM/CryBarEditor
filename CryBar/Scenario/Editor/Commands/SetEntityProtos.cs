@@ -29,6 +29,8 @@ public sealed class SetEntityProtos : IScenarioCommand
         string newProtoName,
         List<string> protoTable)
     {
+        if (ids.Count == 0) return null;
+
         int newProtoIndex = protoTable.IndexOf(newProtoName);
         bool appended = false;
         if (newProtoIndex < 0)

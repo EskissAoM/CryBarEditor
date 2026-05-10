@@ -94,6 +94,9 @@ public sealed class ScenarioEditor
     }
 
     // Rewinds all commands and clears both stacks; fires Changed once.
+    // Decrements _generation per undo so IsDirty reflects reality vs. disk:
+    // session-start state may not equal saved state (eviction, branched-history),
+    // and pretending IsDirty=false in those cases would mask data loss on Save.
     public void Discard()
     {
         while (_undo.Count > 0)
@@ -101,9 +104,9 @@ public sealed class ScenarioEditor
             var cmd = _undo.Last!.Value;
             _undo.RemoveLast();
             cmd.Undo(Terrain, Entities);
+            _generation--;
         }
         _redo.Clear();
-        _generation = _savedGeneration;
         LastChange = null;
         Changed?.Invoke();
     }
