@@ -234,4 +234,56 @@ public class ScenarioEditorTests
         Assert.Equal(1, changedFires);
         Assert.Equal("path", editor.SavePath);
     }
+
+    [Fact]
+    public void LastChange_AfterUndo_IsTheUndoneCommand()
+    {
+        var ed = MakeEditor();
+        var a = new FakeCommand("a", RenderHint.EntityField);
+        var b = new FakeCommand("b", RenderHint.TerrainTexture);
+        ed.Execute(a);
+        ed.Execute(b);
+
+        ed.Undo();
+
+        Assert.Same(b, ed.LastChange);  // not 'a' (the next-on-undo-stack)
+    }
+
+    [Fact]
+    public void LastChange_AfterRedo_IsTheRedoneCommand()
+    {
+        var ed = MakeEditor();
+        var a = new FakeCommand("a");
+        ed.Execute(a);
+        ed.Undo();
+
+        ed.Redo();
+
+        Assert.Same(a, ed.LastChange);
+    }
+
+    [Fact]
+    public void LastChange_AfterDiscard_IsNull()
+    {
+        var ed = MakeEditor();
+        ed.Execute(new FakeCommand("a"));
+        ed.Discard();
+        Assert.Null(ed.LastChange);
+    }
+
+    [Fact]
+    public void IsDirty_StaysTrue_WhenExecuteClearsRedoPastSavedGeneration()
+    {
+        var ed = MakeEditor();
+        ed.Execute(new FakeCommand("a"));
+        ed.MarkSaved("/tmp/foo.mythscn");
+        Assert.False(ed.IsDirty);
+
+        ed.Undo();
+        Assert.True(ed.IsDirty);  // memory diverges from disk
+
+        ed.Execute(new FakeCommand("b"));  // clears redo, "a" is unreachable
+
+        Assert.True(ed.IsDirty);  // disk still has "a", memory has "b" -- still dirty
+    }
 }

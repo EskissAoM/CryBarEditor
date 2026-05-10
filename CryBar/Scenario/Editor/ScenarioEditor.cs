@@ -18,6 +18,13 @@ public sealed class ScenarioEditor
 {
     public const int UndoStackCap = 50;
 
+    // Sentinel placed in _savedGeneration when the saved state has been made
+    // unreachable via a branched history (Undo then Execute clears redo). Kept
+    // far enough from any value _generation can naturally reach (which only
+    // moves +-1 per call and starts at 0) that IsDirty stays true until the
+    // next MarkSaved.
+    const int SavedGenerationLost = int.MinValue;
+
     readonly LinkedList<IScenarioCommand> _undo = new();
     readonly LinkedList<IScenarioCommand> _redo = new();
 
@@ -35,8 +42,14 @@ public sealed class ScenarioEditor
     public bool IsDirty => _generation != _savedGeneration;
     public int UndoCount => _undo.Count;
 
-    /// <summary>The most recently applied (or redone) command, or null if the undo stack is empty.</summary>
-    public IScenarioCommand? LastChange => _undo.Last?.Value;
+    /// <summary>
+    /// The command most recently applied, undone, or redone. Renderer code
+    /// reads this together with <see cref="IScenarioCommand.Hint"/> to decide
+    /// what to rebuild after a Changed event. Updated explicitly on every
+    /// state-change path (not derived from the undo stack, since after Undo
+    /// the stack's tail is the PREVIOUS command, not the just-undone one).
+    /// </summary>
+    public IScenarioCommand? LastChange { get; private set; }
 
     public event Action? Changed;
 
@@ -62,7 +75,6 @@ public sealed class ScenarioEditor
 
         cmd.Apply(Terrain, Entities);
         _undo.AddLast(cmd);
-        _redo.Clear();
         if (_undo.Count > UndoStackCap)
         {
             // FIFO eviction: drop the OLDEST command (front of the linked list).
@@ -70,7 +82,20 @@ public sealed class ScenarioEditor
             // we just lose the ability to undo past it.
             _undo.RemoveFirst();
         }
+
+        // Branched-history dirty-bit guard: if the user did Undo (moving
+        // _generation below _savedGeneration) and then issues a new command,
+        // we're about to drop the redo stack -- which means the saved
+        // generation becomes unreachable. Disk still has "A" while memory
+        // is moving to "B", so IsDirty MUST stay true. We invalidate
+        // _savedGeneration to a sentinel that _generation can never match
+        // until the next MarkSaved.
+        if (_redo.Count > 0 && _savedGeneration > _generation)
+            _savedGeneration = SavedGenerationLost;
+        _redo.Clear();
+
         _generation++;
+        LastChange = cmd;
         Changed?.Invoke();
     }
 
@@ -86,6 +111,10 @@ public sealed class ScenarioEditor
         // Undo walks one step back, so the saved generation can be revisited
         // and IsDirty correctly clears.
         _generation--;
+        // LastChange is the command we just popped (the one being undone), so
+        // renderer subscribers see the right Hint. _undo.Last would point at
+        // the PREVIOUS command, which is wrong.
+        LastChange = cmd;
         Changed?.Invoke();
     }
 
@@ -98,6 +127,7 @@ public sealed class ScenarioEditor
         cmd.Apply(Terrain, Entities);
         _undo.AddLast(cmd);
         _generation++;
+        LastChange = cmd;
         Changed?.Invoke();
     }
 
@@ -119,6 +149,7 @@ public sealed class ScenarioEditor
         _redo.Clear();
         // Reset generation back to the saved value so IsDirty becomes false.
         _generation = _savedGeneration;
+        LastChange = null;
         Changed?.Invoke();
     }
 
