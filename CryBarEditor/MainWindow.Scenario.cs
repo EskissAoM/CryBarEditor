@@ -21,6 +21,7 @@ public partial class MainWindow
     GlScenarioPreviewControl? _scenarioGl;
     string? _manualTextureBarPath;
     ScenarioFile? _pendingScenario3D;
+    CancellationTokenSource? _texturesLoadCts;
 
     void ShowScenarioPreview(ScenarioFile scenario)
     {
@@ -98,13 +99,26 @@ public partial class MainWindow
             _scenarioGl.TextureArrayResized += OnScenarioTextureArrayResized;
         }
 
-        _ = LoadScenarioTexturesAsync(data, data.Cancellation.Token);
+        StartTexturesLoad(data);
     }
 
     void OnScenarioTextureArrayResized()
     {
         if (_scenarioData is { } data)
-            _ = LoadScenarioTexturesAsync(data, data.Cancellation.Token);
+            StartTexturesLoad(data);
+    }
+
+    // Single in-flight load: the open-scenario load otherwise overlaps with reloads
+    // fired by EnsureSlot-grew-array events. Both walk data.TextureSet.Names while
+    // the UI thread mutates it (List<T> is not thread-safe) and both queue uploads
+    // to the same slot indices.
+    void StartTexturesLoad(ScenarioPreviewData data)
+    {
+        var prev = _texturesLoadCts;
+        _texturesLoadCts = CancellationTokenSource.CreateLinkedTokenSource(data.Cancellation.Token);
+        prev?.Cancel();
+        prev?.Dispose();
+        _ = LoadScenarioTexturesAsync(data, _texturesLoadCts.Token);
     }
 
     void OnScenarioSelectionChanged()
@@ -447,7 +461,7 @@ public partial class MainWindow
         _manualTextureBarPath = local;
 
         if (_scenarioData is { } existing)
-            _ = LoadScenarioTexturesAsync(existing, existing.Cancellation.Token);
+            StartTexturesLoad(existing);
         else if (_pendingScenario3D is not null && _scenarioTabStrip.SelectedIndex == 1)
             FlushPendingScenario3D();
     }
@@ -592,6 +606,10 @@ public partial class MainWindow
             _scenarioGl.GestureCommitted -= OnGestureCommitted;
             _scenarioGl.TextureArrayResized -= OnScenarioTextureArrayResized;
         }
+
+        _texturesLoadCts?.Cancel();
+        _texturesLoadCts?.Dispose();
+        _texturesLoadCts = null;
 
         // Dispose() cancels the data's CTS, which propagates to the in-flight load.
         _scenarioData?.Dispose();

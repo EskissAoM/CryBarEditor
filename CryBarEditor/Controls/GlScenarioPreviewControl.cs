@@ -117,6 +117,10 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     int _texArray;
     int _allocatedSlices;
 
+    // Restored on realloc so a new-slot grow doesn't drop existing slices to placeholder
+    // until the host's full reload finishes re-decoding every DDT.
+    byte[]?[] _cachedSlices = [];
+
     bool _glInitialized;
 
     bool _leftDragging, _rightDragging;
@@ -228,6 +232,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _entitySelectDirty = true;
         _hasEmittedCursorHit = false;
         _lastEmittedCursorHit = null;
+        _cachedSlices = [];
+        _allocatedSlices = 0;
         if (data is not null)
         {
             data.Selection.Changed += OnSelectionChanged;
@@ -1210,10 +1216,15 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.TexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         gl.TexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-        // Fill every slice with the placeholder so the heightmap is visible
-        // before ScenarioTextureLoader has streamed any real DDTs.
         if (_glTexImage3D != null)
             _glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, SliceSize, SliceSize, slices, 0, GL_RGBA, GL_UNSIGNED_BYTE, null);
+
+        if (_cachedSlices.Length < slices)
+        {
+            var grown = new byte[]?[slices];
+            Array.Copy(_cachedSlices, grown, _cachedSlices.Length);
+            _cachedSlices = grown;
+        }
 
         var placeholder = ArrayPool<byte>.Shared.Rent(SliceBytes);
         try
@@ -1228,9 +1239,10 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
             if (_glTexSubImage3D != null)
             {
-                fixed (byte* p = placeholder)
+                for (int s = 0; s < slices; s++)
                 {
-                    for (int s = 0; s < slices; s++)
+                    var src = _cachedSlices[s] ?? placeholder;
+                    fixed (byte* p = src)
                         _glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, s, SliceSize, SliceSize, 1, GL_RGBA, GL_UNSIGNED_BYTE, p);
                 }
             }
@@ -1273,6 +1285,12 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.BindTexture(GL_TEXTURE_2D_ARRAY, _texArray);
         fixed (byte* p = rgba)
             _glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, sliceIndex, SliceSize, SliceSize, 1, GL_RGBA, GL_UNSIGNED_BYTE, p);
+
+        if ((uint)sliceIndex < (uint)_cachedSlices.Length)
+        {
+            var copy = _cachedSlices[sliceIndex] ??= new byte[SliceBytes];
+            rgba.CopyTo(copy);
+        }
 
         RequestNextFrameRendering();
     }
