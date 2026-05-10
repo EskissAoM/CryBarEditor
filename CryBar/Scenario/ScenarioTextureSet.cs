@@ -44,34 +44,43 @@ public sealed class ScenarioTextureSet
     }
 
     /// <summary>
-    /// Enumerates ALL (g, s) pairs declared in <c>terrain.TerrainGroups</c>, not
-    /// just those currently referenced by tiles. Pre-allocating slots for every
-    /// declared texture means the renderer can switch a tile to any in-scenario
-    /// texture without ending up with slice = -1 (which renders as placeholder).
-    /// Order is deterministic: group-major, sub-minor.
+    /// Enumerates ONLY (g, s) pairs currently referenced by some tile in
+    /// <c>terrain.TileGroups/TileSubs</c>. This is the working set the texture
+    /// loader actually needs upfront -- typical scenarios use ~50 unique
+    /// textures even when TerrainGroups declares hundreds. Pre-allocating slots
+    /// for all declared (now ~480) thrashes the loader at scenario open.
     ///
-    /// The literal name "water" is excluded -- it's a pseudo-terrain rendered by
-    /// the WaterMesh + shader path, not a DDT. Including it would yield a permanent
-    /// "1 missing" warning in the inspector since no water_basecolor.ddt / water.ddt
-    /// exists. Skipped slots leave the (g, s) -> slice mapping ABSENT, which makes
-    /// TerrainMeshBuilder return slice = -1 for water tiles -- expected and fine.
+    /// Picking a declared-but-currently-unused texture from the inspector
+    /// triggers <see cref="EnsureSlot"/> at click time, which appends the
+    /// missing slot and drives a one-off DDT load + GL upload via the host's
+    /// grow path. Same code handles brand-new textures appended from the full
+    /// game list.
+    ///
+    /// Order is the order of first encounter while walking tiles.
+    ///
+    /// The literal name "water" is excluded -- it's a pseudo-terrain rendered
+    /// by the WaterMesh + shader path, not a DDT. Including it would yield a
+    /// "1 missing" warning since no water_basecolor.ddt / water.ddt exists.
     /// </summary>
     public static ScenarioTextureSet Build(ScenarioTerrain terrain)
     {
         var names = new List<string>();
         var indices = new Dictionary<(byte, ushort), int>();
 
-        for (int gi = 0; gi < terrain.TerrainGroups.Length; gi++)
+        var n = Math.Min(terrain.TileGroups.Length, terrain.TileSubs.Length);
+        for (int i = 0; i < n; i++)
         {
-            byte g = (byte)gi;
-            var grp = terrain.TerrainGroups[gi];
-            for (int si = 0; si < grp.Textures.Length; si++)
-            {
-                ushort s = (ushort)si;
-                if (IsPseudoWater(grp.Textures[si])) continue;
-                if (indices.TryAdd((g, s), names.Count))
-                    names.Add(grp.Textures[si]);
-            }
+            var g = terrain.TileGroups[i];
+            var s = terrain.TileSubs[i];
+            if (g >= terrain.TerrainGroups.Length) continue;
+            var grp = terrain.TerrainGroups[g];
+            if (s >= grp.Textures.Length) continue;
+
+            var name = grp.Textures[s];
+            if (IsPseudoWater(name)) continue;
+
+            if (indices.TryAdd((g, s), names.Count))
+                names.Add(name);
         }
 
         return new ScenarioTextureSet(names, indices);
