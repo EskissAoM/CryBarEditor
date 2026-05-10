@@ -25,6 +25,11 @@ public partial class ScenarioInspectorPanel : UserControl
     // Null until then; handlers no-op when null.
     public System.Action<IScenarioCommand?>? ExecuteCommand;
 
+    // MainWindow wires this so the proto picker can lazy-load the FULL game proto
+    // list from proto.xml.XMB on first open. Null is fine -- caller falls back
+    // to the scenario's own TM table.
+    public System.Func<System.Threading.Tasks.Task<List<string>?>>? LoadProtoNamesAsync;
+
     ScenarioPreviewData? _data;
 
     // Suppress flags guard against ValueChanged/SelectionChanged firing while we
@@ -422,23 +427,26 @@ public partial class ScenarioInspectorPanel : UserControl
         var sel = _data.Selection;
         if (sel.Kind != ScenarioSelectionKind.Entities || sel.Entities.Count == 0) return;
 
-        // Proto cache is populated lazily by MainWindow on first open (Task 24).
-        // No-op until then; the user just sees nothing happen.
+        // Try the full game-wide proto list first (cached, then loaded lazily
+        // from proto.xml.XMB). Fall back to the scenario's own TM entries if
+        // proto.xml isn't reachable (no FileIndex, no game install indexed,
+        // or parse failure) -- the picker still works, just limited to swapping
+        // among existing proto types.
         var protoNames = _data.ProtoNamesCache;
-        if (protoNames is null || protoNames.Count == 0) return;
+        if (protoNames is null && LoadProtoNamesAsync is not null)
+            protoNames = await LoadProtoNamesAsync();
+        protoNames ??= _data.ProtoTable;
+        if (protoNames.Count == 0) return;
 
-        // Preselect the first selected entity's current proto.
+        // Preselect the first selected entity's current proto by NAME (the index
+        // in protoNames generally won't match the scenario's TM index).
+        string? curName = null;
         var idToIdx = _data.EntityIdToIndex;
-        int preselect = -1;
         foreach (uint id in sel.Entities)
         {
-            if (idToIdx.TryGetValue(id, out int idx))
-            {
-                int p = _data.Entities[idx].ProtoIndex;
-                if (p >= 0 && p < protoNames.Count) preselect = p;
-                break;
-            }
+            if (idToIdx.TryGetValue(id, out int idx)) { curName = _data.Entities[idx].ProtoName; break; }
         }
+        int preselect = curName is not null ? protoNames.IndexOf(curName) : -1;
 
         var owner = TopLevel.GetTopLevel(this) as Avalonia.Controls.Window;
         if (owner is null) return;
@@ -447,11 +455,12 @@ public partial class ScenarioInspectorPanel : UserControl
         await picker.ShowDialog(owner);
 
         if (picker.PickedItem is null) return;
-        int newIdx = protoNames.IndexOf(picker.PickedItem);
-        if (newIdx < 0) return;
+        var newProtoName = picker.PickedItem;
 
         var ids = sel.Entities.ToArray();
-        var cmd = SetEntityProtos.Create(_data.Entities, ids, newIdx, protoNames[newIdx]);
+        // SetEntityProtos.Create resolves the name against ProtoTable, appending
+        // if it's a new game-wide proto not yet referenced by this scenario.
+        var cmd = SetEntityProtos.Create(_data.Entities, ids, newProtoName, _data.ProtoTable);
         ExecuteCommand?.Invoke(cmd);
     }
 

@@ -82,6 +82,7 @@ public partial class MainWindow
             Dispatcher.UIThread.Post(() => OnEditorChanged(data));
 
         _scenarioInspector.ExecuteCommand = cmd => data.Editor.Execute(cmd);
+        _scenarioInspector.LoadProtoNamesAsync = async () => await GetOrLoadProtoNamesAsync(data);
 
         _scenarioToolbar.Bind(data.Editor, sourcePath: ResolveScenarioSourcePath());
         _scenarioToolbar.SaveRequested    -= OnToolbarSave;
@@ -225,7 +226,7 @@ public partial class MainWindow
             // offloading sync work, not wrapping an already-async API.
             await Task.Run(() =>
             {
-                data.Scenario.FlushParsedViews(data.Terrain, data.Entities);
+                data.Scenario.FlushParsedViews(data.Terrain, data.Entities, data.ProtoTable);
                 var bytes = data.Scenario.ToBytes();
                 var compressed = BarCompression.CompressL33t(bytes);
                 using var f = File.Create(path);
@@ -415,6 +416,60 @@ public partial class MainWindow
             FlushPendingScenario3D();
     }
 
+    /// <summary>
+    /// Lazily loads the full game-wide proto-name list from proto.xml.XMB and
+    /// caches it on the scenario data. Returns null if the FileIndex isn't
+    /// available, proto.xml isn't indexed, or parsing fails -- callers fall
+    /// back to the scenario's own ProtoTable in those cases.
+    /// </summary>
+    async ValueTask<List<string>?> GetOrLoadProtoNamesAsync(ScenarioPreviewData data)
+    {
+        if (data.ProtoNamesCache is not null) return data.ProtoNamesCache;
+        if (_fileIndex is null) return null;
+
+        var entries = _fileIndex.Find("proto.xml.XMB");
+        if (entries.Count == 0) return null;
+
+        try
+        {
+            using var raw = await ReadFromIndexEntryPooledAsync(entries[0]);
+            if (raw == null) return null;
+
+            using var decompressed = BarCompression.EnsureDecompressedPooled(raw, out _);
+            var xmlText = ConversionHelper.ConvertXmbToXmlText(decompressed.Span);
+            if (xmlText == null) return null;
+
+            var names = ParseProtoNamesFromXml(xmlText);
+            data.ProtoNamesCache = names;
+            return names;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Walks proto.xml: top-level <proto> contains <unit name="..."> children.
+    /// XmlReader (not XDocument) keeps this AOT-friendly. Sorted alphabetically
+    /// for picker browse-ability; the picker has its own filter so the order is
+    /// just for the eye.
+    /// </summary>
+    static List<string> ParseProtoNamesFromXml(string xmlText)
+    {
+        var names = new List<string>();
+        using var reader = System.Xml.XmlReader.Create(new System.IO.StringReader(xmlText));
+        while (reader.Read())
+        {
+            if (reader.NodeType != System.Xml.XmlNodeType.Element) continue;
+            if (reader.Name != "unit") continue;
+            var name = reader.GetAttribute("name");
+            if (!string.IsNullOrEmpty(name)) names.Add(name);
+        }
+        names.Sort(StringComparer.OrdinalIgnoreCase);
+        return names;
+    }
+
     void HideScenarioPreview()
     {
         _pendingScenario3D = null;
@@ -424,6 +479,7 @@ public partial class MainWindow
         // a stale ScenarioEditor instance.
         _scenarioToolbar.Bind(null, sourcePath: null);
         _scenarioInspector.ExecuteCommand = null;
+        _scenarioInspector.LoadProtoNamesAsync = null;
         if (_scenarioGl is not null)
             _scenarioGl.MoveCommitted -= OnDragMoveCommitted;
 

@@ -644,7 +644,7 @@ public partial class ScenarioFile
         return new ScenarioSection(marker, data);
     }
 
-    internal static List<string> ReadTmStrings(byte[] data)
+    public static List<string> ReadTmStrings(byte[] data)
     {
         if (data.Length < 8) return [];
         var span = data.AsSpan();
@@ -664,6 +664,38 @@ public partial class ScenarioFile
         }
 
         return strings;
+    }
+
+    /// <summary>
+    /// Inverse of <see cref="ReadTmStrings"/>: emits a TM/PT section body
+    /// (u32 type, u32 count, repeated [u32 byteLen + ascii bytes + null terminator]).
+    /// Used by <see cref="FlushParsedViews"/> to regenerate TM bytes after the
+    /// editor appends a new proto name to the table.
+    /// </summary>
+    public static byte[] WriteTmStrings(uint type, IReadOnlyList<string> strings)
+    {
+        int totalSize = 8;
+        foreach (var s in strings)
+            totalSize += 4 + Encoding.ASCII.GetByteCount(s) + 1;
+
+        var data = new byte[totalSize];
+        BinaryPrimitives.WriteUInt32LittleEndian(data, type);
+        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(4), (uint)strings.Count);
+
+        int off = 8;
+        foreach (var s in strings)
+        {
+            var strBytes = Encoding.ASCII.GetBytes(s);
+            var byteLen = strBytes.Length + 1;
+            BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(off), (uint)byteLen);
+            off += 4;
+            strBytes.CopyTo(data, off);
+            off += strBytes.Length;
+            data[off] = 0;
+            off++;
+        }
+
+        return data;
     }
 
     /// <summary>

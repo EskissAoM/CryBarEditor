@@ -20,9 +20,33 @@ public sealed class SetEntityProtos : IScenarioCommand
     public string DisplayName => "Set entity proto";
     public RenderHint Hint => RenderHint.EntityField;
 
-    public static SetEntityProtos? Create(IReadOnlyList<ScenarioEntity> entities, IReadOnlyList<uint> ids, int newProtoIndex, string newProtoName)
+    /// <summary>
+    /// Resolves <paramref name="newProtoName"/> against the scenario's TM table.
+    /// If the name isn't there, appends it -- the new index is the previous
+    /// table count. The protoTable is mutated in place so subsequent commands
+    /// (and the eventual save flush) see the updated table.
+    ///
+    /// Append-only: Undo restores per-entity Old indices/names but never pops
+    /// the appended TM entry, since later commands may have come to rely on it.
+    /// Orphan TM entries are harmless on disk.
+    /// </summary>
+    public static SetEntityProtos? Create(
+        IReadOnlyList<ScenarioEntity> entities,
+        IReadOnlyList<uint> ids,
+        string newProtoName,
+        List<string> protoTable)
     {
-        bool anyChange = false;
+        // Resolve the index in the scenario TM table; append if missing.
+        int newProtoIndex = protoTable.IndexOf(newProtoName);
+        bool appended = false;
+        if (newProtoIndex < 0)
+        {
+            newProtoIndex = protoTable.Count;
+            protoTable.Add(newProtoName);
+            appended = true;
+        }
+
+        bool anyChange = appended; // if we added to the table, that's a change
         var oldIdx  = new int[ids.Count];
         var oldName = new string[ids.Count];
         var idToIndex = BuildLookup(entities);
@@ -33,6 +57,10 @@ public sealed class SetEntityProtos : IScenarioCommand
             oldName[i] = e.ProtoName;
             if (oldIdx[i] != newProtoIndex || oldName[i] != newProtoName) anyChange = true;
         }
+
+        // Even when nothing changed for the selected entities, an append still
+        // counts as a real edit; we keep the command so Undo can revert any
+        // entity reassignments. Pure no-op (no append + no entity diff) returns null.
         if (!anyChange) return null;
         return new SetEntityProtos(ids.ToArray(), newProtoIndex, newProtoName, oldIdx, oldName);
     }
@@ -57,6 +85,7 @@ public sealed class SetEntityProtos : IScenarioCommand
             e.ProtoIndex = _oldProtoIndex[i];
             e.ProtoName  = _oldProtoName[i];
         }
+        // Append-only: do NOT pop the TM entry on undo. See Create() docs.
     }
 
     static Dictionary<uint, int> BuildLookup(IReadOnlyList<ScenarioEntity> entities)
