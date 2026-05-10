@@ -437,7 +437,7 @@
 									VerticalAlignment="Center">
 							<micons:MaterialIcon Kind="AlertOutline" Width="18" Height="18"
 												  Foreground="#e8a33e" VerticalAlignment="Center" />
-							<TextBlock Text="EXPERIMENTAL (partial parsing)" Foreground="#e8a33e"
+							<TextBlock Text="EXPERIMENTAL" Foreground="#e8a33e"
 									   FontSize="12" FontWeight="Bold" Margin="3,0,0,0"
 									   VerticalAlignment="Center" />
 						</StackPanel>
