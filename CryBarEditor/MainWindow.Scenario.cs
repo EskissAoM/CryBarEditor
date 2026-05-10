@@ -94,6 +94,8 @@ public partial class MainWindow
         {
             _scenarioGl.MoveCommitted -= OnDragMoveCommitted;
             _scenarioGl.MoveCommitted += OnDragMoveCommitted;
+            _scenarioGl.RotateCommitted -= OnDragMoveCommitted;
+            _scenarioGl.RotateCommitted += OnDragMoveCommitted;
             // Texture array realloc wipes slices to placeholder; refill all.
             _scenarioGl.TextureArrayResized -= OnScenarioTextureArrayResized;
             _scenarioGl.TextureArrayResized += OnScenarioTextureArrayResized;
@@ -625,6 +627,7 @@ public partial class MainWindow
         if (_scenarioGl is not null)
         {
             _scenarioGl.MoveCommitted -= OnDragMoveCommitted;
+            _scenarioGl.RotateCommitted -= OnDragMoveCommitted;
             _scenarioGl.TextureArrayResized -= OnScenarioTextureArrayResized;
         }
 

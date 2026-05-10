@@ -545,6 +545,49 @@
 									</StackPanel>
 									<Grid>
 										<Border x:Name="_scenarioCanvasContainer" Background="#0a0a0a"/>
+										<Button HorizontalAlignment="Left" VerticalAlignment="Top"
+												Margin="8,8,0,0" Padding="6,3"
+												Background="#202020" Foreground="#cfd8e8"
+												BorderBrush="#404040" BorderThickness="1"
+												ToolTip.Tip="Show controls and keyboard shortcuts">
+											<StackPanel Orientation="Horizontal" Spacing="4">
+												<micons:MaterialIcon Kind="InformationOutline" Width="14" Height="14"/>
+												<TextBlock Text="Controls / Keys" FontSize="11"/>
+											</StackPanel>
+											<Button.Flyout>
+												<Flyout Placement="Bottom">
+													<ScrollViewer MaxWidth="420" MaxHeight="500"
+																  VerticalScrollBarVisibility="Auto">
+														<StackPanel Spacing="6" Margin="4">
+															<TextBlock Text="MOUSE" FontWeight="Bold" Foreground="#ddd"/>
+															<TextBlock Foreground="#bbb" FontSize="12">
+															  <Run Text="Left drag" Foreground="#cfd8e8"/><Run Text=" - orbit camera"/><LineBreak/>
+															  <Run Text="Right drag" Foreground="#cfd8e8"/><Run Text=" - pan camera"/><LineBreak/>
+															  <Run Text="Wheel" Foreground="#cfd8e8"/><Run Text=" - zoom camera"/><LineBreak/>
+															  <Run Text="Left click" Foreground="#cfd8e8"/><Run Text=" - select tile / entity"/><LineBreak/>
+															  <Run Text="Ctrl + Left click" Foreground="#cfd8e8"/><Run Text=" - add to / toggle selection"/><LineBreak/>
+															  <Run Text="Shift + Left click" Foreground="#cfd8e8"/><Run Text=" - box-select between last and clicked"/><LineBreak/>
+															  <Run Text="Right click" Foreground="#cfd8e8"/><Run Text=" - clear selection"/><LineBreak/>
+															  <Run Text="Ctrl + Right click" Foreground="#cfd8e8"/><Run Text=" - remove from selection"/>
+															</TextBlock>
+															<TextBlock Text="MOUSE - for selected entity" FontWeight="Bold" Foreground="#ddd" Margin="0,8,0,0"/>
+															<TextBlock Foreground="#bbb" FontSize="12">
+															  <Run Text="Left hold (500 ms) + drag" Foreground="#cfd8e8"/><Run Text=" - move entity"/><LineBreak/>
+															  <Run Text="Right hold (500 ms) + drag" Foreground="#cfd8e8"/><Run Text=" - rotate entity"/><LineBreak/>
+															  <Run Text="Right click cancels move; Left click cancels rotate"/>
+															</TextBlock>
+															<TextBlock Text="KEYS" FontWeight="Bold" Foreground="#ddd" Margin="0,8,0,0"/>
+															<TextBlock Foreground="#bbb" FontSize="12">
+															  <Run Text="Ctrl + S" Foreground="#cfd8e8"/><Run Text=" - Save (visible after first Save As)"/><LineBreak/>
+															  <Run Text="Ctrl + Shift + S" Foreground="#cfd8e8"/><Run Text=" - Save As..."/><LineBreak/>
+															  <Run Text="Ctrl + Z" Foreground="#cfd8e8"/><Run Text=" - Undo"/><LineBreak/>
+															  <Run Text="Ctrl + Shift + Z" Foreground="#cfd8e8"/><Run Text=" - Redo"/>
+															</TextBlock>
+														</StackPanel>
+													</ScrollViewer>
+												</Flyout>
+											</Button.Flyout>
+										</Button>
 										<Border x:Name="_scenarioErrorPanel"
 												IsVisible="False"
 												Background="#0a0a0a"

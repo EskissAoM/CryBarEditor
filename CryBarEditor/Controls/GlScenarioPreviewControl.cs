@@ -136,13 +136,25 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     readonly Dictionary<uint, Vector3> _previewOffset = new();
     bool _windowDeactivateHooked;
 
+    // Drag-to-rotate: 500ms RIGHT hold on a selected entity arms rotate mode.
+    DispatcherTimer? _rotateHoldTimer;
+    bool _rotateHoldArmed;
+    bool _rotateMode;
+    Avalonia.Point _rotatePressScreenPos;
+    readonly Dictionary<uint, float> _rotateOldYaws = new();
+    float _rotatePreviewDelta; // degrees, applied to all rotating entities
+
     const int HoldMs = 500;
+    const float RotateDegPerPixel = 0.5f;
     public static readonly (float R, float G, float B, float A) RingColorMove = (0.20f, 0.80f, 1.00f, 1.0f);
+    public static readonly (float R, float G, float B, float A) RingColorRotate = (0.40f, 1.00f, 0.40f, 1.0f);
     public static readonly (float R, float G, float B, float A) RingColorDefault = (1.00f, 0.82f, 0.30f, 1.0f);
     (float R, float G, float B, float A) _ringColor = (1.00f, 0.82f, 0.30f, 1.0f);
 
     public IReadOnlyDictionary<uint, Vector3> PreviewOffsets => _previewOffset;
     public bool IsMoveModeActive => _moveMode;
+    public bool IsRotateModeActive => _rotateMode;
+    public event Action<IScenarioCommand?>? RotateCommitted;
 
     public event Action<IScenarioCommand?>? MoveCommitted;
 
@@ -187,6 +199,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     void OnTopLevelDeactivated(object? sender, EventArgs e)
     {
         if (_moveMode || _holdArmed) CancelMoveMode();
+        if (_rotateMode || _rotateHoldArmed) CancelRotateMode();
     }
 
     public void QueueGlAction(Action<GlInterface> action)
@@ -926,7 +939,12 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             var m = _data.Entities[i];
             var pos = m.Position;
             if (_previewOffset.TryGetValue(m.EntityId, out var off)) pos += off;
-            var fwd = m.Rotation.Multiply(new Vector3(0, 0, 1));
+            // Live rotation preview: replace the entity's rotation with old + delta
+            // while it's being rotate-dragged.
+            Matrix3x3 rot = (_rotateMode && _rotateOldYaws.TryGetValue(m.EntityId, out var oldYaw))
+                ? Matrix3x3.FromYawDegrees(oldYaw + _rotatePreviewDelta)
+                : m.Rotation;
+            var fwd = rot.Multiply(new Vector3(0, 0, 1));
             float endX = pos.X + fwd.X * ArrowLengthGame;
             float endZ = pos.Z + fwd.Z * ArrowLengthGame;
 
@@ -1223,6 +1241,14 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             return;
         }
 
+        // Left-click during rotate-mode cancels.
+        if (_rotateMode && props.IsLeftButtonPressed)
+        {
+            CancelRotateMode();
+            e.Handled = true;
+            return;
+        }
+
         if (props.IsLeftButtonPressed)
         {
             // Press on a SELECTED entity arms the hold timer; do NOT start orbit.
@@ -1250,6 +1276,25 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         }
         if (props.IsRightButtonPressed)
         {
+            // Right-press on a selected entity arms the rotate hold timer.
+            if (_data is { } d
+                && d.Selection.Kind == ScenarioSelectionKind.Entities
+                && d.Selection.Entities.Count > 0)
+            {
+                var hit = ComputePickHit(pos);
+                if (hit.EntityId is uint id && d.Selection.Entities.Contains(id))
+                {
+                    _rotateHoldArmed = true;
+                    _rotatePressScreenPos = pos;
+                    _rotateHoldTimer?.Stop();
+                    _rotateHoldTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(HoldMs) };
+                    _rotateHoldTimer.Tick += OnRotateHoldTimerTick;
+                    _rotateHoldTimer.Start();
+                    e.Handled = true;
+                    return;
+                }
+            }
+
             _rightDragging = true;
             _rightDragMoved = false;
             _rightPressPos = pos;
@@ -1264,6 +1309,36 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (!_holdArmed) return;
         _holdArmed = false;
         EnterMoveMode();
+    }
+
+    void OnRotateHoldTimerTick(object? s, EventArgs e)
+    {
+        _rotateHoldTimer?.Stop();
+        _rotateHoldTimer = null;
+        if (!_rotateHoldArmed) return;
+        _rotateHoldArmed = false;
+        EnterRotateMode();
+    }
+
+    void EnterRotateMode()
+    {
+        if (_data is null) return;
+
+        _rotateOldYaws.Clear();
+        foreach (var id in _data.Selection.Entities)
+        {
+            if (_data.EntityIdToIndex.TryGetValue(id, out int idx))
+                _rotateOldYaws[id] = _data.Entities[idx].Rotation.ExtractYawDegrees();
+        }
+        if (_rotateOldYaws.Count == 0) return;
+
+        _rotatePreviewDelta = 0f;
+        _rotateMode = true;
+        Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.SizeWestEast);
+        _ringColor = RingColorRotate;
+        _entitiesUploaded = false;
+        _entitySelectDirty = true;
+        RequestNextFrameRendering();
     }
 
     void EnterMoveMode()
@@ -1404,6 +1479,27 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             return;
         }
 
+        // Right-release while still hold-armed -> click, not rotate. Falls through
+        // to the regular RightClicked path (clear / remove from selection).
+        if (_rotateHoldArmed && e.InitialPressMouseButton == Avalonia.Input.MouseButton.Right)
+        {
+            _rotateHoldTimer?.Stop();
+            _rotateHoldTimer = null;
+            _rotateHoldArmed = false;
+            bool ctrlClick = (e.KeyModifiers & Avalonia.Input.KeyModifiers.Control) != 0;
+            RightClicked?.Invoke(ComputePickHit(_rotatePressScreenPos), ctrlClick);
+            e.Handled = true;
+            return;
+        }
+
+        // Right-release in rotate mode -> commit.
+        if (_rotateMode && e.InitialPressMouseButton == Avalonia.Input.MouseButton.Right)
+        {
+            CommitRotateMode();
+            e.Handled = true;
+            return;
+        }
+
         bool wasLeftDown = _leftDragging;
         bool wasRightDown = _rightDragging;
         if (!props.IsLeftButtonPressed) _leftDragging = false;
@@ -1460,6 +1556,49 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         RequestNextFrameRendering();
     }
 
+    void CommitRotateMode()
+    {
+        if (_data is null || MathF.Abs(_rotatePreviewDelta) < 0.01f)
+        {
+            ExitRotateModeVisuals();
+            return;
+        }
+
+        var ids = new List<uint>(_rotateOldYaws.Count);
+        var newRots = new List<Matrix3x3>(_rotateOldYaws.Count);
+        foreach (var (id, oldYaw) in _rotateOldYaws)
+        {
+            if (_data.EntityIdToIndex.ContainsKey(id))
+            {
+                ids.Add(id);
+                newRots.Add(Matrix3x3.FromYawDegrees(oldYaw + _rotatePreviewDelta));
+            }
+        }
+
+        IScenarioCommand? cmd = ids.Count > 0
+            ? SetEntityRotations.Create(_data.Entities, ids, newRots)
+            : null;
+
+        ExitRotateModeVisuals();
+        RotateCommitted?.Invoke(cmd);
+    }
+
+    void CancelRotateMode() => ExitRotateModeVisuals();
+
+    void ExitRotateModeVisuals()
+    {
+        if (_rotateHoldTimer is not null) { _rotateHoldTimer.Stop(); _rotateHoldTimer = null; }
+        _rotateMode = false;
+        _rotateHoldArmed = false;
+        _rotateOldYaws.Clear();
+        _rotatePreviewDelta = 0f;
+        Cursor = Avalonia.Input.Cursor.Default;
+        _ringColor = RingColorDefault;
+        _entitySelectDirty = true;
+        _entitiesUploaded = false;
+        RequestNextFrameRendering();
+    }
+
     protected override void OnPointerMoved(Avalonia.Input.PointerEventArgs e)
     {
         base.OnPointerMoved(e);
@@ -1467,6 +1606,24 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         float dx = (float)(pos.X - _lastPointerPos.X);
         float dy = (float)(pos.Y - _lastPointerPos.Y);
         _lastPointerPos = pos;
+
+        // Avalonia doesn't fire OnPointerPressed for additional buttons while
+        // a pointer is captured; check current button state on every move so
+        // chord-style cancel (right-press during left-drag move, vice versa)
+        // works.
+        var moveProps = e.GetCurrentPoint(this).Properties;
+        if (_moveMode && moveProps.IsRightButtonPressed)
+        {
+            CancelMoveMode();
+            e.Handled = true;
+            return;
+        }
+        if (_rotateMode && moveProps.IsLeftButtonPressed)
+        {
+            CancelRotateMode();
+            e.Handled = true;
+            return;
+        }
 
         if (_moveMode && _data is { } d)
         {
@@ -1506,10 +1663,21 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             return;
         }
 
-        if (_holdArmed)
+        if (_rotateMode)
         {
-            // While the hold timer is running, suppress orbit and don't pan; we either
-            // enter move-mode on tick or fire LeftClicked on early release.
+            float dxFromPress = (float)(pos.X - _rotatePressScreenPos.X);
+            _rotatePreviewDelta = dxFromPress * RotateDegPerPixel;
+            _entitiesUploaded = false;
+            _entitySelectDirty = true;
+            RequestNextFrameRendering();
+            e.Handled = true;
+            return;
+        }
+
+        if (_holdArmed || _rotateHoldArmed)
+        {
+            // While a hold timer is running, suppress orbit/pan; we either enter
+            // move/rotate mode on tick or fire Left/RightClicked on early release.
             e.Handled = true;
             return;
         }
