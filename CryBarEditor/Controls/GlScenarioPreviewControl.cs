@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Threading.Tasks;
@@ -9,7 +10,10 @@ using Avalonia.Controls;
 using Avalonia.OpenGL;
 using Avalonia.OpenGL.Controls;
 using Avalonia.Rendering;
+using Avalonia.Threading;
 using CryBar.Scenario;
+using CryBar.Scenario.Editor;
+using CryBar.Scenario.Editor.Commands;
 using CryBarEditor.Classes;
 using static Avalonia.OpenGL.GlConsts;
 
@@ -115,6 +119,27 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     Avalonia.Point _leftPressPos;
     Avalonia.Point _rightPressPos;
 
+    // Drag-to-move state (Task 23)
+    DispatcherTimer? _holdTimer;
+    bool _holdArmed;          // pressed on a selected entity, timer running
+    bool _moveMode;           // timer fired, drag is active
+    Avalonia.Point _pressScreenPos;
+    Vector3 _moveAnchorWorld; // world-raycast at the moment move-mode activated
+    readonly Dictionary<uint, Vector3> _moveOldPositions = new();
+    readonly Dictionary<uint, Vector3> _previewOffset = new();
+    bool _windowDeactivateHooked;
+
+    const int HoldMs = 500;
+    // Bright cyan ring while moving; default yellow matches the original ring color.
+    public static readonly (float R, float G, float B, float A) RingColorMove = (0.20f, 0.80f, 1.00f, 1.0f);
+    public static readonly (float R, float G, float B, float A) RingColorDefault = (1.00f, 0.82f, 0.30f, 1.0f);
+    (float R, float G, float B, float A) _ringColor = (1.00f, 0.82f, 0.30f, 1.0f);
+
+    public IReadOnlyDictionary<uint, Vector3> PreviewOffsets => _previewOffset;
+    public bool IsMoveModeActive => _moveMode;
+
+    public event Action<IScenarioCommand?>? MoveCommitted;
+
     readonly ConcurrentQueue<Action<GlInterface>> _glActionQueue = new();
 
     // Function pointers for GL calls Avalonia's GlInterface doesn't expose.
@@ -125,6 +150,26 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     unsafe delegate* unmanaged<uint, int, int, int, void> _glDrawArraysInstanced;
     unsafe delegate* unmanaged<int, float, float, float, void> _glUniform3f;
     unsafe delegate* unmanaged<int, float, float, float, float, void> _glUniform4f;
+
+    public GlScenarioPreviewControl()
+    {
+        AttachedToVisualTree += OnAttachedToVisualTree_DragMove;
+    }
+
+    void OnAttachedToVisualTree_DragMove(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        if (_windowDeactivateHooked) return;
+        if (TopLevel.GetTopLevel(this) is Window w)
+        {
+            w.Deactivated += OnTopLevelDeactivated;
+            _windowDeactivateHooked = true;
+        }
+    }
+
+    void OnTopLevelDeactivated(object? sender, EventArgs e)
+    {
+        if (_moveMode || _holdArmed) CancelMoveMode();
+    }
 
     public void QueueGlAction(Action<GlInterface> action)
     {
@@ -625,9 +670,12 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         {
             var m = data.Entities[i];
             int o = i * floatsPerInstance;
-            inst[o + 0] = m.Position.X * 0.5f;
-            inst[o + 1] = m.Position.Y;
-            inst[o + 2] = m.Position.Z * 0.5f;
+            // Apply preview drag offset so the billboard follows the cursor during a move.
+            var pos = m.Position;
+            if (_previewOffset.TryGetValue(m.EntityId, out var off)) pos += off;
+            inst[o + 0] = pos.X * 0.5f;
+            inst[o + 1] = pos.Y;
+            inst[o + 2] = pos.Z * 0.5f;
             var c = CryBar.Scenario.PlayerColors.GetRgb(m.PlayerId);
             inst[o + 3] = c.R; inst[o + 4] = c.G; inst[o + 5] = c.B; inst[o + 6] = 1f;
         }
@@ -712,11 +760,14 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         {
             if (!idToIdx.TryGetValue(id, out int idx)) continue;
             var m = _data.Entities[idx];
-            inst[o + 0] = m.Position.X * 0.5f;
-            inst[o + 1] = m.Position.Y;
-            inst[o + 2] = m.Position.Z * 0.5f;
-            // Bright yellow ring; distinct from per-player billboard color.
-            inst[o + 3] = 1.0f; inst[o + 4] = 0.82f; inst[o + 5] = 0.30f; inst[o + 6] = 1.0f;
+            // Apply preview drag offset so the ring follows entities while moving.
+            var pos = m.Position;
+            if (_previewOffset.TryGetValue(id, out var off)) pos += off;
+            inst[o + 0] = pos.X * 0.5f;
+            inst[o + 1] = pos.Y;
+            inst[o + 2] = pos.Z * 0.5f;
+            // Ring color: yellow normally, cyan while drag-moving.
+            inst[o + 3] = _ringColor.R; inst[o + 4] = _ringColor.G; inst[o + 5] = _ringColor.B; inst[o + 6] = _ringColor.A;
             o += floatsPerInstance;
         }
         int instanceCount = o / floatsPerInstance;
@@ -989,26 +1040,197 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     {
         base.OnPointerPressed(e);
         var props = e.GetCurrentPoint(this).Properties;
-        _lastPointerPos = e.GetPosition(this);
+        var pos = e.GetPosition(this);
+        _lastPointerPos = pos;
+
+        // Right-click during move-mode cancels the in-progress drag.
+        if (_moveMode && props.IsRightButtonPressed)
+        {
+            CancelMoveMode();
+            e.Handled = true;
+            return;
+        }
+
         if (props.IsLeftButtonPressed)
         {
+            // Press on a SELECTED entity arms the hold timer; do NOT start orbit.
+            if (_data is { } d
+                && d.Selection.Kind == ScenarioSelectionKind.Entities
+                && d.Selection.Entities.Count > 0)
+            {
+                var hit = ComputePickHit(pos);
+                if (hit.EntityId is uint id && d.Selection.Entities.Contains(id))
+                {
+                    _holdArmed = true;
+                    _pressScreenPos = pos;
+                    _holdTimer?.Stop();
+                    _holdTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(HoldMs) };
+                    _holdTimer.Tick += OnHoldTimerTick;
+                    _holdTimer.Start();
+                    e.Handled = true;
+                    return;
+                }
+            }
+
             _leftDragging = true;
             _leftDragMoved = false;
-            _leftPressPos = _lastPointerPos;
+            _leftPressPos = pos;
         }
         if (props.IsRightButtonPressed)
         {
             _rightDragging = true;
             _rightDragMoved = false;
-            _rightPressPos = _lastPointerPos;
+            _rightPressPos = pos;
         }
         e.Handled = true;
+    }
+
+    void OnHoldTimerTick(object? s, EventArgs e)
+    {
+        _holdTimer?.Stop();
+        _holdTimer = null;
+        if (!_holdArmed) return;
+        _holdArmed = false;
+        EnterMoveMode();
+    }
+
+    void EnterMoveMode()
+    {
+        if (_data is null) return;
+
+        // Re-capture cursor's world raycast as the move anchor (avoids any jump
+        // caused by cursor drift during the 500ms hold).
+        var cursor = _lastPointerPos;
+        if (!TryRaycastTerrain(cursor, out var anchor)) return;
+
+        _moveAnchorWorld = anchor;
+        _moveOldPositions.Clear();
+        _previewOffset.Clear();
+        foreach (var id in _data.Selection.Entities)
+        {
+            if (_data.EntityIdToIndex.TryGetValue(id, out int idx))
+                _moveOldPositions[id] = _data.Entities[idx].Position;
+        }
+        if (_moveOldPositions.Count == 0) return;
+
+        _moveMode = true;
+        Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.SizeAll);
+        _ringColor = RingColorMove;
+        _entitySelectDirty = true;
+        _entitiesUploaded = false;
+        RequestNextFrameRendering();
+    }
+
+    // Bilinear-sample terrain world-space height at world XZ. Mirrors the
+    // height computation inside TryPickTileIdx (tile coords == world XZ for
+    // terrain), with HeightScale applied so it lines up with the rendered surface.
+    float SampleTerrainHeightWorld(float x, float z)
+    {
+        if (_data is null) return 0f;
+        int mapX = _data.Terrain.MapSizeX;
+        int mapZ = _data.Terrain.MapSizeZ;
+        var heights = _data.Terrain.Heights;
+        int rowStride = mapX + 1;
+
+        float cx = Math.Clamp(x, 0f, mapX - 1e-4f);
+        float cz = Math.Clamp(z, 0f, mapZ - 1e-4f);
+        int tx = (int)cx;
+        int tz = (int)cz;
+        float fx = cx - tx;
+        float fz = cz - tz;
+        float h00 = heights[tz       * rowStride + tx    ];
+        float h10 = heights[tz       * rowStride + tx + 1];
+        float h11 = heights[(tz + 1) * rowStride + tx + 1];
+        float h01 = heights[(tz + 1) * rowStride + tx    ];
+        return (h00 * (1 - fx) * (1 - fz) + h10 * fx * (1 - fz)
+              + h11 * fx * fz + h01 * (1 - fx) * fz) * HeightScale;
+    }
+
+    // Raymarch the heightfield to a world hit point (with HeightScale baked in).
+    // Returns true with the hit position; false if the ray misses the map.
+    bool TryRaycastTerrain(Avalonia.Point screenPos, out Vector3 hitWorld)
+    {
+        hitWorld = default;
+        if (_data is null) return false;
+        if (!TryUnprojectRay(screenPos, out var nearW, out var dir)) return false;
+
+        int mapX = _data.Terrain.MapSizeX;
+        int mapZ = _data.Terrain.MapSizeZ;
+
+        float tMin = 0f, tMax = float.MaxValue;
+        if (MathF.Abs(dir.X) > 1e-6f)
+        {
+            float t1 = (0    - nearW.X) / dir.X;
+            float t2 = (mapX - nearW.X) / dir.X;
+            if (t1 > t2) (t1, t2) = (t2, t1);
+            tMin = MathF.Max(tMin, t1);
+            tMax = MathF.Min(tMax, t2);
+        }
+        else if (nearW.X < 0 || nearW.X > mapX) return false;
+        if (MathF.Abs(dir.Z) > 1e-6f)
+        {
+            float t1 = (0    - nearW.Z) / dir.Z;
+            float t2 = (mapZ - nearW.Z) / dir.Z;
+            if (t1 > t2) (t1, t2) = (t2, t1);
+            tMin = MathF.Max(tMin, t1);
+            tMax = MathF.Min(tMax, t2);
+        }
+        else if (nearW.Z < 0 || nearW.Z > mapZ) return false;
+        if (tMax <= 0 || tMin >= tMax) return false;
+        tMin = MathF.Max(tMin, 0f);
+
+        const float StepDt = 0.25f;
+        int safety = 4 * (mapX + mapZ) + 8;
+        Vector3 prev = nearW + dir * tMin;
+        float prevH = SampleTerrainHeightWorld(prev.X, prev.Z);
+        for (float t = tMin + StepDt; t < tMax && safety-- > 0; t += StepDt)
+        {
+            var p = nearW + dir * t;
+            if (p.X < 0 || p.X >= mapX || p.Z < 0 || p.Z >= mapZ) break;
+            float h = SampleTerrainHeightWorld(p.X, p.Z);
+            if (p.Y <= h)
+            {
+                // Linearly bracket between prev (above) and p (below) for a smoother hit.
+                float aboveDelta = prev.Y - prevH;
+                float belowDelta = p.Y - h;
+                float denom = aboveDelta - belowDelta;
+                float frac = MathF.Abs(denom) > 1e-6f ? aboveDelta / denom : 0f;
+                hitWorld = Vector3.Lerp(prev, p, MathF.Max(0f, MathF.Min(1f, frac)));
+                hitWorld.Y = SampleTerrainHeightWorld(hitWorld.X, hitWorld.Z);
+                return true;
+            }
+            prev = p;
+            prevH = h;
+        }
+        return false;
     }
 
     protected override void OnPointerReleased(Avalonia.Input.PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
         var props = e.GetCurrentPoint(this).Properties;
+
+        // Released while hold-armed (still within 500ms) -> click, not move.
+        // Falls through to the regular slice-C LeftClicked path so multi-select collapses.
+        if (_holdArmed && e.InitialPressMouseButton == Avalonia.Input.MouseButton.Left)
+        {
+            _holdTimer?.Stop();
+            _holdTimer = null;
+            _holdArmed = false;
+            bool ctrlClick = (e.KeyModifiers & Avalonia.Input.KeyModifiers.Control) != 0;
+            LeftClicked?.Invoke(ComputePickHit(_pressScreenPos), ctrlClick);
+            e.Handled = true;
+            return;
+        }
+
+        // Release while in move mode -> commit the drag as a single command.
+        if (_moveMode && e.InitialPressMouseButton == Avalonia.Input.MouseButton.Left)
+        {
+            CommitMoveMode();
+            e.Handled = true;
+            return;
+        }
+
         bool wasLeftDown = _leftDragging;
         bool wasRightDown = _rightDragging;
         if (!props.IsLeftButtonPressed) _leftDragging = false;
@@ -1025,6 +1247,45 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         e.Handled = true;
     }
 
+    void CommitMoveMode()
+    {
+        if (_data is null) { ExitMoveModeVisuals(); return; }
+
+        var ids = new List<uint>(_previewOffset.Count);
+        var newPositions = new List<Vector3>(_previewOffset.Count);
+        foreach (var (id, off) in _previewOffset)
+        {
+            if (_data.EntityIdToIndex.TryGetValue(id, out int idx))
+            {
+                ids.Add(id);
+                newPositions.Add(_data.Entities[idx].Position + off);
+            }
+        }
+
+        IScenarioCommand? cmd = ids.Count > 0
+            ? SetEntityPositions.Create(_data.Entities, ids, newPositions)
+            : null;
+
+        ExitMoveModeVisuals();
+        MoveCommitted?.Invoke(cmd);
+    }
+
+    void CancelMoveMode() => ExitMoveModeVisuals();
+
+    void ExitMoveModeVisuals()
+    {
+        if (_holdTimer is not null) { _holdTimer.Stop(); _holdTimer = null; }
+        _moveMode = false;
+        _holdArmed = false;
+        _previewOffset.Clear();
+        _moveOldPositions.Clear();
+        Cursor = Avalonia.Input.Cursor.Default;
+        _ringColor = RingColorDefault;
+        _entitySelectDirty = true;
+        _entitiesUploaded = false;
+        RequestNextFrameRendering();
+    }
+
     protected override void OnPointerMoved(Avalonia.Input.PointerEventArgs e)
     {
         base.OnPointerMoved(e);
@@ -1032,6 +1293,37 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         float dx = (float)(pos.X - _lastPointerPos.X);
         float dy = (float)(pos.Y - _lastPointerPos.Y);
         _lastPointerPos = pos;
+
+        if (_moveMode && _data is { } d)
+        {
+            if (TryRaycastTerrain(pos, out var hit))
+            {
+                var delta = hit - _moveAnchorWorld;
+                _previewOffset.Clear();
+                foreach (var (id, oldPos) in _moveOldPositions)
+                {
+                    float newX = oldPos.X + delta.X;
+                    float newZ = oldPos.Z + delta.Z;
+                    // Y-snap: bilerp the terrain height at the new XZ. The stored entity
+                    // Position.Y is in unscaled height units, so back out HeightScale.
+                    float newY = SampleTerrainHeightWorld(newX, newZ) / HeightScale;
+                    _previewOffset[id] = new Vector3(delta.X, newY - oldPos.Y, delta.Z);
+                }
+                _entitySelectDirty = true;
+                _entitiesUploaded = false;
+                RequestNextFrameRendering();
+            }
+            e.Handled = true;
+            return;
+        }
+
+        if (_holdArmed)
+        {
+            // While the hold timer is running, suppress orbit and don't pan; we either
+            // enter move-mode on tick or fire LeftClicked on early release.
+            e.Handled = true;
+            return;
+        }
 
         if (_leftDragging)
         {
