@@ -31,6 +31,7 @@ public class Configuration
     public bool? Show3DTextured { get; set; }
     public bool? ShowScenarioEntities { get; set; }
     public bool? ShowScenarioWater { get; set; }
+    public string? ScenarioLastSaveDirectory { get; set; }
 }
 
 [JsonSourceGenerationOptions(DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
