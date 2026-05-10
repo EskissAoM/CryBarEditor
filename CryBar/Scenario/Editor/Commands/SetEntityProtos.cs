@@ -1,0 +1,68 @@
+using System.Collections.Generic;
+using System.Linq;
+
+namespace CryBar.Scenario.Editor.Commands;
+
+public sealed class SetEntityProtos : IScenarioCommand
+{
+    readonly uint[] _ids;
+    readonly int _newProtoIndex;
+    readonly string _newProtoName;
+    readonly int[] _oldProtoIndex;
+    readonly string[] _oldProtoName;
+
+    SetEntityProtos(uint[] ids, int newIdx, string newName, int[] oldIdx, string[] oldName)
+    {
+        _ids = ids; _newProtoIndex = newIdx; _newProtoName = newName;
+        _oldProtoIndex = oldIdx; _oldProtoName = oldName;
+    }
+
+    public string DisplayName => "Set entity proto";
+    public RenderHint Hint => RenderHint.EntityField;
+
+    public static SetEntityProtos? Create(IReadOnlyList<ScenarioEntity> entities, IReadOnlyList<uint> ids, int newProtoIndex, string newProtoName)
+    {
+        bool anyChange = false;
+        var oldIdx  = new int[ids.Count];
+        var oldName = new string[ids.Count];
+        var idToIndex = BuildLookup(entities);
+        for (int i = 0; i < ids.Count; i++)
+        {
+            var e = entities[idToIndex[ids[i]]];
+            oldIdx[i]  = e.ProtoIndex;
+            oldName[i] = e.ProtoName;
+            if (oldIdx[i] != newProtoIndex || oldName[i] != newProtoName) anyChange = true;
+        }
+        if (!anyChange) return null;
+        return new SetEntityProtos(ids.ToArray(), newProtoIndex, newProtoName, oldIdx, oldName);
+    }
+
+    public void Apply(ScenarioTerrain _, List<ScenarioEntity> entities)
+    {
+        var idToIndex = BuildLookup(entities);
+        foreach (var id in _ids)
+        {
+            var e = entities[idToIndex[id]];
+            e.ProtoIndex = _newProtoIndex;
+            e.ProtoName  = _newProtoName;
+        }
+    }
+
+    public void Undo(ScenarioTerrain _, List<ScenarioEntity> entities)
+    {
+        var idToIndex = BuildLookup(entities);
+        for (int i = 0; i < _ids.Length; i++)
+        {
+            var e = entities[idToIndex[_ids[i]]];
+            e.ProtoIndex = _oldProtoIndex[i];
+            e.ProtoName  = _oldProtoName[i];
+        }
+    }
+
+    static Dictionary<uint, int> BuildLookup(IReadOnlyList<ScenarioEntity> entities)
+    {
+        var d = new Dictionary<uint, int>(entities.Count);
+        for (int i = 0; i < entities.Count; i++) d[entities[i].EntityId] = i;
+        return d;
+    }
+}
