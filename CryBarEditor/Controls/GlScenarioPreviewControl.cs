@@ -1867,6 +1867,68 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         return idx < 0 ? null : idx;
     }
 
+    // Screen-rect box-select: a world-axis cuboid doesn't match the visible area
+    // when the camera is rotated, so we filter by projected disc center instead.
+    public List<uint> PickEntitiesInScreenRectBetween(uint anchorId, uint hitId, float yTolerance)
+    {
+        var ids = new List<uint>();
+        if (_data is null || _entityCount == 0) return ids;
+        if (!_data.EntityIdToIndex.TryGetValue(anchorId, out int ai)) return ids;
+        if (!_data.EntityIdToIndex.TryGetValue(hitId, out int hi)) return ids;
+
+        var bounds = Bounds;
+        if (bounds.Width <= 0 || bounds.Height <= 0) return ids;
+        float aspect = (float)(bounds.Width / bounds.Height);
+        var view = _camera.GetViewMatrix();
+        var proj = _camera.GetProjectionMatrix(aspect);
+
+        var aPos = _data.Entities[ai].Position;
+        var bPos = _data.Entities[hi].Position;
+        if (!TryProjectEntityCenter(aPos, view, proj, bounds, out var aScreen, out float aPxRadius)) return ids;
+        if (!TryProjectEntityCenter(bPos, view, proj, bounds, out var bScreen, out float bPxRadius)) return ids;
+
+        // Pad the screen rect by one disc radius so discs whose centers sit just
+        // outside the rect (but whose visible body overlaps it) are still picked.
+        double pad = MathF.Max(aPxRadius, bPxRadius);
+        double minSx = Math.Min(aScreen.X, bScreen.X) - pad, maxSx = Math.Max(aScreen.X, bScreen.X) + pad;
+        double minSy = Math.Min(aScreen.Y, bScreen.Y) - pad, maxSy = Math.Max(aScreen.Y, bScreen.Y) + pad;
+        float minWy = MathF.Min(aPos.Y, bPos.Y) - yTolerance;
+        float maxWy = MathF.Max(aPos.Y, bPos.Y) + yTolerance;
+
+        foreach (var e in _data.Entities)
+        {
+            var p = e.Position;
+            if (p.Y < minWy || p.Y > maxWy) continue;
+            if (!TryProjectEntityCenter(p, view, proj, bounds, out var sp, out _)) continue;
+            if (sp.X < minSx || sp.X > maxSx) continue;
+            if (sp.Y < minSy || sp.Y > maxSy) continue;
+            ids.Add(e.EntityId);
+        }
+        return ids;
+    }
+
+    // Half-tile XZ + scaled Y + 0.4 lift mirror UploadEntities and the billboard
+    // vertex shader so the projected point matches the rendered disc center.
+    static bool TryProjectEntityCenter(Vector3 worldPos, Matrix4x4 view, Matrix4x4 proj,
+        Avalonia.Rect bounds, out Avalonia.Point screen, out float pxRadius)
+    {
+        var wp = new Vector4(worldPos.X * 0.5f, worldPos.Y * HeightScale + 0.4f, worldPos.Z * 0.5f, 1f);
+        var viewPos = Vector4.Transform(wp, view);
+        var clip = Vector4.Transform(viewPos, proj);
+        if (clip.W <= 0) { screen = default; pxRadius = 0; return false; }
+        float ndcX = clip.X / clip.W;
+        float ndcY = clip.Y / clip.W;
+        float sx = (float)((ndcX * 0.5 + 0.5) * bounds.Width);
+        float sy = (float)((1.0 - (ndcY * 0.5 + 0.5)) * bounds.Height);
+        screen = new Avalonia.Point(sx, sy);
+
+        var edgeView = viewPos; edgeView.X += BillboardHalfSizeWorld;
+        var edgeClip = Vector4.Transform(edgeView, proj);
+        float ndcEdgeX = edgeClip.W != 0 ? edgeClip.X / edgeClip.W : ndcX;
+        pxRadius = MathF.Abs(ndcEdgeX - ndcX) * (float)bounds.Width * 0.5f;
+        return true;
+    }
+
     int? TryPickTileIdx(Avalonia.Point pos)
     {
         if (_data is null) return null;
