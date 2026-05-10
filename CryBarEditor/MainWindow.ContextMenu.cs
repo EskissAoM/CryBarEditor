@@ -171,6 +171,18 @@ public partial class MainWindow
         }
     }
 
+    public bool CanOpenRootDirectory =>
+        !_contextMenuIsFromBAR && SelectedRootFileEntry != null && Directory.Exists(_rootDirectory);
+
+    void MenuItem_OpenRootDirectory(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (SelectedRootFileEntry == null || string.IsNullOrEmpty(_rootDirectory)) return;
+        var fullPath = Path.Combine(_rootDirectory, SelectedRootFileEntry.RelativePath);
+        var dir = Path.GetDirectoryName(fullPath);
+        if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+            OpenDirectoryInExplorer(dir);
+    }
+
     void ContextMenu_Opened(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         var listbox = (ListBox)((ContextMenu)sender!).Parent!.Parent!;
@@ -181,6 +193,7 @@ public partial class MainWindow
         OnPropertyChanged(nameof(IsInQuickAccess));
         OnPropertyChanged(nameof(QuickAccessToggleText));
         OnPropertyChanged(nameof(CanShowDependencies));
+        OnPropertyChanged(nameof(CanOpenRootDirectory));
     }
     #endregion
 }

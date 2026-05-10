@@ -17,6 +17,9 @@
         <!-- Action bar: save row + warnings + manual-BAR fallback. -->
         <Border DockPanel.Dock="Bottom" BorderBrush="#333" BorderThickness="0,1,0,0" Padding="8">
             <StackPanel Spacing="6">
+                <TextBlock x:Name="_savePathLabel" Foreground="#888"
+                           FontSize="11"
+                           IsVisible="False"/>
                 <Grid x:Name="_saveBarRow" ColumnDefinitions="Auto,*,Auto,Auto,Auto" IsVisible="False">
                     <StackPanel Grid.Column="0" x:Name="_dirtyIndicator"
                                 Orientation="Horizontal" Spacing="6"
@@ -35,9 +38,6 @@
                             Click="OnDiscardClick"
                             Background="#5a2c2c" Foreground="#f1d6d6" Padding="8,4"/>
                 </Grid>
-                <TextBlock x:Name="_savePathLabel" Foreground="#888"
-                           FontSize="11" TextTrimming="CharacterEllipsis"
-                           IsVisible="False"/>
                 <Grid x:Name="_warningsRow" ColumnDefinitions="*,Auto" IsVisible="False">
                     <TextBlock x:Name="_warningsText" Grid.Column="0"
                                Foreground="#cc8800"

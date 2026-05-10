@@ -83,6 +83,12 @@
 					  Icon="{micons:MaterialIconExt Kind=ContentCopy}"
 					  Click="MenuItem_CopyFilePath" />
 
+			<Separator IsVisible="{Binding CanOpenRootDirectory}" />
+
+			<MenuItem Header="Open directory"
+					IsVisible="{Binding CanOpenRootDirectory}" Icon="{micons:MaterialIconExt Kind=FolderOpen}"
+					Click="MenuItem_OpenRootDirectory" />
+
 			<Separator IsVisible="{Binding CanExport}" />
 
 			<MenuItem Header="Open export directory"
@@ -113,10 +119,10 @@
 					Icon="{micons:MaterialIconExt Kind=CogOutline}"
 					Click="MenuItem_ExportTo" />
 
-			<Separator IsVisible="{Binding SelectedIsDDT}"/>
+			<Separator IsVisible="{Binding CanExportAndIsDDT}"/>
 
 			<MenuItem Header="Replace image and export DDT"
-					IsVisible="{Binding SelectedIsDDT}" Icon="{micons:MaterialIconExt Kind=FileReplaceOutline}"
+					IsVisible="{Binding CanExportAndIsDDT}" Icon="{micons:MaterialIconExt Kind=FileReplaceOutline}"
 					Click="MenuItem_ReplaceImageAndExportDDT"/>
 
 			<Separator IsVisible="{Binding SelectedCanHaveAdditiveMod}"/>
@@ -164,14 +170,15 @@
 					<MenuItem Header="XS to XML" Click="MenuItem_ConvertXStoXML" />
 					<MenuItem Header="XML to XS" Click="MenuItem_ConvertXMLtoXS" />
 				</MenuItem>
+				<MenuItem Header="Actions">
+					<MenuItem Header="Make XS script RM friendly" Click="MenuItem_XStoRM" />
+					<MenuItem Header="Open scenario for editing..." Click="MenuItem_OpenScenarioForEditing" />
+				</MenuItem>
 				<MenuItem Header="Compress">
 					<MenuItem Header="Alz4" Click="MenuItem_CompressAlz4" />
 					<MenuItem Header="L33t" Click="MenuItem_CompressL33t" />
 				</MenuItem>
 				<MenuItem Header="Decompress" Click="MenuItem_Decompress" />
-				<MenuItem Header="Script">
-					<MenuItem Header="Make RM friendly" Click="MenuItem_XStoRM" />
-				</MenuItem>
 				<MenuItem Header="Search" Click="MenuItem_Search" />
 				<MenuItem Header="Settings" Click="MenuItem_Settings" />
 				<MenuItem Header="Help">

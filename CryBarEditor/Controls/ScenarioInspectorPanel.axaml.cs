@@ -646,9 +646,8 @@ public partial class ScenarioInspectorPanel : UserControl
     {
         var hasEditor = _boundEditor is not null;
         var dirty = hasEditor && _boundEditor!.IsDirty;
-        // Save stays hidden until the user has explicitly chosen a target via
-        // Save As (editor.SavePath becomes non-null). Prevents accidentally
-        // overwriting the source mythscn while browsing game files.
+        // Save stays hidden until Save As has chosen a target; prevents accidental
+        // overwrite of the source mythscn while browsing game files.
         var hasSavePath = hasEditor && _boundEditor!.SavePath is not null;
 
         _saveBarRow.IsVisible = hasEditor;
@@ -664,18 +663,26 @@ public partial class ScenarioInspectorPanel : UserControl
             return;
         }
 
-        var path = _boundEditor!.SavePath ?? _boundSourcePath ?? "";
-        _savePathLabel.Text = ShortenPath(path);
-        _savePathLabel.IsVisible = !string.IsNullOrEmpty(path);
+        var path = _boundEditor!.SavePath;
+        if (string.IsNullOrEmpty(path))
+        {
+            _savePathLabel.Text = "Save location not set";
+            ToolTip.SetTip(_savePathLabel, null);
+        }
+        else
+        {
+            _savePathLabel.Text = TrimPathStart(path);
+            ToolTip.SetTip(_savePathLabel, path);
+        }
+        _savePathLabel.IsVisible = true;
     }
 
-    // Trim a path to its last two segments so the label fits the inspector
-    // column; full path stays available via tooltip / underlying text.
-    static string ShortenPath(string path)
+    // Trim from the START so the filename always shows; "..." marks elided prefix.
+    // Avalonia's TextTrimming only trims at the END, so we do this in code.
+    static string TrimPathStart(string path, int max = 40)
     {
-        if (string.IsNullOrEmpty(path)) return "";
-        var parts = path.Replace('\\', '/').TrimEnd('/').Split('/');
-        return parts.Length <= 2 ? path : ".../" + string.Join('/', parts[^2..]);
+        if (string.IsNullOrEmpty(path) || path.Length <= max) return path;
+        return "..." + path[^(max - 3)..];
     }
 
     void OnSaveClick(object? sender, RoutedEventArgs e) => SaveRequested?.Invoke();

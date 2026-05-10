@@ -284,14 +284,71 @@ public partial class MainWindow
 
     void OnInspectorClearSelection() => _scenarioData?.Selection.Clear();
 
+    // Shift+click box selection. Forms a 3D box (cuboid) between the last
+    // single-click anchor and the new hit, includes everything inside with a
+    // generous height tolerance so units a few tiles up/down a hill still get
+    // grabbed. Returns true when handled; false falls through to plain click.
+    const float BoxSelectHeightTolerance = 10f;
+    bool TryShiftBoxSelect(PickHit hit)
+    {
+        if (_scenarioData is null) return false;
+        var sel = _scenarioData.Selection;
+
+        // Box-select entities when the anchor is an entity and the hit also is.
+        if (sel.LastClickedEntity is uint anchorId && hit.EntityId is uint hitId)
+        {
+            if (!_scenarioData.EntityIdToIndex.TryGetValue(anchorId, out var ai)) return false;
+            if (!_scenarioData.EntityIdToIndex.TryGetValue(hitId, out var hi)) return false;
+
+            var a = _scenarioData.Entities[ai].Position;
+            var b = _scenarioData.Entities[hi].Position;
+            float minX = MathF.Min(a.X, b.X), maxX = MathF.Max(a.X, b.X);
+            float minZ = MathF.Min(a.Z, b.Z), maxZ = MathF.Max(a.Z, b.Z);
+            float minY = MathF.Min(a.Y, b.Y) - BoxSelectHeightTolerance;
+            float maxY = MathF.Max(a.Y, b.Y) + BoxSelectHeightTolerance;
+
+            var ids = new List<uint>();
+            foreach (var e in _scenarioData.Entities)
+            {
+                var p = e.Position;
+                if (p.X < minX || p.X > maxX) continue;
+                if (p.Z < minZ || p.Z > maxZ) continue;
+                if (p.Y < minY || p.Y > maxY) continue;
+                ids.Add(e.EntityId);
+            }
+            sel.AddEntities(ids);
+            return true;
+        }
+
+        // Box-select tiles when both anchor and hit are tiles.
+        if (sel.LastClickedTile is int anchorTile && hit.TileIdx is int hitTile && hit.EntityId is null)
+        {
+            int mapX = _scenarioData.Terrain.MapSizeX;
+            int ax = anchorTile % mapX, az = anchorTile / mapX;
+            int bx = hitTile % mapX,    bz = hitTile / mapX;
+            int minTx = Math.Min(ax, bx), maxTx = Math.Max(ax, bx);
+            int minTz = Math.Min(az, bz), maxTz = Math.Max(az, bz);
+
+            var idxs = new List<int>((maxTx - minTx + 1) * (maxTz - minTz + 1));
+            for (int z = minTz; z <= maxTz; z++)
+                for (int x = minTx; x <= maxTx; x++)
+                    idxs.Add(z * mapX + x);
+            sel.AddTiles(idxs);
+            return true;
+        }
+
+        return false;
+    }
+
     GlScenarioPreviewControl CreateScenarioGl()
     {
         var gl = new GlScenarioPreviewControl();
         gl.CursorHit += hit =>
             Dispatcher.UIThread.Post(() => _scenarioInspector.SetCursor(hit, _scenarioData));
-        gl.LeftClicked += (hit, ctrl) =>
+        gl.LeftClicked += (hit, ctrl, shift) =>
         {
             if (_scenarioData is null) return;
+            if (shift && TryShiftBoxSelect(hit)) return;
             ScenarioSelectionInput.OnLeftClick(_scenarioData.Selection, hit, ctrl);
         };
         gl.RightClicked += (hit, ctrl) =>

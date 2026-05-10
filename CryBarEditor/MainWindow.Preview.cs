@@ -976,6 +976,9 @@ public partial class MainWindow
         };
         _glPreview.ShowMarkers = _showMarkersCheckbox.IsChecked == true;
         _glPreview.ShowGroundGrid = _showGroundGridCheckbox.IsChecked == true;
+        // Sync textured pref restored from config; otherwise the new control's
+        // default (false) silently overrides the user's saved preference.
+        _glPreview.UseTexturedMode = _useTextured3D;
         _3dViewContainer.Child = _glPreview;
     }
 

@@ -500,6 +500,30 @@ public partial class MainWindow
         }
     }
 
+    async void MenuItem_OpenScenarioForEditing(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var file = await PickFile(sender, "Open scenario for editing", [new("AoM Scenario") { Patterns = ["*.mythscn"] }]);
+        if (file == null) return;
+
+        try
+        {
+            using var data = await PooledBuffer.FromFile(file);
+            using var decompressed = BarCompression.EnsureDecompressedPooled(data, out _);
+
+            var scenario = new ScenarioFile(decompressed.Memory);
+            if (!scenario.Parsed) throw new InvalidDataException("Failed to parse scenario file");
+
+            // Clear so ResolveScenarioSourcePath returns null (file is outside the
+            // root dir); Save As will then prompt for a fresh location.
+            _currentlyPreviewedItem = null;
+            ShowScenarioPreview(scenario);
+        }
+        catch (Exception ex)
+        {
+            _ = ShowError("Failed to open scenario:\n" + ex.Message);
+        }
+    }
+
     SearchWindow? _activeSearchWindow;
     void MenuItem_Search(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {

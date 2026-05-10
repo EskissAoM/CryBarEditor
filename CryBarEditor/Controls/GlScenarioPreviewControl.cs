@@ -101,6 +101,13 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     int _entitySelectInstanceCount;
     bool _entitySelectDirty;
 
+    // Yaw arrow: a 2-vertex line per selected entity pointing along the entity's
+    // forward direction. Reuses _entitySelectDirty.
+    int _yawArrowProgram;
+    int _yawArrowVao, _yawArrowVbo;
+    int _uYawArrowMvp, _uYawArrowYScale;
+    int _yawArrowVertexCount;
+
     int _billboardProgram;
     int _billboardVao, _billboardQuadVbo, _billboardInstanceVbo;
     int _uBillboardView, _uBillboardProj, _uBillboardSize, _uBillboardCamPos, _uBillboardFadeNear, _uBillboardFadeFar, _uBillboardYScale;
@@ -159,6 +166,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     unsafe delegate* unmanaged<uint, uint, void> _glVertexAttribDivisor;
     unsafe delegate* unmanaged<uint, int, int, int, void> _glDrawArraysInstanced;
     unsafe delegate* unmanaged<int, float, float, float, void> _glUniform3f;
+    unsafe delegate* unmanaged<float, void> _glLineWidth;
     unsafe delegate* unmanaged<int, float, float, float, float, void> _glUniform4f;
 
     public GlScenarioPreviewControl()
@@ -426,6 +434,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _glDrawArraysInstanced = (delegate* unmanaged<uint, int, int, int, void>)gl.GetProcAddress("glDrawArraysInstanced");
         _glUniform3f = (delegate* unmanaged<int, float, float, float, void>)gl.GetProcAddress("glUniform3f");
         _glUniform4f = (delegate* unmanaged<int, float, float, float, float, void>)gl.GetProcAddress("glUniform4f");
+        _glLineWidth = (delegate* unmanaged<float, void>)gl.GetProcAddress("glLineWidth");
 
         string?[] missing =
         [
@@ -540,6 +549,31 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             gl.BindVertexArray(0);
         }
 
+        const string YawArrowVsBody = """
+            layout(location = 0) in vec3 aPos;
+            layout(location = 1) in vec4 aColor;
+            uniform mat4 uMvp;
+            uniform float uYScale;
+            out vec4 vColor;
+            void main()
+            {
+                // Match the disc's vertical offset (billboard + ring use + 0.4)
+                // so the arrow extends from the disc center outward.
+                gl_Position = uMvp * vec4(aPos.x, aPos.y * uYScale + 0.4, aPos.z, 1.0);
+                vColor = aColor;
+            }
+            """;
+        const string YawArrowFsBody = """
+            in vec4 vColor;
+            out vec4 fragColor;
+            void main() { fragColor = vColor; }
+            """;
+        _yawArrowProgram = CreateProgram(gl, vsPreamble + YawArrowVsBody, fsPreamble + YawArrowFsBody);
+        _uYawArrowMvp    = gl.GetUniformLocationString(_yawArrowProgram, "uMvp");
+        _uYawArrowYScale = gl.GetUniformLocationString(_yawArrowProgram, "uYScale");
+        _yawArrowVao = gl.GenVertexArray();
+        _yawArrowVbo = gl.GenBuffer();
+
         _billboardProgram = CreateProgram(gl, vsPreamble + BillboardVertexShaderBody, fsPreamble + BillboardFragmentShaderBody);
         _uBillboardView     = gl.GetUniformLocationString(_billboardProgram, "uView");
         _uBillboardProj     = gl.GetUniformLocationString(_billboardProgram, "uProj");
@@ -597,6 +631,10 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (_entitySelectVao != 0)          { gl.DeleteVertexArray(_entitySelectVao); _entitySelectVao = 0; }
         _entitySelectInstanceCount = 0;
         _entitySelectDirty = false;
+        if (_yawArrowProgram != 0) { gl.DeleteProgram(_yawArrowProgram); _yawArrowProgram = 0; }
+        if (_yawArrowVbo != 0)     { gl.DeleteBuffer(_yawArrowVbo); _yawArrowVbo = 0; }
+        if (_yawArrowVao != 0)     { gl.DeleteVertexArray(_yawArrowVao); _yawArrowVao = 0; }
+        _yawArrowVertexCount = 0;
         if (_billboardProgram != 0)     { gl.DeleteProgram(_billboardProgram); _billboardProgram = 0; }
         if (_billboardQuadVbo != 0)     { gl.DeleteBuffer(_billboardQuadVbo); _billboardQuadVbo = 0; }
         if (_billboardInstanceVbo != 0) { gl.DeleteBuffer(_billboardInstanceVbo); _billboardInstanceVbo = 0; }
@@ -707,10 +745,16 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             if (!_entitiesUploaded)
             {
                 UploadEntities(gl, _data);
+                // Yaw arrows track per-entity rotation and position; same upload
+                // cadence as the billboard instance buffer.
+                UploadYawArrows(gl);
                 _entitiesUploaded = true;
             }
             if (_entityCount > 0)
                 DrawEntities(gl, view, proj, eyePos);
+
+            // Always-on direction indicator -- not gated by selection.
+            DrawYawArrows(gl, mvpCopy);
 
             if (_entitySelectDirty)
             {
@@ -864,6 +908,65 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         _entitySelectInstanceCount = instanceCount;
     }
 
+    unsafe void UploadYawArrows(GlInterface gl)
+    {
+        if (_data is null) { _yawArrowVertexCount = 0; return; }
+        int count = _data.Entities.Count;
+        if (count == 0) { _yawArrowVertexCount = 0; return; }
+
+        // World-space line: 0.8 game units (~0.4 visual) -- reaches the disc edge
+        // from the center. Black for high contrast against any player color.
+        const float ArrowLengthGame = 0.8f;
+        const int floatsPerVertex = 7;       // pos.xyz + color.rgba
+        const int floatsPerLine = floatsPerVertex * 2;
+        var verts = new float[count * floatsPerLine];
+        int o = 0;
+        for (int i = 0; i < count; i++)
+        {
+            var m = _data.Entities[i];
+            var pos = m.Position;
+            if (_previewOffset.TryGetValue(m.EntityId, out var off)) pos += off;
+            var fwd = m.Rotation.Multiply(new Vector3(0, 0, 1));
+            float endX = pos.X + fwd.X * ArrowLengthGame;
+            float endZ = pos.Z + fwd.Z * ArrowLengthGame;
+
+            verts[o++] = pos.X * 0.5f; verts[o++] = pos.Y; verts[o++] = pos.Z * 0.5f;
+            verts[o++] = 0f; verts[o++] = 0f; verts[o++] = 0f; verts[o++] = 1f;
+            verts[o++] = endX * 0.5f;  verts[o++] = pos.Y; verts[o++] = endZ * 0.5f;
+            verts[o++] = 0f; verts[o++] = 0f; verts[o++] = 0f; verts[o++] = 1f;
+        }
+
+        gl.BindVertexArray(_yawArrowVao);
+        gl.BindBuffer(GL_ARRAY_BUFFER, _yawArrowVbo);
+        fixed (float* p = verts)
+            gl.BufferData(GL_ARRAY_BUFFER, (IntPtr)(o * sizeof(float)), (IntPtr)p, GL_DYNAMIC_DRAW);
+
+        int stride = floatsPerVertex * sizeof(float);
+        gl.EnableVertexAttribArray(0);
+        gl.VertexAttribPointer(0, 3, GL_FLOAT_TYPE, 0, stride, IntPtr.Zero);
+        gl.EnableVertexAttribArray(1);
+        gl.VertexAttribPointer(1, 4, GL_FLOAT_TYPE, 0, stride, new IntPtr(3 * sizeof(float)));
+        gl.BindVertexArray(0);
+
+        _yawArrowVertexCount = o / floatsPerVertex;
+    }
+
+    unsafe void DrawYawArrows(GlInterface gl, Matrix4x4 mvp)
+    {
+        if (_yawArrowVertexCount == 0) return;
+        gl.UseProgram(_yawArrowProgram);
+        gl.UniformMatrix4fv(_uYawArrowMvp, 1, false, &mvp.M11);
+        gl.Uniform1f(_uYawArrowYScale, HeightScale);
+        // Stay on top like the ring overlay.
+        gl.Disable(GL_DEPTH_TEST);
+        if (_glLineWidth != null) _glLineWidth(3.0f);
+        gl.BindVertexArray(_yawArrowVao);
+        gl.DrawArrays(GL_LINES, 0, _yawArrowVertexCount);
+        gl.BindVertexArray(0);
+        if (_glLineWidth != null) _glLineWidth(1.0f);
+        gl.Enable(GL_DEPTH_TEST);
+    }
+
     unsafe void DrawEntitySelection(GlInterface gl, Matrix4x4 view, Matrix4x4 proj)
     {
         if (_entitySelectInstanceCount == 0 || _glDrawArraysInstanced == null) return;
@@ -891,7 +994,7 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
     public event Action<WorldRayHit?>? CursorHit;
 
-    public event Action<PickHit, bool>? LeftClicked;
+    public event Action<PickHit, bool, bool>? LeftClicked;
     public event Action<PickHit, bool>? RightClicked;
 
     public event Action<string?>? ErrorChanged;
@@ -1287,7 +1390,8 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             _holdTimer = null;
             _holdArmed = false;
             bool ctrlClick = (e.KeyModifiers & Avalonia.Input.KeyModifiers.Control) != 0;
-            LeftClicked?.Invoke(ComputePickHit(_pressScreenPos), ctrlClick);
+            bool shiftClick = (e.KeyModifiers & Avalonia.Input.KeyModifiers.Shift) != 0;
+            LeftClicked?.Invoke(ComputePickHit(_pressScreenPos), ctrlClick, shiftClick);
             e.Handled = true;
             return;
         }
@@ -1307,9 +1411,10 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
 
         var pos = e.GetPosition(this);
         bool ctrl = (e.KeyModifiers & Avalonia.Input.KeyModifiers.Control) != 0;
+        bool shift = (e.KeyModifiers & Avalonia.Input.KeyModifiers.Shift) != 0;
 
         if (wasLeftDown && !_leftDragMoved)
-            LeftClicked?.Invoke(ComputePickHit(pos), ctrl);
+            LeftClicked?.Invoke(ComputePickHit(pos), ctrl, shift);
         if (wasRightDown && !_rightDragMoved)
             RightClicked?.Invoke(ComputePickHit(pos), ctrl);
 
