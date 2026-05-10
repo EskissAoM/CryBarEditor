@@ -1334,16 +1334,31 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         {
             if (TryRaycastTerrain(pos, out var hit))
             {
-                var delta = hit - _moveAnchorWorld;
+                // Coordinate spaces in play here:
+                //   - Terrain raycast hit: visual XZ (tile coords; renderer uploads
+                //     terrain verts as `verts[off+0] = vx` directly, no scale).
+                //   - SampleTerrainHeightWorld also expects visual XZ.
+                //   - Entity Position is stored in half-tile units (1 tile = 2 units);
+                //     billboard upload applies `* 0.5f` to project Position into the
+                //     terrain's visual XZ space.
+                // Convert the visual delta back to entity (scenario) units before
+                // adding it to entity Position, then re-project to visual when
+                // sampling the terrain for Y-snap.
+                float dxScen = (hit.X - _moveAnchorWorld.X) * 2f;
+                float dzScen = (hit.Z - _moveAnchorWorld.Z) * 2f;
                 _previewOffset.Clear();
                 foreach (var (id, oldPos) in _moveOldPositions)
                 {
-                    float newX = oldPos.X + delta.X;
-                    float newZ = oldPos.Z + delta.Z;
-                    // Y-snap: bilerp the terrain height at the new XZ. The stored entity
-                    // Position.Y is in unscaled height units, so back out HeightScale.
-                    float newY = SampleTerrainHeightWorld(newX, newZ) / HeightScale;
-                    _previewOffset[id] = new Vector3(delta.X, newY - oldPos.Y, delta.Z);
+                    float newScenX = oldPos.X + dxScen;
+                    float newScenZ = oldPos.Z + dzScen;
+                    float visualX = newScenX * 0.5f;
+                    float visualZ = newScenZ * 0.5f;
+                    // Y-snap: bilerp the terrain height at the new visual XZ. The stored
+                    // entity Position.Y is in unscaled height units, so back out HeightScale.
+                    float newY = SampleTerrainHeightWorld(visualX, visualZ) / HeightScale;
+                    // Offset is consumed in entity-unit space (renderer adds it to
+                    // Position before applying * 0.5f), so keep dx/dz in scenario units.
+                    _previewOffset[id] = new Vector3(dxScen, newY - oldPos.Y, dzScen);
                 }
                 _entitySelectDirty = true;
                 _entitiesUploaded = false;
