@@ -14,11 +14,7 @@
                        TextWrapping="Wrap"/>
         </Border>
 
-        <!-- Fixed action bar at bottom: save row (dirty indicator + Save/Save As/
-             Discard) + path caption + warnings button + Select-BAR + manual-bar
-             path. The save row was previously a separate ScenarioToolbar row
-             above the tab strip; folding it into the inspector reclaims that
-             vertical space for the 3D viewport. -->
+        <!-- Action bar: save row + warnings + manual-BAR fallback. -->
         <Border DockPanel.Dock="Bottom" BorderBrush="#333" BorderThickness="0,1,0,0" Padding="8">
             <StackPanel Spacing="6">
                 <Grid x:Name="_saveBarRow" ColumnDefinitions="Auto,*,Auto,Auto,Auto" IsVisible="False">

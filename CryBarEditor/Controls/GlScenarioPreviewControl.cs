@@ -119,18 +119,17 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     Avalonia.Point _leftPressPos;
     Avalonia.Point _rightPressPos;
 
-    // Drag-to-move state (Task 23)
+    // Drag-to-move: 500ms hold on a selected entity arms drag mode.
     DispatcherTimer? _holdTimer;
-    bool _holdArmed;          // pressed on a selected entity, timer running
-    bool _moveMode;           // timer fired, drag is active
+    bool _holdArmed;
+    bool _moveMode;
     Avalonia.Point _pressScreenPos;
-    Vector3 _moveAnchorWorld; // world-raycast at the moment move-mode activated
+    Vector3 _moveAnchorWorld;
     readonly Dictionary<uint, Vector3> _moveOldPositions = new();
     readonly Dictionary<uint, Vector3> _previewOffset = new();
     bool _windowDeactivateHooked;
 
     const int HoldMs = 500;
-    // Bright cyan ring while moving; default yellow matches the original ring color.
     public static readonly (float R, float G, float B, float A) RingColorMove = (0.20f, 0.80f, 1.00f, 1.0f);
     public static readonly (float R, float G, float B, float A) RingColorDefault = (1.00f, 0.82f, 0.30f, 1.0f);
     (float R, float G, float B, float A) _ringColor = (1.00f, 0.82f, 0.30f, 1.0f);

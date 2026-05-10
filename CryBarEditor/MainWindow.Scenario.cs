@@ -74,10 +74,7 @@ public partial class MainWindow
             Dispatcher.UIThread.Post(() => _scenarioInspector.UpdateSelection(_scenarioData));
         _scenarioInspector.UpdateSelection(data);
 
-        // Editor + toolbar + drag-commit wiring (Task 24). Use the -=/+= pattern
-        // because FlushPendingScenario3D may run more than once for a single
-        // scenario (e.g. tab toggle); HideScenarioPreview also drops the data
-        // so subsequent attaches start from a clean slate.
+        // -=/+= because FlushPendingScenario3D can run more than once per scenario.
         data.Editor.Changed += () =>
             Dispatcher.UIThread.Post(() => OnEditorChanged(data));
 
@@ -85,9 +82,6 @@ public partial class MainWindow
         _scenarioInspector.LoadProtoNamesAsync = async () => await GetOrLoadProtoNamesAsync(data);
         _scenarioInspector.LoadTerrainTypesAsync = async () => await GetOrLoadTerrainTypesAsync(data);
 
-        // Save bar is now hosted inside the inspector itself (the standalone
-        // ScenarioToolbar control was retired so the 3D viewport can claim that
-        // vertical space). Bind / event names are unchanged, just relocated.
         _scenarioInspector.BindEditor(data.Editor, sourcePath: ResolveScenarioSourcePath());
         _scenarioInspector.SaveRequested    -= OnToolbarSave;
         _scenarioInspector.SaveAsRequested  -= OnToolbarSaveAs;
@@ -100,10 +94,7 @@ public partial class MainWindow
         {
             _scenarioGl.MoveCommitted -= OnDragMoveCommitted;
             _scenarioGl.MoveCommitted += OnDragMoveCommitted;
-            // Re-load all textures when the GL texture array gets grown at
-            // runtime. EnsureSlot on the inspector pushes a new slice past
-            // _allocatedSlices; the GL controller wipes existing slices to
-            // placeholder during the realloc and signals here so we refill.
+            // Texture array realloc wipes slices to placeholder; refill all.
             _scenarioGl.TextureArrayResized -= OnScenarioTextureArrayResized;
             _scenarioGl.TextureArrayResized += OnScenarioTextureArrayResized;
         }
@@ -119,21 +110,15 @@ public partial class MainWindow
 
     void OnEditorChanged(ScenarioPreviewData data)
     {
-        // The closure that calls us captures `data`, not _scenarioData. After
-        // a scenario swap the old data's editor may still fire Changed once
-        // before being GC'd; ignore those events so we don't reset the
-        // inspector to a disposed scenario.
+        // Closure captures `data`; ignore Changed events from a swapped-out scenario.
         if (!ReferenceEquals(data, _scenarioData)) return;
 
-        // Read the hint published by the most recent command. Discard() sets
-        // LastChange to null -> RenderHint.None means "rebuild everything";
-        // we treat None as a signal to rebuild all four buffers.
+        // Discard() sets LastChange = null -> rebuild everything.
         var hint = data.Editor.LastChange?.Hint;
         var effective = hint ?? (RenderHint.TerrainTexture | RenderHint.TerrainGeometry
                                 | RenderHint.TerrainWater   | RenderHint.EntityList);
 
-        // EntityList = entity added/removed. Selection may now reference dead
-        // ids, so prune them BEFORE the renderer rebuild reads selection state.
+        // Selection may reference dead ids; prune before renderer rebuilds.
         if ((effective & RenderHint.EntityList) != 0)
         {
             var liveIds = new HashSet<uint>();
@@ -236,10 +221,7 @@ public partial class MainWindow
     {
         try
         {
-            // Task.Run is legitimate here: every step (FlushParsedViews,
-            // ToBytes, CompressL33t, File.Create+Write) is SYNCHRONOUS, and
-            // a few-MB scenario can take noticeable time to compress. We're
-            // offloading sync work, not wrapping an already-async API.
+            // Offload sync compression off the UI thread.
             await Task.Run(() =>
             {
                 data.Scenario.FlushParsedViews(data.Terrain, data.Entities, data.ProtoTable);
@@ -266,11 +248,7 @@ public partial class MainWindow
         ed.Discard();
     }
 
-    /// <summary>
-    /// Routed via the scenario root panel's KeyDown so shortcuts only fire
-    /// when the 3D editor is focused. Avoids global Ctrl+S/Z stealing keys
-    /// from text fields elsewhere in the app.
-    /// </summary>
+    // Scoped to the scenario root so Ctrl+S/Z don't steal keys from other text fields.
     void ScenarioRoot_KeyDown(object? sender, KeyEventArgs e)
     {
         if (_scenarioData is null) return;

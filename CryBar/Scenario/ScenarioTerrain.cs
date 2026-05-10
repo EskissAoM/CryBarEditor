@@ -19,73 +19,34 @@ public sealed class ScenarioTerrain
     public required byte[] TileGroups { get; init; }
     public required ushort[] TileSubs { get; init; }
     public required byte[] TilePt { get; init; }
-    /// <summary>
-    /// Per-tile water marker. The byte value 255 is the "no water" sentinel;
-    /// any other value is an index into WaterNames identifying which water
-    /// body type covers the tile. This is the authoritative "is this tile
-    /// water?" flag -- WaterHeights alone can't be trusted because the sea-
-    /// level reference bleeds into low-lying non-water terrain.
-    /// WaterMeshBuilder reads it as `value != 255`.
-    /// </summary>
+    // 255 = "no water" sentinel; other values index into WaterNames. Authoritative
+    // is-this-tile-water flag (WaterHeights alone bleeds into low-lying terrain).
     public required byte[] WaterType { get; init; }
-    // Settable (not init-only) because the inspector's terrain picker may append
-    // new (group, texture) entries from the full game-wide terrain list when the
-    // user picks something not yet referenced by the scenario. TnWriter then
-    // emits the extended array on save. Append-only -- existing entries are
-    // never removed/reindexed (orphans are harmless on disk).
+
+    // Settable: inspector's terrain picker appends new entries from the game-wide
+    // list. Append-only; existing entries are never reindexed (orphans are harmless).
     public required TerrainTextureGroup[] TerrainGroups { get; set; }
 
-    // Round-trip metadata. None are required so existing TryParse callers and
-    // synthetic-fixture tests that only care about the typed fields don't have
-    // to set them; the writer treats the defaults as a minimal/empty TN section
-    // (HasT3=0, HasTm=0, no opaque tail).
-
-    /// <summary>1 when a T3 sub-section is present (vanilla scenarios always have this).</summary>
+    // Round-trip metadata. Defaults emit a minimal empty TN section so synthetic
+    // fixtures don't need to set them.
     public byte HasT3 { get; init; } = 1;
-    /// <summary>1 when a TM lighting-preset sub-section follows the T3 block.</summary>
     public byte HasTm { get; init; }
-    /// <summary>First u32 of the T3 body. Magic value (15 in vanilla scenarios).</summary>
     public uint T3Magic { get; init; }
-    /// <summary>First u32 of the inner TT (terrain-groups) sub-section. Magic value (1 in vanilla).</summary>
     public uint TerrainGroupsMagic { get; init; } = 1;
-    /// <summary>First of two unknown floats stored after MapSize in the T3 body.</summary>
     public float UnkFloat0 { get; init; }
-    /// <summary>Second of two unknown floats stored after MapSize in the T3 body.</summary>
     public float UnkFloat1 { get; init; }
-    /// <summary>2-character marker on the TileGroups size-list sub-section (typically "TT").</summary>
     public string TileGroupsMarker { get; init; } = "TT";
-    /// <summary>2-character marker on the TileSubs size-list sub-section (typically "TS").</summary>
     public string TileSubsMarker { get; init; } = "TS";
-    /// <summary>2-character marker on the TilePT size-list sub-section (typically "PT").</summary>
     public string TilePtMarker { get; init; } = "PT";
-    /// <summary>2-character marker on the WaterType size-list sub-section (typically "WT").</summary>
     public string WaterTypeMarker { get; init; } = "WT";
-    /// <summary>
-    /// Opaque WaterColors sub-section bytes including the 2-byte marker and u32 size header
-    /// (vanilla marker is "PS"). Cosmetic to the renderer but preserved for byte-exact round-trip.
-    /// Empty array means "do not emit this sub-section".
-    /// </summary>
+
+    // Opaque sections preserved verbatim for byte-exact round-trip. WaterColors
+    // and WaterNames include their marker + u32 size header; TmSection is the
+    // body only (emitted only when HasTm != 0). Empty = "do not emit".
     public byte[] WaterColorsSection { get; init; } = [];
-    /// <summary>
-    /// Opaque WaterNames sub-section bytes including the 2-byte marker and u32 size header
-    /// (vanilla marker is "WI"). Cosmetic to the renderer but preserved for byte-exact round-trip.
-    /// Empty array means "do not emit this sub-section".
-    /// </summary>
     public byte[] WaterNamesSection { get; init; } = [];
-    /// <summary>
-    /// Opaque trailing bytes of the T3 body after the three height arrays
-    /// (CM/UM sub-sections, embedded minimap image). Preserved verbatim.
-    /// </summary>
     public byte[] T3Tail { get; init; } = [];
-    /// <summary>
-    /// Opaque body of the optional TM lighting-preset sub-section (without the "TM" marker
-    /// and u32 size header). Only emitted when <see cref="HasTm"/> is non-zero.
-    /// </summary>
     public byte[] TmSection { get; init; } = [];
-    /// <summary>
-    /// Opaque trailing bytes of the TN section after the optional TM sub-section.
-    /// Vanilla scenarios have a 2-byte trailer here.
-    /// </summary>
     public byte[] TnTrail { get; init; } = [];
 
     public static ScenarioTerrain? TryParse(ScenarioFile scenario)
@@ -170,7 +131,6 @@ public sealed class ScenarioTerrain
         var mapX = (int)BinaryPrimitives.ReadUInt32LittleEndian(t3.Slice(off + 4));
         off += 8;
 
-        // 2 unknown floats
         if (off + 8 > t3.Length) return null;
         var unkF0 = BitConverter.ToSingle(t3.Slice(off, 4));
         var unkF1 = BitConverter.ToSingle(t3.Slice(off + 4, 4));
@@ -183,12 +143,9 @@ public sealed class ScenarioTerrain
         var tilePtMarker = ScenarioFile.ReadMarker(t3, off);
         var tilePt = ReadList<byte>(t3, ref off);
 
-        // WaterColors and WaterNames are cosmetic metadata for the water palette.
-        // Captured opaquely (with marker + size header) for byte-exact round-trip.
         var waterColorsSection = ReadFullSizeSection(t3, ref off);
         var waterNamesSection = ReadFullSizeSection(t3, ref off);
 
-        // WaterType is per-tile: 255 = no water sentinel, other values index into WaterNames.
         var waterTypeMarker = ScenarioFile.ReadMarker(t3, off);
         var waterType = ReadList<byte>(t3, ref off);
 

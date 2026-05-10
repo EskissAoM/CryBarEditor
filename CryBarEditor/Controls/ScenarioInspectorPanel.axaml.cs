@@ -22,11 +22,6 @@ public partial class ScenarioInspectorPanel : UserControl
 
     public event System.Action? SelectBarRequested;
 
-    // Save-bar state. The inspector hosts the Save / Save As / Discard buttons
-    // (and the dirty indicator) that were previously in a separate ScenarioToolbar
-    // row above the scenario tab strip; merging them in here reclaims vertical
-    // space for the 3D viewer. MainWindow wires SaveRequested et al. to its
-    // existing handlers via BindEditor().
     ScenarioEditor? _boundEditor;
     string? _boundSourcePath;
 
@@ -34,30 +29,21 @@ public partial class ScenarioInspectorPanel : UserControl
     public event System.Action? SaveAsRequested;
     public event System.Action? DiscardRequested;
 
-    // MainWindow wires this in Task 24 to dispatch through ScenarioEditor.Execute.
-    // Null until then; handlers no-op when null.
+    // Wired by MainWindow; null = handlers no-op.
     public System.Action<IScenarioCommand?>? ExecuteCommand;
 
-    // MainWindow wires this so the proto picker can lazy-load the FULL game proto
-    // list from proto.xml.XMB on first open. Null is fine -- caller falls back
-    // to the scenario's own TM table.
+    // Lazy-loaded full game lists for the pickers. Null = picker falls back to
+    // the scenario's own TM table / TerrainGroups.
     public System.Func<System.Threading.Tasks.Task<List<string>?>>? LoadProtoNamesAsync;
-
-    // MainWindow wires this so the terrain texture picker can lazy-load the FULL
-    // game terrain list from terrain_types.xml.XMB on first open. Null is fine
-    // -- caller falls back to the scenario's own TerrainGroups.
     public System.Func<System.Threading.Tasks.Task<TerrainTypesCache?>>? LoadTerrainTypesAsync;
 
     ScenarioPreviewData? _data;
 
-    // Suppress flags guard against ValueChanged/SelectionChanged firing while we
-    // populate controls during UpdateSelection (otherwise Populate->Handler->Command
-    // would feed ghost commands into the editor).
+    // Guard ValueChanged/SelectionChanged from firing while we populate controls.
     bool _suppressWaterChange;
     bool _suppressHeightChange;
     bool _suppressEntityChange;
 
-    // Cached player options used by the entity ComboBox. Built once on first use.
     static List<PlayerOption>? _playerOptions;
 
     void SelectBarClick(object? sender, RoutedEventArgs e) => SelectBarRequested?.Invoke();

@@ -12,19 +12,17 @@ public static class ScenarioEntityListBuilder
         var j1 = scenario.GetJ1();
         if (j1 is null || !j1.Parsed) return [];
 
-        // First TM/PT section is the protounit name table that Z1 entities reference by index
+        // TM/PT holds the proto name table that Z1 entities reference by index.
         List<string> protoNames = [];
+        ScenarioSection? z1 = null;
         foreach (var sub in j1.Sections!)
         {
-            if (sub.Marker == "TM" || sub.Marker == "PT")
-            {
+            if (protoNames.Count == 0 && (sub.Marker == "TM" || sub.Marker == "PT"))
                 protoNames = ScenarioFile.ReadTmStrings(sub.Data);
-                break;
-            }
+            else if (z1 is null && sub.Marker == "Z1")
+                z1 = sub;
+            if (protoNames.Count > 0 && z1 is not null) break;
         }
-
-        ScenarioSection? z1 = null;
-        foreach (var sub in j1.Sections) if (sub.Marker == "Z1") { z1 = sub; break; }
         if (z1 is null) return [];
 
         return ParseZ1(z1.Data, protoNames);
@@ -102,25 +100,19 @@ public static class ScenarioEntityListBuilder
         if (!ScenarioFile.GetEntityOffsets(h1, out int posOff, out int rotOff, out int enEnd))
             return false;
 
-        // playerId is a single byte at offset 14, NOT an int32 -- reading 4 bytes
-        // here used to pull garbage in for high values, breaking color/team grouping.
+        // playerId is a single byte at offset 14 (not int32).
         playerId = h1[14];
 
-        // protoIndex lives in the P1 sub-section (new format) or inline immediately
-        // after EN end (old format). The unitIdCopy at offset 6 is unrelated.
         if (ScenarioFile.TryReadProtoIndex(h1, enEnd, out var pi))
             protoIndex = (int)pi;
 
-        // The file stores position as (gameZ, gameY, gameX) -- first float is the
-        // game's Z axis, third is X. Map them onto Vector3 in game-axis order so
-        // Position.X means gameX downstream.
+        // File order is (gameZ, gameY, gameX); remap to Vector3 game-axis order.
         pos = new Vector3(
             BitConverter.ToSingle(h1.Slice(posOff + 8, 4)),
             BitConverter.ToSingle(h1.Slice(posOff + 4, 4)),
             BitConverter.ToSingle(h1.Slice(posOff, 4)));
 
-        // Rotation matrix: 9 LE floats (36 bytes) immediately after the 12-byte position.
-        // Stored in game-space LH; do not reorient here. Round-trip must be byte-identical.
+        // 9 LE floats (game-space LH; do NOT reorient -- byte-identical round-trip).
         if (rotOff + 36 > h1.Length) return false;
         rotation = new Matrix3x3(
             BinaryPrimitives.ReadSingleLittleEndian(h1.Slice(rotOff, 4)),
@@ -133,17 +125,9 @@ public static class ScenarioEntityListBuilder
             BinaryPrimitives.ReadSingleLittleEndian(h1.Slice(rotOff + 28, 4)),
             BinaryPrimitives.ReadSingleLittleEndian(h1.Slice(rotOff + 32, 4)));
 
-        // H1Prefix: EN body bytes after the EN magic+size header (h1[0..5]) up to Position.
-        // Contains unit_id_copy, magic zero, player_id, unk_len, unk2/unk3 padding blocks.
         h1Prefix = h1.Slice(6, posOff - 6).ToArray();
-
-        // H1EnTail: bytes inside the EN section after the rotation matrix.
-        // 0 bytes for new format; 1 byte (optional ignore13 bool) for old format.
         int tailStart = rotOff + 36;
         h1EnTail = enEnd > tailStart ? h1.Slice(tailStart, enEnd - tailStart).ToArray() : [];
-
-        // H1Suffix: bytes after the EN section to end of H1 record. Includes UnitP1
-        // (name_index = ProtoIndex), UnitP2, markers, 2x fake_p1.
         h1Suffix = enEnd < h1.Length ? h1.Slice(enEnd).ToArray() : [];
         return true;
     }

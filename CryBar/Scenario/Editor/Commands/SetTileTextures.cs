@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 
 namespace CryBar.Scenario.Editor.Commands;
 
@@ -33,7 +34,7 @@ public sealed class SetTileTextures : IScenarioCommand
             if (oldG[i] != newGroup || oldS[i] != newSub) anyChange = true;
         }
         if (!anyChange) return null;
-        return new SetTileTextures(System.Linq.Enumerable.ToArray(tileIdx), newGroup, newSub, oldG, oldS);
+        return new SetTileTextures(tileIdx.ToArray(), newGroup, newSub, oldG, oldS);
     }
 
     public void Apply(ScenarioTerrain terrain, List<ScenarioEntity> _)

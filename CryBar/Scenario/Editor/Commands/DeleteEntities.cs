@@ -1,10 +1,10 @@
 using System.Collections.Generic;
-using System.Linq;
 
 namespace CryBar.Scenario.Editor.Commands;
 
 public sealed class DeleteEntities : IScenarioCommand
 {
+    // Sorted by OriginalIndex ascending; Apply walks backward, Undo forward.
     readonly (int OriginalIndex, ScenarioEntity Snapshot)[] _removed;
 
     DeleteEntities((int, ScenarioEntity)[] removed) { _removed = removed; }
@@ -24,20 +24,19 @@ public sealed class DeleteEntities : IScenarioCommand
                 removed.Add((i, entities[i]));
         }
         if (removed.Count == 0) return null;
+        removed.Sort((a, b) => a.Item1.CompareTo(b.Item1));
         return new DeleteEntities(removed.ToArray());
     }
 
     public void Apply(ScenarioTerrain _, List<ScenarioEntity> entities)
     {
-        // Remove highest-index-first so earlier indices stay valid
-        var ordered = _removed.OrderByDescending(r => r.OriginalIndex);
-        foreach (var r in ordered) entities.RemoveAt(r.OriginalIndex);
+        for (int i = _removed.Length - 1; i >= 0; i--)
+            entities.RemoveAt(_removed[i].OriginalIndex);
     }
 
     public void Undo(ScenarioTerrain _, List<ScenarioEntity> entities)
     {
-        // Re-insert lowest-index-first so target indices align
-        var ordered = _removed.OrderBy(r => r.OriginalIndex);
-        foreach (var r in ordered) entities.Insert(r.OriginalIndex, r.Snapshot);
+        for (int i = 0; i < _removed.Length; i++)
+            entities.Insert(_removed[i].OriginalIndex, _removed[i].Snapshot);
     }
 }

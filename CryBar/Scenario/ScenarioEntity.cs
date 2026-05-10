@@ -11,17 +11,12 @@ public sealed class ScenarioEntity
     public required Vector3 Position { get; set; }
     public required Matrix3x3 Rotation { get; set; }
 
-    // EN body header bytes from h1[6] (after EN magic + enSize) up to start of Position.
-    // PlayerId lives at offset 8 within this blob (the u32 player_id field).
-    // Length = posOff - 6 (i.e. 28 if unk_len=12, 32 if unk_len=16).
+    // Opaque H1 bytes captured for byte-equivalent round-trip.
+    // Prefix: h1[6..posOff] (PlayerId at +8 inside the blob).
+    // EnTail: bytes between rotation matrix and EN end (1 byte for old format, 0 for new).
+    // Suffix: bytes after EN end (UnitP1, UnitP2, markers, fake_p1 etc.).
     public required byte[] H1Prefix { get; init; }
-
-    // Bytes inside the EN section that come AFTER the rotation matrix.
-    // 0 bytes for new-format scenarios; 1 byte (optional ignore13 bool) for old format.
     public required byte[] H1EnTail { get; init; }
-
-    // Bytes AFTER the EN section ends, to end of H1 record.
-    // Contains UnitP1 (with name_index = ProtoIndex), UnitP2, markers, 2x fake_p1.
     public required byte[] H1Suffix { get; init; }
 }
 
@@ -48,18 +43,11 @@ public readonly struct Matrix3x3 : System.IEquatable<Matrix3x3>
         float r = yawDeg * (float)System.Math.PI / 180f;
         float c = (float)System.Math.Cos(r);
         float s = (float)System.Math.Sin(r);
-        // Yaw around Y (game is Y-up). Standard right-handed rotation matrix:
-        //   [ c  0  s ]
-        //   [ 0  1  0 ]
-        //   [-s  0  c ]
         return new Matrix3x3(c, 0, s, 0, 1, 0, -s, 0, c);
     }
 
     public float ExtractYawDegrees()
-    {
-        // For a yaw-only matrix, M13 = sin(yaw), M11 = cos(yaw).
-        return (float)(System.Math.Atan2(M13, M11) * 180.0 / System.Math.PI);
-    }
+        => (float)(System.Math.Atan2(M13, M11) * 180.0 / System.Math.PI);
 
     public Vector3 Multiply(Vector3 v) => new(
         M11 * v.X + M12 * v.Y + M13 * v.Z,

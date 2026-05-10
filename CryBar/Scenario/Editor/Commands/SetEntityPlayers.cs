@@ -17,9 +17,7 @@ public sealed class SetEntityPlayers : IScenarioCommand
 
     public static SetEntityPlayers? Create(IReadOnlyList<ScenarioEntity> entities, IReadOnlyList<uint> ids, byte newPlayer)
     {
-        var idToIndex = new Dictionary<uint, int>(entities.Count);
-        for (int i = 0; i < entities.Count; i++) idToIndex[entities[i].EntityId] = i;
-
+        var idToIndex = CommandHelpers.BuildIdToIndex(entities);
         bool anyChange = false;
         var old = new byte[ids.Count];
         for (int i = 0; i < ids.Count; i++)
@@ -33,16 +31,14 @@ public sealed class SetEntityPlayers : IScenarioCommand
 
     public void Apply(ScenarioTerrain _, List<ScenarioEntity> entities)
     {
-        var idToIndex = new Dictionary<uint, int>(entities.Count);
-        for (int i = 0; i < entities.Count; i++) idToIndex[entities[i].EntityId] = i;
+        var idToIndex = CommandHelpers.BuildIdToIndex(entities);
         foreach (var id in _ids)
             entities[idToIndex[id]].PlayerId = _newPlayer;
     }
 
     public void Undo(ScenarioTerrain _, List<ScenarioEntity> entities)
     {
-        var idToIndex = new Dictionary<uint, int>(entities.Count);
-        for (int i = 0; i < entities.Count; i++) idToIndex[entities[i].EntityId] = i;
+        var idToIndex = CommandHelpers.BuildIdToIndex(entities);
         for (int i = 0; i < _ids.Length; i++)
             entities[idToIndex[_ids[i]]].PlayerId = _old[i];
     }

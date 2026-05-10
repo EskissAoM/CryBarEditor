@@ -21,9 +21,7 @@ public sealed class SetEntityPositions : IScenarioCommand
         if (ids.Count != newPositions.Count)
             throw new System.ArgumentException("ids and newPositions must have equal counts");
 
-        var idToIndex = new Dictionary<uint, int>(entities.Count);
-        for (int i = 0; i < entities.Count; i++) idToIndex[entities[i].EntityId] = i;
-
+        var idToIndex = CommandHelpers.BuildIdToIndex(entities);
         bool anyChange = false;
         var old = new Vector3[ids.Count];
         for (int i = 0; i < ids.Count; i++)
@@ -37,16 +35,14 @@ public sealed class SetEntityPositions : IScenarioCommand
 
     public void Apply(ScenarioTerrain _, List<ScenarioEntity> entities)
     {
-        var idToIndex = new Dictionary<uint, int>(entities.Count);
-        for (int i = 0; i < entities.Count; i++) idToIndex[entities[i].EntityId] = i;
+        var idToIndex = CommandHelpers.BuildIdToIndex(entities);
         for (int i = 0; i < _ids.Length; i++)
             entities[idToIndex[_ids[i]]].Position = _new[i];
     }
 
     public void Undo(ScenarioTerrain _, List<ScenarioEntity> entities)
     {
-        var idToIndex = new Dictionary<uint, int>(entities.Count);
-        for (int i = 0; i < entities.Count; i++) idToIndex[entities[i].EntityId] = i;
+        var idToIndex = CommandHelpers.BuildIdToIndex(entities);
         for (int i = 0; i < _ids.Length; i++)
             entities[idToIndex[_ids[i]]].Position = _old[i];
     }

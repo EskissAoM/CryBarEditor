@@ -4,9 +4,8 @@ namespace CryBar.Scenario.Editor;
 
 public static class VertexHeightHelpers
 {
-    /// Returns the set of unique vertex indices that are corners of any tile
-    /// in the input. Each tile (tx, tz) has 4 corners; shared corners between
-    /// adjacent tiles are returned once.
+    // Returns unique corner-vertex indices for the given tiles. Adjacent tiles
+    // share corners; each shared corner is returned once.
     public static HashSet<int> UniqueCornerVertices(IEnumerable<int> tileIdx, int mapSizeX)
     {
         var rowStride = mapSizeX + 1;

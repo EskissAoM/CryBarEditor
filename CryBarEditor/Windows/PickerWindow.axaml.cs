@@ -19,19 +19,18 @@ public sealed class PickerItem
 
 public partial class PickerWindow : SimpleWindow
 {
-    // Muted-but-distinct hues that read well on the dark #171717 listbox background.
     static readonly IBrush[] GroupPalette =
     {
-        new SolidColorBrush(Color.FromRgb(0x7f, 0xbf, 0xff)), // light blue
-        new SolidColorBrush(Color.FromRgb(0x7f, 0xff, 0x9c)), // light green
-        new SolidColorBrush(Color.FromRgb(0xff, 0xb3, 0x7f)), // peach
-        new SolidColorBrush(Color.FromRgb(0xff, 0x9c, 0xc8)), // pink
-        new SolidColorBrush(Color.FromRgb(0xc8, 0x9c, 0xff)), // lavender
-        new SolidColorBrush(Color.FromRgb(0xff, 0xe0, 0x7f)), // light yellow
-        new SolidColorBrush(Color.FromRgb(0x7f, 0xe0, 0xc8)), // mint
-        new SolidColorBrush(Color.FromRgb(0xe0, 0xc8, 0x9c)), // tan
-        new SolidColorBrush(Color.FromRgb(0xff, 0x9c, 0x9c)), // salmon
-        new SolidColorBrush(Color.FromRgb(0x9c, 0xff, 0xff)), // pale cyan
+        new SolidColorBrush(Color.FromRgb(0x7f, 0xbf, 0xff)),
+        new SolidColorBrush(Color.FromRgb(0x7f, 0xff, 0x9c)),
+        new SolidColorBrush(Color.FromRgb(0xff, 0xb3, 0x7f)),
+        new SolidColorBrush(Color.FromRgb(0xff, 0x9c, 0xc8)),
+        new SolidColorBrush(Color.FromRgb(0xc8, 0x9c, 0xff)),
+        new SolidColorBrush(Color.FromRgb(0xff, 0xe0, 0x7f)),
+        new SolidColorBrush(Color.FromRgb(0x7f, 0xe0, 0xc8)),
+        new SolidColorBrush(Color.FromRgb(0xe0, 0xc8, 0x9c)),
+        new SolidColorBrush(Color.FromRgb(0xff, 0x9c, 0x9c)),
+        new SolidColorBrush(Color.FromRgb(0x9c, 0xff, 0xff)),
     };
 
     readonly IReadOnlyList<PickerItem> _allItems;
@@ -114,26 +113,28 @@ public partial class PickerWindow : SimpleWindow
         var prevSelected = _selectedItem;
         FilteredItems.Clear();
         var filter = _filter.Trim();
+        bool prevStillVisible = false;
         if (filter.Length == 0)
         {
             foreach (var it in _allItems) FilteredItems.Add(it);
+            prevStillVisible = prevSelected != null;
         }
         else
         {
+            var cmp = System.StringComparison.OrdinalIgnoreCase;
             foreach (var it in _allItems)
             {
-                var combined = it.Group is null ? it.Display : it.Group + "|" + it.Display;
-                if (combined.Contains(filter, System.StringComparison.OrdinalIgnoreCase))
+                if (it.Display.Contains(filter, cmp) ||
+                    (it.Group is not null && it.Group.Contains(filter, cmp)))
+                {
                     FilteredItems.Add(it);
+                    if (ReferenceEquals(it, prevSelected)) prevStillVisible = true;
+                }
             }
         }
         OnPropertyChanged(nameof(StatusText));
 
-        // Preserve selection when still in the filtered list, otherwise clear it
-        if (prevSelected != null && FilteredItems.Contains(prevSelected))
-            SelectedItem = prevSelected;
-        else
-            SelectedItem = null;
+        SelectedItem = prevStillVisible ? prevSelected : null;
     }
 
     void ListBox_DoubleTapped(object? sender, Avalonia.Input.TappedEventArgs e)
