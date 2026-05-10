@@ -289,8 +289,9 @@ public partial class MainWindow
     void OnInspectorClearSelection() => _scenarioData?.Selection.Clear();
 
     // Shift+click box-selects everything in the cuboid between the last single-click
-    // anchor and this hit. Y tolerance covers entities on hills.
-    const float BoxSelectHeightTolerance = 10f;
+    // anchor and this hit. Y tolerance is generous so seabed/hill height variation
+    // doesn't drop entities the user clearly meant to grab.
+    const float BoxSelectHeightTolerance = 15f;
     bool TryShiftBoxSelect(PickHit hit)
     {
         if (_scenarioData is null) return false;
