@@ -766,18 +766,11 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.Disable(GL_BLEND);
     }
 
-    static (float r, float g, float b, float a) PlayerColor(int playerId) => playerId switch
+    static (float r, float g, float b, float a) PlayerColor(int playerId)
     {
-        0 => (0.50f, 0.50f, 0.50f, 1f),  // Gaia / neutral
-        1 => (0.30f, 0.50f, 1.00f, 1f),  // Blue
-        2 => (1.00f, 0.20f, 0.20f, 1f),  // Red
-        3 => (0.20f, 0.85f, 0.30f, 1f),  // Green
-        4 => (1.00f, 0.85f, 0.20f, 1f),  // Yellow
-        5 => (0.20f, 0.85f, 0.85f, 1f),  // Cyan
-        6 => (0.85f, 0.40f, 0.10f, 1f),  // Orange
-        7 => (0.55f, 0.30f, 0.85f, 1f),  // Purple
-        _ => (1.00f, 0.40f, 0.85f, 1f),  // Pink (catch-all)
-    };
+        var c = CryBar.Scenario.PlayerColors.GetRgb((byte)playerId);
+        return (c.R, c.G, c.B, 1f);
+    }
 
     public readonly record struct WorldRayHit(int TileX, int TileZ, int VertexX, int VertexZ, float Height);
 
