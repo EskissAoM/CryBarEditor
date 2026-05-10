@@ -168,9 +168,12 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
     unsafe delegate* unmanaged<float, void> _glLineWidth;
     unsafe delegate* unmanaged<int, float, float, float, float, void> _glUniform4f;
 
+    Window? _hookedWindow;
+
     public GlScenarioPreviewControl()
     {
         AttachedToVisualTree += OnAttachedToVisualTree_DragMove;
+        DetachedFromVisualTree += OnDetachedFromVisualTree_DragMove;
     }
 
     void OnAttachedToVisualTree_DragMove(object? sender, VisualTreeAttachmentEventArgs e)
@@ -179,8 +182,18 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         if (TopLevel.GetTopLevel(this) is Window w)
         {
             w.Deactivated += OnTopLevelDeactivated;
+            _hookedWindow = w;
             _windowDeactivateHooked = true;
         }
+    }
+
+    void OnDetachedFromVisualTree_DragMove(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        if (!_windowDeactivateHooked) return;
+        if (_hookedWindow is not null)
+            _hookedWindow.Deactivated -= OnTopLevelDeactivated;
+        _hookedWindow = null;
+        _windowDeactivateHooked = false;
     }
 
     void OnTopLevelDeactivated(object? sender, EventArgs e)

@@ -87,6 +87,9 @@ public static class TnWriter
 
         // Single shared count for Heights/WaterHeights/UnkHeights.
         var heightCount = terrain.Heights.Length;
+        if (terrain.WaterHeights.Length != heightCount || terrain.UnkHeights.Length != heightCount)
+            throw new InvalidOperationException(
+                $"Terrain height arrays diverged: Heights={heightCount}, WaterHeights={terrain.WaterHeights.Length}, UnkHeights={terrain.UnkHeights.Length}");
         BinaryPrimitives.WriteUInt32LittleEndian(u32, (uint)heightCount);
         ms.Write(u32);
         WriteFloatArray(ms, terrain.Heights);
