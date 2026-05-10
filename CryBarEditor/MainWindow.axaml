@@ -507,7 +507,8 @@
 							</Grid>
 						</Grid>
 
-						<Grid x:Name="_scenarioRoot" IsVisible="False" RowDefinitions="Auto,Auto,*">
+						<Grid x:Name="_scenarioRoot" IsVisible="False" RowDefinitions="Auto,Auto,*"
+							  Focusable="True" KeyDown="ScenarioRoot_KeyDown">
 							<controls:ScenarioToolbar Grid.Row="0" x:Name="_scenarioToolbar" />
 							<TabStrip Grid.Row="1" x:Name="_scenarioTabStrip"
 									  Classes="structuredPreviewTabs"

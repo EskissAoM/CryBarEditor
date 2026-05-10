@@ -216,6 +216,42 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         RequestNextFrameRendering();
     }
 
+    /// <summary>
+    /// Called by the editor host after a command Apply/Undo/Redo. Flips the
+    /// upload flags relevant to the published RenderHint so the next render
+    /// pass rebuilds only the buffers that actually changed.
+    /// </summary>
+    public void OnDataMutated(RenderHint hint)
+    {
+        if (hint == RenderHint.None) return;
+
+        // Terrain texture or geometry edit -> rebuild the heightfield mesh.
+        // UploadMesh re-bakes both per-vertex slope and per-tile slice indices
+        // from the live ScenarioTerrain, so a single flag covers both hints.
+        if ((hint & (RenderHint.TerrainTexture | RenderHint.TerrainGeometry)) != 0)
+            _meshUploaded = false;
+
+        // Water mesh tracks per-tile water type AND vertex heights, so geometry
+        // edits also force a water rebuild.
+        if ((hint & (RenderHint.TerrainWater | RenderHint.TerrainGeometry)) != 0)
+            _waterUploaded = false;
+
+        // Entity list (add/remove) or per-entity field (proto/player/pos/rot)
+        // edits -> billboards + ring overlay both re-emit instance data.
+        if ((hint & (RenderHint.EntityList | RenderHint.EntityField)) != 0)
+        {
+            _entitiesUploaded = false;
+            _entitySelectDirty = true;
+        }
+
+        // Tile-edit hints don't touch the tile-selection ring directly, but the
+        // ring's vertex y reads heights, so geometry-edit forces a rebuild.
+        if ((hint & RenderHint.TerrainGeometry) != 0)
+            _tileSelectDirty = true;
+
+        RequestNextFrameRendering();
+    }
+
     const string VertexShaderBody = """
         layout(location = 0) in vec3 aPos;
         // Per-vertex height-field slope (dh/dx, dh/dz). Smoothly interpolated so the

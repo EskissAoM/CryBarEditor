@@ -1,9 +1,15 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using CryBar.Bar;
 using CryBar.Scenario;
+using CryBar.Scenario.Editor;
 using CryBarEditor.Classes;
 using CryBarEditor.Controls;
 
@@ -68,7 +74,217 @@ public partial class MainWindow
             Dispatcher.UIThread.Post(() => _scenarioInspector.UpdateSelection(_scenarioData));
         _scenarioInspector.UpdateSelection(data);
 
+        // Editor + toolbar + drag-commit wiring (Task 24). Use the -=/+= pattern
+        // because FlushPendingScenario3D may run more than once for a single
+        // scenario (e.g. tab toggle); HideScenarioPreview also drops the data
+        // so subsequent attaches start from a clean slate.
+        data.Editor.Changed += () =>
+            Dispatcher.UIThread.Post(() => OnEditorChanged(data));
+
+        _scenarioInspector.ExecuteCommand = cmd => data.Editor.Execute(cmd);
+
+        _scenarioToolbar.Bind(data.Editor, sourcePath: ResolveScenarioSourcePath());
+        _scenarioToolbar.SaveRequested    -= OnToolbarSave;
+        _scenarioToolbar.SaveAsRequested  -= OnToolbarSaveAs;
+        _scenarioToolbar.DiscardRequested -= OnToolbarDiscard;
+        _scenarioToolbar.SaveRequested    += OnToolbarSave;
+        _scenarioToolbar.SaveAsRequested  += OnToolbarSaveAs;
+        _scenarioToolbar.DiscardRequested += OnToolbarDiscard;
+
+        if (_scenarioGl is not null)
+        {
+            _scenarioGl.MoveCommitted -= OnDragMoveCommitted;
+            _scenarioGl.MoveCommitted += OnDragMoveCommitted;
+        }
+
         _ = LoadScenarioTexturesAsync(data, data.Cancellation.Token);
+    }
+
+    void OnEditorChanged(ScenarioPreviewData data)
+    {
+        // The closure that calls us captures `data`, not _scenarioData. After
+        // a scenario swap the old data's editor may still fire Changed once
+        // before being GC'd; ignore those events so we don't reset the
+        // inspector to a disposed scenario.
+        if (!ReferenceEquals(data, _scenarioData)) return;
+
+        // Read the hint published by the most recent command. Discard() sets
+        // LastChange to null -> RenderHint.None means "rebuild everything";
+        // we treat None as a signal to rebuild all four buffers.
+        var hint = data.Editor.LastChange?.Hint;
+        var effective = hint ?? (RenderHint.TerrainTexture | RenderHint.TerrainGeometry
+                                | RenderHint.TerrainWater   | RenderHint.EntityList);
+
+        // EntityList = entity added/removed. Selection may now reference dead
+        // ids, so prune them BEFORE the renderer rebuild reads selection state.
+        if ((effective & RenderHint.EntityList) != 0)
+        {
+            var liveIds = new HashSet<uint>();
+            foreach (var e in data.Entities) liveIds.Add(e.EntityId);
+            List<uint>? toRemove = null;
+            foreach (var id in data.Selection.Entities)
+            {
+                if (!liveIds.Contains(id))
+                {
+                    toRemove ??= new List<uint>();
+                    toRemove.Add(id);
+                }
+            }
+            if (toRemove is not null)
+                foreach (var id in toRemove) data.Selection.RemoveEntity(id);
+        }
+
+        _scenarioGl?.OnDataMutated(effective);
+        _scenarioInspector.UpdateSelection(data);
+    }
+
+    void OnDragMoveCommitted(IScenarioCommand? cmd)
+    {
+        // Routed through editor.Execute so the drag is undoable like every
+        // other mutation. Null cmd (no entities actually moved) is a no-op
+        // inside Execute itself, so we don't need to guard here.
+        _scenarioData?.Editor.Execute(cmd);
+    }
+
+    /// <summary>
+    /// Best-effort absolute path for the currently-previewed scenario. Used
+    /// only as a fallback start-folder for "Save As" when ScenarioLastSaveDirectory
+    /// is empty AND the editor has never been saved before. Returns null for
+    /// BAR-archive entries (no on-disk path) and for everything that isn't a
+    /// loose file selection.
+    /// </summary>
+    string? ResolveScenarioSourcePath()
+    {
+        if (_currentlyPreviewedItem is RootFileEntry rfe && Directory.Exists(_rootDirectory))
+            return Path.Combine(_rootDirectory, rfe.RelativePath);
+        return null;
+    }
+
+    async void OnToolbarSave()
+    {
+        if (_scenarioData is null) return;
+        var ed = _scenarioData.Editor;
+        if (ed.SavePath is null) { await OnToolbarSaveAsAsync(); return; }
+        await DoSaveTo(_scenarioData, ed.SavePath);
+    }
+
+    async void OnToolbarSaveAs() => await OnToolbarSaveAsAsync();
+
+    async Task OnToolbarSaveAsAsync()
+    {
+        if (_scenarioData is null) return;
+        var ed = _scenarioData.Editor;
+        var sourcePath = ResolveScenarioSourcePath();
+
+        // Folder priority: explicit per-session memory, then editor.SavePath
+        // dir (re-saving an already-saved file), then the source loose-file dir.
+        string? startDir = _lastConfiguration?.ScenarioLastSaveDirectory;
+        if (string.IsNullOrEmpty(startDir) && ed.SavePath is not null)
+            startDir = Path.GetDirectoryName(ed.SavePath);
+        if (string.IsNullOrEmpty(startDir) && sourcePath is not null)
+            startDir = Path.GetDirectoryName(sourcePath);
+
+        IStorageFolder? startFolder = null;
+        if (!string.IsNullOrEmpty(startDir))
+            startFolder = await StorageProvider.TryGetFolderFromPathAsync(startDir);
+
+        var suggestedName = Path.GetFileName(ed.SavePath ?? sourcePath ?? "untitled.mythscn");
+        if (string.IsNullOrEmpty(suggestedName)) suggestedName = "untitled.mythscn";
+
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Save scenario as",
+            SuggestedFileName = suggestedName,
+            FileTypeChoices =
+            [
+                new FilePickerFileType("AoM Scenario") { Patterns = ["*.mythscn"] },
+            ],
+            SuggestedStartLocation = startFolder,
+        });
+        if (file is null) return;
+
+        var path = file.Path.LocalPath;
+        await DoSaveTo(_scenarioData, path);
+
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir))
+        {
+            _lastConfiguration ??= new Configuration();
+            _lastConfiguration.ScenarioLastSaveDirectory = dir;
+            SaveConfiguration();
+        }
+    }
+
+    async Task DoSaveTo(ScenarioPreviewData data, string path)
+    {
+        try
+        {
+            // Task.Run is legitimate here: every step (FlushParsedViews,
+            // ToBytes, CompressL33t, File.Create+Write) is SYNCHRONOUS, and
+            // a few-MB scenario can take noticeable time to compress. We're
+            // offloading sync work, not wrapping an already-async API.
+            await Task.Run(() =>
+            {
+                data.Scenario.FlushParsedViews(data.Terrain, data.Entities);
+                var bytes = data.Scenario.ToBytes();
+                var compressed = BarCompression.CompressL33t(bytes);
+                using var f = File.Create(path);
+                f.Write(compressed.Span);
+            });
+            data.Editor.MarkSaved(path);
+        }
+        catch (Exception ex)
+        {
+            await ShowError("Save failed:\n" + ex.Message);
+        }
+    }
+
+    async void OnToolbarDiscard()
+    {
+        if (_scenarioData is null) return;
+        var ed = _scenarioData.Editor;
+        if (!ed.IsDirty) return;
+        var ok = await Confirm("Discard changes?", $"Discard {ed.UndoCount} unsaved change(s)?");
+        if (!ok) return;
+        ed.Discard();
+    }
+
+    /// <summary>
+    /// Routed via the scenario root panel's KeyDown so shortcuts only fire
+    /// when the 3D editor is focused. Avoids global Ctrl+S/Z stealing keys
+    /// from text fields elsewhere in the app.
+    /// </summary>
+    void ScenarioRoot_KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (_scenarioData is null) return;
+        var ed = _scenarioData.Editor;
+        var ctrl  = (e.KeyModifiers & KeyModifiers.Control) != 0;
+        var shift = (e.KeyModifiers & KeyModifiers.Shift)   != 0;
+        if (!ctrl) return;
+
+        switch (e.Key)
+        {
+            case Key.S when shift:
+                _ = OnToolbarSaveAsAsync();
+                e.Handled = true;
+                break;
+            case Key.S:
+                OnToolbarSave();
+                e.Handled = true;
+                break;
+            case Key.Z when shift:
+                ed.Redo();
+                e.Handled = true;
+                break;
+            case Key.Z:
+                ed.Undo();
+                e.Handled = true;
+                break;
+            case Key.Y:
+                ed.Redo();
+                e.Handled = true;
+                break;
+        }
     }
 
     void OnInspectorClearSelection() => _scenarioData?.Selection.Clear();
@@ -202,6 +418,14 @@ public partial class MainWindow
     void HideScenarioPreview()
     {
         _pendingScenario3D = null;
+
+        // Detach toolbar + inspector from the going-away editor so the dirty
+        // dot clears and proto/tile pickers stop dispatching commands at
+        // a stale ScenarioEditor instance.
+        _scenarioToolbar.Bind(null, sourcePath: null);
+        _scenarioInspector.ExecuteCommand = null;
+        if (_scenarioGl is not null)
+            _scenarioGl.MoveCommitted -= OnDragMoveCommitted;
 
         // Dispose() cancels the data's CTS, which propagates to the in-flight load.
         _scenarioData?.Dispose();
