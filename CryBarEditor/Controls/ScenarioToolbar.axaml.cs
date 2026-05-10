@@ -42,9 +42,14 @@ public partial class ScenarioToolbar : UserControl
     {
         var hasEditor = _editor is not null;
         var dirty = hasEditor && _editor!.IsDirty;
+        // Save stays hidden until the user has explicitly chosen a target via
+        // Save As (editor.SavePath becomes non-null). Prevents accidentally
+        // overwriting the source mythscn while browsing game files.
+        var hasSavePath = hasEditor && _editor!.SavePath is not null;
 
         _dirtyIndicator.IsVisible = dirty;
-        _saveBtn.IsEnabled = dirty;
+        _saveBtn.IsVisible = hasSavePath;
+        _saveBtn.IsEnabled = hasSavePath && dirty;
         _saveAsBtn.IsEnabled = hasEditor;
         _discardBtn.IsEnabled = dirty;
         _pathLabel.Text = hasEditor

@@ -14,6 +14,7 @@
         <Button Grid.Column="1" x:Name="_saveBtn"
                 Content="Save" Click="OnSaveClick"
                 Margin="8,0,0,0" Padding="8,4"
+                IsVisible="False"
                 Background="#2c3a4f" Foreground="#cfd8e8" />
         <Button Grid.Column="2" x:Name="_saveAsBtn"
                 Content="Save As..." Click="OnSaveAsClick"
