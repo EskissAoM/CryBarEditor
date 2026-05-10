@@ -150,7 +150,9 @@ public partial class ScenarioInspectorPanel : UserControl
             if (count > 1) lines.AppendLine($"({tx}, {tz}) {tName}");
         }
 
-        _tileTextureBtn.Content = textureMixed ? "MIXED" : (sharedTexName ?? "?");
+        // TextBlock (not raw string) so underscores render literally; Button.Content as
+        // string is fed through AccessText which interprets _x as a mnemonic prefix.
+        _tileTextureBtn.Content = new TextBlock { Text = textureMixed ? "MIXED" : (sharedTexName ?? "?") };
 
         // Water types are byte 0..255 (255 = no water). Show plain ints in the combo.
         if (_tileWaterCombo.ItemsSource is null)
@@ -208,8 +210,9 @@ public partial class ScenarioInspectorPanel : UserControl
             if (count > 1) lines.AppendLine($"[{id}] {m.ProtoName}");
         }
 
-        // Populate proto button caption.
-        _entityProtoBtn.Content = protoMixed ? "MIXED" : (proto ?? "(none)");
+        // Populate proto button caption. TextBlock (not raw string) so underscores in
+        // proto names render literally; raw string Content goes through AccessText.
+        _entityProtoBtn.Content = new TextBlock { Text = protoMixed ? "MIXED" : (proto ?? "(none)") };
 
         // Player ComboBox: build options once, then select.
         if (_entityPlayerCombo.ItemsSource is null)
