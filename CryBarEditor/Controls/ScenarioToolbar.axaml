@@ -1,0 +1,32 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:CryBarEditor.Controls"
+             x:Class="CryBarEditor.Controls.ScenarioToolbar"
+             x:DataType="controls:ScenarioToolbar">
+    <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*" Margin="6,4">
+        <StackPanel Grid.Column="0" x:Name="_dirtyIndicator"
+                    Orientation="Horizontal" Spacing="6"
+                    VerticalAlignment="Center"
+                    IsVisible="False">
+            <Ellipse Width="10" Height="10" Fill="#FFB300" VerticalAlignment="Center" />
+            <TextBlock Text="unsaved" Foreground="#FFB300" VerticalAlignment="Center" />
+        </StackPanel>
+        <Button Grid.Column="1" x:Name="_saveBtn"
+                Content="Save" Click="OnSaveClick"
+                Margin="8,0,0,0" Padding="8,4"
+                Background="#2c3a4f" Foreground="#cfd8e8" />
+        <Button Grid.Column="2" x:Name="_saveAsBtn"
+                Content="Save As..." Click="OnSaveAsClick"
+                Margin="4,0,0,0" Padding="8,4"
+                Background="#2c3a4f" Foreground="#cfd8e8" />
+        <Button Grid.Column="3" x:Name="_discardBtn"
+                Content="Discard" Click="OnDiscardClick"
+                Margin="4,0,0,0" Padding="8,4"
+                Background="#5a2c2c" Foreground="#f1d6d6" />
+        <TextBlock Grid.Column="4" x:Name="_pathLabel"
+                   Foreground="#888"
+                   VerticalAlignment="Center"
+                   TextTrimming="CharacterEllipsis"
+                   Margin="12,0,0,0" />
+    </Grid>
+</UserControl>
