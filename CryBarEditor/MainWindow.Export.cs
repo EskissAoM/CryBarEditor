@@ -314,11 +314,8 @@ public partial class MainWindow
         {
             foreach (var (texName, texPath) in mat.Textures)
             {
-                bool isBase   = MaterialExporter.IsBaseColorRole(texName);
-                bool isNormal = !isBase && MaterialExporter.IsNormalRole(texName);
-                bool isMask1  = !isBase && !isNormal && MaterialExporter.IsMasks1Role(texName);
-                bool isMask2  = !isBase && !isNormal && !isMask1 && MaterialExporter.IsMasks2Role(texName);
-                if (!isBase && !isNormal && !isMask1 && !isMask2) continue;
+                var role = MaterialExporter.ClassifyRole(texName);
+                if (role is null) continue;
 
                 if (!textureTasks.ContainsKey(texPath) &&
                     resolved.Value.Textures.TryGetValue(texPath, out var texInfo))
@@ -329,14 +326,7 @@ public partial class MainWindow
                     {
                         var img = new DDTImage(texInfo.DdtData);
                         if (img.ParseHeader())
-                        {
-                            string ddtKey =
-                                isBase   ? mat.Name :
-                                isNormal ? $"{mat.Name}_normal" :
-                                isMask1  ? $"{mat.Name}_masks1" :
-                                           $"{mat.Name}_masks2";
-                            sourceDdtsOut.Add((ddtKey, img));
-                        }
+                            sourceDdtsOut.Add((MaterialExporter.GetDdtKey(mat.Name, role.Value), img));
                     }
                 }
             }
@@ -353,10 +343,13 @@ public partial class MainWindow
                 var pngBytes = task.Result;
                 if (pngBytes == null) continue;
 
-                if      (MaterialExporter.IsBaseColorRole(texName)) baseColorPng = pngBytes;
-                else if (MaterialExporter.IsNormalRole(texName))    normalPng    = pngBytes;
-                else if (MaterialExporter.IsMasks1Role(texName))    mask1Png     = pngBytes;
-                else if (MaterialExporter.IsMasks2Role(texName))    mask2Png     = pngBytes;
+                switch (MaterialExporter.ClassifyRole(texName))
+                {
+                    case TextureRole.BaseColor: baseColorPng = pngBytes; break;
+                    case TextureRole.Normal:    normalPng    = pngBytes; break;
+                    case TextureRole.Masks1:    mask1Png     = pngBytes; break;
+                    case TextureRole.Masks2:    mask2Png     = pngBytes; break;
+                }
             }
             matList.Add(new GlbExporter.GlbMaterial
             {

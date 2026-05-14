@@ -55,10 +55,7 @@ public sealed class TmmMaterialResolver
             {
                 foreach (var (texName, texPath) in mat.Textures)
                 {
-                    if (!MaterialExporter.IsBaseColorRole(texName) &&
-                        !MaterialExporter.IsNormalRole(texName)    &&
-                        !MaterialExporter.IsMasks1Role(texName)    &&
-                        !MaterialExporter.IsMasks2Role(texName))
+                    if (MaterialExporter.ClassifyRole(texName) is null)
                         continue;
                     if (textures.ContainsKey(texPath)) continue;
 

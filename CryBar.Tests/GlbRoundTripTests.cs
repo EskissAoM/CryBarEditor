@@ -1321,15 +1321,18 @@ public class GlbRoundTripTests
                 var pngBytes = await CryBar.Bar.ConversionHelper.ConvertDdtToPngBytes(texInfo.DdtData);
                 if (pngBytes is null) continue;
 
+                var role = MaterialExporter.ClassifyRole(texName);
+                if (role is null) continue;
                 var img = new DDTImage(texInfo.DdtData);
                 if (!img.ParseHeader()) continue;
-                string ddtKey;
-                if      (MaterialExporter.IsBaseColorRole(texName)) { bP  = pngBytes; ddtKey = mat.Name; }
-                else if (MaterialExporter.IsNormalRole(texName))    { nP  = pngBytes; ddtKey = mat.Name + "_normal"; }
-                else if (MaterialExporter.IsMasks1Role(texName))    { m1P = pngBytes; ddtKey = mat.Name + "_masks1"; }
-                else if (MaterialExporter.IsMasks2Role(texName))    { m2P = pngBytes; ddtKey = mat.Name + "_masks2"; }
-                else continue;
-                sourceDdts.Add((ddtKey, img));
+                switch (role.Value)
+                {
+                    case TextureRole.BaseColor: bP  = pngBytes; break;
+                    case TextureRole.Normal:    nP  = pngBytes; break;
+                    case TextureRole.Masks1:    m1P = pngBytes; break;
+                    case TextureRole.Masks2:    m2P = pngBytes; break;
+                }
+                sourceDdts.Add((MaterialExporter.GetDdtKey(mat.Name, role.Value), img));
             }
             matList.Add(new GlbExporter.GlbMaterial
             {
