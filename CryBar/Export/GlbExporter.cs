@@ -158,7 +158,7 @@ public static class GlbExporter
             afterIndices = ibmOffset + Align4(ibmByteLength);
         }
 
-        // Embedded images
+        // Embedded images: up to 4 per material (BaseColor, Normal, Mask1 ORM, Mask2 player-color).
         var imageOffsets = new List<int>();
         var imageLengths = new List<int>();
         if (hasMaterials)
@@ -176,6 +176,18 @@ public static class GlbExporter
                     imageOffsets.Add(afterIndices);
                     imageLengths.Add(mat.NormalMapPng.Length);
                     afterIndices += Align4(mat.NormalMapPng.Length);
+                }
+                if (mat.Mask1Png != null)
+                {
+                    imageOffsets.Add(afterIndices);
+                    imageLengths.Add(mat.Mask1Png.Length);
+                    afterIndices += Align4(mat.Mask1Png.Length);
+                }
+                if (mat.Mask2Png != null)
+                {
+                    imageOffsets.Add(afterIndices);
+                    imageLengths.Add(mat.Mask2Png.Length);
+                    afterIndices += Align4(mat.Mask2Png.Length);
                 }
             }
         }
@@ -302,6 +314,16 @@ public static class GlbExporter
                 if (mat.NormalMapPng != null)
                 {
                     mat.NormalMapPng.CopyTo(glb.AsSpan(binStart + imageOffsets[imgIdx]));
+                    imgIdx++;
+                }
+                if (mat.Mask1Png != null)
+                {
+                    mat.Mask1Png.CopyTo(glb.AsSpan(binStart + imageOffsets[imgIdx]));
+                    imgIdx++;
+                }
+                if (mat.Mask2Png != null)
+                {
+                    mat.Mask2Png.CopyTo(glb.AsSpan(binStart + imageOffsets[imgIdx]));
                     imgIdx++;
                 }
             }
@@ -862,38 +884,88 @@ public static class GlbExporter
         {
             int textureIndex = 0;
 
+            // Pre-pass: assign texture indices per material in slot order so we can reference them
+            // coherently from both the material JSON and the images array. MR and occlusion will
+            // share the Mask1 index.
+            var perMatTexIdx = new (int Base, int Normal, int Mask1, int Mask2)[materials!.Count];
+            for (int i = 0; i < materials.Count; i++)
+            {
+                var mat = materials[i];
+                int bIdx = -1, nIdx = -1, m1Idx = -1, m2Idx = -1;
+                if (mat.BaseColorPng != null) { bIdx  = textureIndex++; }
+                if (mat.NormalMapPng != null) { nIdx  = textureIndex++; }
+                if (mat.Mask1Png    != null) { m1Idx = textureIndex++; }
+                if (mat.Mask2Png    != null) { m2Idx = textureIndex++; }
+                perMatTexIdx[i] = (bIdx, nIdx, m1Idx, m2Idx);
+            }
+
             // Build materials
             w.WriteStartArray("materials");
-            foreach (var mat in materials!)
+            for (int i = 0; i < materials.Count; i++)
             {
+                var mat = materials[i];
+                var idx = perMatTexIdx[i];
+
                 w.WriteStartObject();
                 w.WriteString("name", mat.Name);
 
                 w.WriteStartObject("pbrMetallicRoughness");
-                w.WriteNumber("metallicFactor", 0);
-                w.WriteNumber("roughnessFactor", 1);
-                if (mat.BaseColorPng != null)
+                // When Mask1 is present, the texture drives both PBR factors at full strength.
+                // Otherwise use the historical baseline (metallic=0, roughness=1).
+                if (mat.Mask1Png != null)
+                {
+                    w.WriteNumber("metallicFactor", 1);
+                    w.WriteNumber("roughnessFactor", 1);
+                }
+                else
+                {
+                    w.WriteNumber("metallicFactor", 0);
+                    w.WriteNumber("roughnessFactor", 1);
+                }
+                if (idx.Base >= 0)
                 {
                     w.WriteStartObject("baseColorTexture");
-                    w.WriteNumber("index", textureIndex);
+                    w.WriteNumber("index", idx.Base);
                     w.WriteEndObject();
-                    textureIndex++;
+                }
+                if (idx.Mask1 >= 0)
+                {
+                    w.WriteStartObject("metallicRoughnessTexture");
+                    w.WriteNumber("index", idx.Mask1);
+                    w.WriteEndObject();
                 }
                 w.WriteEndObject(); // pbrMetallicRoughness
 
-                if (mat.NormalMapPng != null)
+                if (idx.Normal >= 0)
                 {
                     w.WriteStartObject("normalTexture");
-                    w.WriteNumber("index", textureIndex);
+                    w.WriteNumber("index", idx.Normal);
                     w.WriteEndObject();
-                    textureIndex++;
+                }
+
+                if (idx.Mask1 >= 0)
+                {
+                    w.WriteStartObject("occlusionTexture");
+                    w.WriteNumber("index", idx.Mask1);
+                    w.WriteEndObject();
+                }
+
+                if (idx.Mask2 >= 0)
+                {
+                    w.WriteStartObject("emissiveTexture");
+                    w.WriteNumber("index", idx.Mask2);
+                    w.WriteEndObject();
+                    w.WriteStartArray("emissiveFactor");
+                    w.WriteNumberValue(1f);
+                    w.WriteNumberValue(1f);
+                    w.WriteNumberValue(1f);
+                    w.WriteEndArray();
                 }
 
                 w.WriteEndObject();
             }
             w.WriteEndArray(); // materials
 
-            // Build textures
             int totalTextures = textureIndex;
             if (totalTextures > 0)
             {
@@ -907,34 +979,20 @@ public static class GlbExporter
                 }
                 w.WriteEndArray(); // textures
 
-                // Build images
                 w.WriteStartArray("images");
                 int bvImg = bvImageStart;
-                foreach (var mat in materials!)
+                foreach (var mat in materials)
                 {
-                    if (mat.BaseColorPng != null)
-                    {
-                        w.WriteStartObject();
-                        w.WriteString("mimeType", "image/png");
-                        w.WriteNumber("bufferView", bvImg);
-                        w.WriteEndObject();
-                        bvImg++;
-                    }
-                    if (mat.NormalMapPng != null)
-                    {
-                        w.WriteStartObject();
-                        w.WriteString("mimeType", "image/png");
-                        w.WriteNumber("bufferView", bvImg);
-                        w.WriteEndObject();
-                        bvImg++;
-                    }
+                    if (mat.BaseColorPng != null) { WriteImage(w, bvImg++); }
+                    if (mat.NormalMapPng != null) { WriteImage(w, bvImg++); }
+                    if (mat.Mask1Png    != null) { WriteImage(w, bvImg++); }
+                    if (mat.Mask2Png    != null) { WriteImage(w, bvImg++); }
                 }
                 w.WriteEndArray(); // images
 
-                // Samplers
                 w.WriteStartArray("samplers");
                 w.WriteStartObject();
-                w.WriteEndObject(); // default sampler
+                w.WriteEndObject();
                 w.WriteEndArray();
             }
         }
@@ -1165,6 +1223,14 @@ public static class GlbExporter
             tm[2], tm[6], tm[10], 0,
             tm[3], tm[7], tm[11], 1
         ];
+    }
+
+    static void WriteImage(System.Text.Json.Utf8JsonWriter w, int bufferView)
+    {
+        w.WriteStartObject();
+        w.WriteString("mimeType", "image/png");
+        w.WriteNumber("bufferView", bufferView);
+        w.WriteEndObject();
     }
 
     static int Align4(int value) => (value + 3) & ~3;
