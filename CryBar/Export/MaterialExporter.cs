@@ -122,4 +122,46 @@ public static class MaterialExporter
     public static bool IsNormalRole(string textureName) =>
         textureName.Equals("Normals", StringComparison.OrdinalIgnoreCase) ||
         textureName.Equals("Normal",  StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True if the texture role name maps to AOMR's Masks (ORM: R=Occlusion, G=Roughness, B=Metallic).</summary>
+    public static bool IsMasks1Role(string textureName) =>
+        textureName.Equals("Masks",  StringComparison.OrdinalIgnoreCase) ||
+        textureName.Equals("Mask1",  StringComparison.OrdinalIgnoreCase) ||
+        textureName.Equals("Masks1", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True if the texture role name maps to AOMR's Masks2 (player-color mask, R channel).</summary>
+    public static bool IsMasks2Role(string textureName) =>
+        textureName.Equals("Masks2", StringComparison.OrdinalIgnoreCase) ||
+        textureName.Equals("Mask2",  StringComparison.OrdinalIgnoreCase);
+
+    public static TextureRole? ClassifyRole(string textureName)
+    {
+        if (IsBaseColorRole(textureName)) return TextureRole.BaseColor;
+        if (IsNormalRole(textureName))    return TextureRole.Normal;
+        if (IsMasks1Role(textureName))    return TextureRole.Masks1;
+        if (IsMasks2Role(textureName))    return TextureRole.Masks2;
+        return null;
+    }
+
+    /// <summary>
+    /// DDT filename stem CryBar uses for a (material, role) pair. This is the single source
+    /// of truth coupling the GLB exporter ({matName}_masks1) to the GLB->TMM converter and
+    /// to the extras.crybar.ddt[] keys; changing one without the other corrupts round-trips.
+    /// </summary>
+    public static string GetDdtKey(string materialName, TextureRole role) => role switch
+    {
+        TextureRole.BaseColor => materialName,
+        TextureRole.Normal    => materialName + "_normal",
+        TextureRole.Masks1    => materialName + "_masks1",
+        TextureRole.Masks2    => materialName + "_masks2",
+        _ => throw new ArgumentOutOfRangeException(nameof(role)),
+    };
+}
+
+public enum TextureRole
+{
+    BaseColor,
+    Normal,
+    Masks1,
+    Masks2,
 }

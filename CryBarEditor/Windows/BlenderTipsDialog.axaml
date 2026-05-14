@@ -181,6 +181,78 @@
 					<!-- Separator -->
 					<Border BorderBrush="#333" BorderThickness="0,1,0,0" />
 
+					<!-- Section 2b: Texture role mapping (glTF PBR slots -> AOMR texture roles). -->
+					<StackPanel Spacing="6">
+						<TextBlock Text="Texture role mapping" FontWeight="Bold" FontSize="16" />
+						<TextBlock Foreground="#b0b0b0" FontSize="12" TextWrapping="Wrap"
+						           Text="CryBar exports each AOMR texture into a standard glTF PBR slot. When you round-trip a GLB through Blender, putting a texture into the matching slot will land it back in the right .ddt:" />
+
+						<Border BorderBrush="#333" BorderThickness="1" Margin="0,4,0,0">
+							<Grid ColumnDefinitions="220,170,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
+								<!-- Header -->
+								<Border Grid.Row="0" Grid.Column="0" Background="#1c1c1c" Padding="8,5">
+									<TextBlock Text="glTF slot in material" FontWeight="Bold" FontSize="13" Foreground="#d9d9d9" />
+								</Border>
+								<Border Grid.Row="0" Grid.Column="1" Background="#1c1c1c" Padding="8,5">
+									<TextBlock Text="AOMR role" FontWeight="Bold" FontSize="13" Foreground="#d9d9d9" />
+								</Border>
+								<Border Grid.Row="0" Grid.Column="2" Background="#1c1c1c" Padding="8,5">
+									<TextBlock Text="Notes" FontWeight="Bold" FontSize="13" Foreground="#d9d9d9" />
+								</Border>
+
+								<!-- Base Color -->
+								<Border Grid.Row="1" Grid.Column="0" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
+									<TextBlock Text="Base Color Texture" FontSize="12" Foreground="#cfd8e8" />
+								</Border>
+								<Border Grid.Row="1" Grid.Column="1" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
+									<TextBlock Text="BaseColor" FontSize="12" Foreground="#b0b0b0" />
+								</Border>
+								<Border Grid.Row="1" Grid.Column="2" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
+									<TextBlock Text="Diffuse albedo. Round-trips as basename.ddt." FontSize="12" TextWrapping="Wrap" Foreground="#b0b0b0" />
+								</Border>
+
+								<!-- Normal -->
+								<Border Grid.Row="2" Grid.Column="0" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
+									<TextBlock Text="Normal Texture" FontSize="12" Foreground="#cfd8e8" />
+								</Border>
+								<Border Grid.Row="2" Grid.Column="1" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
+									<TextBlock Text="Normals" FontSize="12" Foreground="#b0b0b0" />
+								</Border>
+								<Border Grid.Row="2" Grid.Column="2" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
+									<TextBlock Text="Tangent-space normal map. Round-trips as basename_normal.ddt." FontSize="12" TextWrapping="Wrap" Foreground="#b0b0b0" />
+								</Border>
+
+								<!-- ORM -->
+								<Border Grid.Row="3" Grid.Column="0" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
+									<TextBlock Text="Metallic/Roughness AND Ambient Occlusion" FontSize="12" Foreground="#cfd8e8" TextWrapping="Wrap" />
+								</Border>
+								<Border Grid.Row="3" Grid.Column="1" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
+									<TextBlock Text="Masks (ORM)" FontSize="12" Foreground="#b0b0b0" />
+								</Border>
+								<Border Grid.Row="3" Grid.Column="2" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
+									<TextBlock Text="One image with R=Occlusion, G=Roughness, B=Metallic. The same texture should be assigned to both glTF slots; CryBar writes it as basename_masks1.ddt." FontSize="12" TextWrapping="Wrap" Foreground="#b0b0b0" />
+								</Border>
+
+								<!-- Emissive -->
+								<Border Grid.Row="4" Grid.Column="0" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
+									<TextBlock Text="Emissive Texture" FontSize="12" Foreground="#cfd8e8" />
+								</Border>
+								<Border Grid.Row="4" Grid.Column="1" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
+									<TextBlock Text="Masks2 (player color)" FontSize="12" Foreground="#b0b0b0" />
+								</Border>
+								<Border Grid.Row="4" Grid.Column="2" Padding="8,5" BorderBrush="#222" BorderThickness="0,1,0,0">
+									<TextBlock Text="Single-channel player-color mask in R. The engine tints white pixels with the active player color; in Blender it previews as glow. Round-trips as basename_masks2.ddt." FontSize="12" TextWrapping="Wrap" Foreground="#b0b0b0" />
+								</Border>
+							</Grid>
+						</Border>
+
+						<TextBlock Foreground="#888" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0"
+						           Text="DDT encoder params (format, mip count, ...) ride in extras.crybar.ddt[] under keys {matName}, {matName}_normal, {matName}_masks1, {matName}_masks2. Set them via CryBar's GLB Convert dialog when authoring a new material from scratch in Blender; round-tripped GLBs carry them automatically." />
+					</StackPanel>
+
+					<!-- Separator -->
+					<Border BorderBrush="#333" BorderThickness="0,1,0,0" />
+
 					<!-- Section 3: How to add tags in Blender -->
 					<StackPanel Spacing="6">
 						<TextBlock Text="How to add a tag in Blender" FontWeight="Bold" FontSize="16" />

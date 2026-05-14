@@ -37,7 +37,8 @@ public sealed class TmmMaterialResolver
 
     /// <summary>
     /// Resolves the .material XML for a TMM and returns the parsed submaterials plus
-    /// the raw decompressed DDT bytes for textures glTF can use (basecolor and normal map).
+    /// the raw decompressed DDT bytes for textures glTF can use (basecolor, normal map,
+    /// Masks1 (ORM), and Masks2 (player-color mask)).
     /// Other texture roles are skipped to avoid wasted decompression and heap copies.
     /// Returns null if the material file can't be found or parsed.
     /// </summary>
@@ -54,7 +55,7 @@ public sealed class TmmMaterialResolver
             {
                 foreach (var (texName, texPath) in mat.Textures)
                 {
-                    if (!MaterialExporter.IsBaseColorRole(texName) && !MaterialExporter.IsNormalRole(texName))
+                    if (MaterialExporter.ClassifyRole(texName) is null)
                         continue;
                     if (textures.ContainsKey(texPath)) continue;
 

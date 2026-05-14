@@ -266,4 +266,112 @@ public class GlbConverterTests
             w.Contains("body", StringComparison.Ordinal) &&
             w.Contains("skipped", StringComparison.OrdinalIgnoreCase));
     }
+
+    [Fact]
+    public async Task ConvertAsync_MaterialWithMask1AndParams_ProducesMasks1Ddt()
+    {
+        using var img = new SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgba32>(4, 4);
+        using var ms = new MemoryStream();
+        img.Save(ms, new SixLabors.ImageSharp.Formats.Png.PngEncoder());
+        var pngBytes = ms.ToArray();
+
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh
+            {
+                Primitives = [
+                    new GlbMeshPrimitive
+                    {
+                        MaterialName = "body",
+                        Positions = [0, 0, 0,  1, 0, 0,  1, 1, 0],
+                        Normals   = [0, 0, 1,  0, 0, 1,  0, 0, 1],
+                        Tangents  = [1, 0, 0, 1,  1, 0, 0, 1,  1, 0, 0, 1],
+                        TexCoords = [0, 0,  1, 0,  1, 1],
+                        Indices   = [0, 1, 2],
+                    }
+                ]
+            },
+            Materials = [new GlbMaterial { Name = "body", Mask1Png = pngBytes, Mask2Png = pngBytes }],
+        };
+
+        var ddtParams = new Dictionary<string, GlbConverter.DdtMaterialParams>
+        {
+            ["body_masks1"] = new GlbConverter.DdtMaterialParams(
+                DDTVersion.RTS4, DDTUsage.None, DDTAlpha.None, DDTFormat.DXT1, 1, null),
+            ["body_masks2"] = new GlbConverter.DdtMaterialParams(
+                DDTVersion.RTS4, DDTUsage.None, DDTAlpha.None, DDTFormat.DXT1, 1, null),
+        };
+
+        var result = await GlbConverter.ConvertAsync(model, "char", ddtParams);
+
+        Assert.Contains(result.Files, f => f.Name == "body_masks1.ddt");
+        Assert.Contains(result.Files, f => f.Name == "body_masks2.ddt");
+    }
+
+    [Fact]
+    public void Inspect_MaterialWithMasksAndNoExtras_FlagsMissingForBoth()
+    {
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh { Primitives = [] },
+            Materials = [
+                new GlbMaterial { Name = "body", Mask1Png = [1, 2, 3], Mask2Png = [4, 5, 6] }
+            ],
+        };
+
+        var inspection = GlbConverter.Inspect(model, "char");
+
+        Assert.Equal(2, inspection.MaterialsNeedingDdtParams.Count);
+        Assert.Contains("body_masks1", inspection.MaterialsNeedingDdtParams);
+        Assert.Contains("body_masks2", inspection.MaterialsNeedingDdtParams);
+        Assert.Contains(inspection.PlannedFiles,
+            f => f.Name == "body_masks1.ddt" && f.NeedsDdtParams && f.DdtMaterialName == "body_masks1");
+        Assert.Contains(inspection.PlannedFiles,
+            f => f.Name == "body_masks2.ddt" && f.NeedsDdtParams && f.DdtMaterialName == "body_masks2");
+    }
+
+    [Fact]
+    public void Inspect_MaterialWithMasksAndExtras_DoesNotFlagAsMissing()
+    {
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh { Primitives = [] },
+            Materials = [
+                new GlbMaterial { Name = "body", Mask1Png = [1, 2, 3], Mask2Png = [4, 5, 6] }
+            ],
+            Extras = new GlbExtras
+            {
+                Ddt =
+                {
+                    new GlbExtras.DdtEntry { Material = "body_masks1" },
+                    new GlbExtras.DdtEntry { Material = "body_masks2" },
+                },
+            },
+        };
+
+        var inspection = GlbConverter.Inspect(model, "char");
+
+        Assert.Empty(inspection.MaterialsNeedingDdtParams);
+        Assert.Contains(inspection.PlannedFiles, f => f.Name == "body_masks1.ddt" && !f.NeedsDdtParams);
+        Assert.Contains(inspection.PlannedFiles, f => f.Name == "body_masks2.ddt" && !f.NeedsDdtParams);
+    }
+
+    [Fact]
+    public async Task ConvertAsync_MaterialWithMask1ButNoParams_EmitsWarningAndSkipsDdt()
+    {
+        var model = new GlbModel
+        {
+            Mesh = new GlbMesh { Primitives = [] },
+            Materials = [new GlbMaterial { Name = "wall", Mask1Png = [1, 2, 3, 4] }],
+        };
+
+        var result = await GlbConverter.ConvertAsync(model, "char",
+            new Dictionary<string, GlbConverter.DdtMaterialParams>());
+
+        Assert.DoesNotContain(result.Files, f => f.Name == "wall_masks1.ddt");
+        Assert.Contains(result.Warnings, w =>
+            w.Contains("wall", StringComparison.Ordinal) &&
+            w.Contains("DDT", StringComparison.Ordinal) &&
+            w.Contains("skipped", StringComparison.OrdinalIgnoreCase));
+    }
 }

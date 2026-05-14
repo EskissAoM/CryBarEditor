@@ -1270,4 +1270,117 @@ public class GlbRoundTripTests
         float dw = Math.Abs(a.W - b.W);
         return Math.Max(Math.Max(dx, dy), Math.Max(dz, dw));
     }
+
+    [SkippableFact]
+    public async Task MaskTextures_RealTmm_RoundTripsThroughGlbAndBackToDdts()
+    {
+        Skip.IfNot(GameInstalled,
+            "AOM:R game install not found at default Steam path or AOMR_GAME_PATH");
+
+        var modelcacheDir = Path.Combine(GamePath, "modelcache");
+
+        var fileIndex = new FileIndex();
+        var modelcacheBars = Directory.GetFiles(modelcacheDir, "*.bar", SearchOption.AllDirectories);
+        FileIndexBuilder.IndexBarFiles(fileIndex, modelcacheBars);
+        var supplemental = FileIndexBuilder.FindSupplementalBarFiles(modelcacheDir);
+        FileIndexBuilder.IndexBarFiles(fileIndex, supplemental);
+
+        // Pick a known building TMM that uses player color.
+        var entries = fileIndex.Find("armory_a_age2.tmm");
+        Skip.If(entries.Count == 0, "armory_a_age2.tmm not in file index");
+        var tmmEntry = entries[0];
+
+        using var tmmBuf = await ReadIndexEntryPooled(tmmEntry);
+        Skip.If(tmmBuf is null, "Could not read TMM bytes");
+        var tmmBytes = BarCompression.EnsureDecompressedPooled(tmmBuf, out _).Span.ToArray();
+        var origTmm = new TmmFile(tmmBytes);
+        Skip.IfNot(origTmm.FullyParsed, "TMM did not parse");
+
+        var dataEntries = fileIndex.Find("armory_a_age2.tmm.data");
+        Skip.If(dataEntries.Count == 0, "tmm.data not in file index");
+        using var dataBuf = await ReadIndexEntryPooled(dataEntries[0]);
+        Skip.If(dataBuf is null, "Could not read tmm.data bytes");
+        var dataBytes = BarCompression.EnsureDecompressedPooled(dataBuf, out _).Span.ToArray();
+        var origData = new TmmDataFile(dataBytes, origTmm);
+        Skip.IfNot(origData.Parsed, "tmm.data did not parse");
+
+        var resolver = new CryBarEditor.Classes.TmmMaterialResolver(
+            fileIndex,
+            entry => ReadIndexEntryPooled(entry));
+        var resolved = await resolver.ResolveAsync("armory_a_age2.tmm");
+        Skip.If(resolved is null, "Could not resolve material for TMM");
+
+        var matList = new List<GlbExporter.GlbMaterial>();
+        var sourceDdts = new List<(string Material, DDTImage Ddt)>();
+        foreach (var mat in resolved.Value.Materials)
+        {
+            byte[]? bP = null, nP = null, m1P = null, m2P = null;
+            foreach (var (texName, texPath) in mat.Textures)
+            {
+                if (!resolved.Value.Textures.TryGetValue(texPath, out var texInfo)) continue;
+                var pngBytes = await CryBar.Bar.ConversionHelper.ConvertDdtToPngBytes(texInfo.DdtData);
+                if (pngBytes is null) continue;
+
+                var role = MaterialExporter.ClassifyRole(texName);
+                if (role is null) continue;
+                var img = new DDTImage(texInfo.DdtData);
+                if (!img.ParseHeader()) continue;
+                switch (role.Value)
+                {
+                    case TextureRole.BaseColor: bP  = pngBytes; break;
+                    case TextureRole.Normal:    nP  = pngBytes; break;
+                    case TextureRole.Masks1:    m1P = pngBytes; break;
+                    case TextureRole.Masks2:    m2P = pngBytes; break;
+                }
+                sourceDdts.Add((MaterialExporter.GetDdtKey(mat.Name, role.Value), img));
+            }
+            matList.Add(new GlbExporter.GlbMaterial
+            {
+                Name = mat.Name, BaseColorPng = bP, NormalMapPng = nP, Mask1Png = m1P, Mask2Png = m2P,
+            });
+        }
+
+        Skip.If(matList.All(m => m.Mask1Png is null && m.Mask2Png is null),
+            "Selected TMM has no Masks1/Masks2 textures - pick a different model");
+
+        var extras = new GlbExtras { HasFullTmmBlock = true };
+        foreach (var (matName, ddt) in sourceDdts)
+        {
+            extras.Ddt.Add(new GlbExtras.DdtEntry
+            {
+                Material = matName,
+                Version = ddt.Version,
+                Usage = ddt.UsageFlag,
+                Alpha = ddt.AlphaFlag,
+                Format = ddt.FormatFlag,
+                MipLevels = ddt.MipmapLevels,
+                BaseWidth = ddt.BaseWidth,
+                BaseHeight = ddt.BaseHeight,
+                ColorTable = null,
+            });
+        }
+
+        var glbBytes = GlbExporter.ExportGlb(origTmm, origData, materials: matList, extras: extras);
+        Assert.NotNull(glbBytes);
+
+        var model = GlbReader.Parse(glbBytes!);
+        Assert.NotEmpty(model.Materials);
+        Assert.Contains(model.Materials, m => m.Mask1Png is { Length: > 0 } && m.Mask2Png is { Length: > 0 });
+
+        var convResult = await GlbConverter.ConvertAsync(model, "armory_a_age2",
+            new Dictionary<string, GlbConverter.DdtMaterialParams>());
+
+        Assert.Contains(convResult.Files, f => f.Name.EndsWith("_masks1.ddt", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(convResult.Files, f => f.Name.EndsWith("_masks2.ddt", StringComparison.OrdinalIgnoreCase));
+
+        var orig = sourceDdts.First(s => s.Material.EndsWith("_masks1", StringComparison.OrdinalIgnoreCase)).Ddt;
+        var producedBytes = convResult.Files.First(f =>
+            f.Name.EndsWith("_masks1.ddt", StringComparison.OrdinalIgnoreCase)).Bytes;
+        var produced = new DDTImage(producedBytes);
+        Assert.True(produced.ParseHeader());
+        Assert.Equal(orig.Version,    produced.Version);
+        Assert.Equal(orig.FormatFlag, produced.FormatFlag);
+        Assert.Equal(orig.UsageFlag,  produced.UsageFlag);
+        Assert.Equal(orig.AlphaFlag,  produced.AlphaFlag);
+    }
 }

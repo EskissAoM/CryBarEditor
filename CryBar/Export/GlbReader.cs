@@ -66,6 +66,8 @@ public sealed class GlbMaterial
     public required string Name { get; init; }
     public byte[]? BaseColorPng { get; init; }
     public byte[]? NormalMapPng { get; init; }
+    public byte[]? Mask1Png { get; init; }
+    public byte[]? Mask2Png { get; init; }
 }
 
 public static class GlbReader
@@ -800,18 +802,42 @@ public static class GlbReader
         foreach (var m in matsEl.EnumerateArray())
         {
             string name = SuffixRegex.Replace(m.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "", "");
-            byte[]? baseColor = null, normalMap = null;
+            byte[]? baseColor = null, normalMap = null, mask1 = null, mask2 = null;
 
-            if (m.TryGetProperty("pbrMetallicRoughness", out var pbr) &&
-                pbr.TryGetProperty("baseColorTexture", out var bct) &&
-                bct.TryGetProperty("index", out var bctIdx))
-                baseColor = ReadTextureBytes(root, bin, bctIdx.GetInt32());
+            if (m.TryGetProperty("pbrMetallicRoughness", out var pbr))
+            {
+                if (pbr.TryGetProperty("baseColorTexture", out var bct) &&
+                    bct.TryGetProperty("index", out var bctIdx))
+                    baseColor = ReadTextureBytes(root, bin, bctIdx.GetInt32());
+
+                if (pbr.TryGetProperty("metallicRoughnessTexture", out var mrt) &&
+                    mrt.TryGetProperty("index", out var mrtIdx))
+                    mask1 = ReadTextureBytes(root, bin, mrtIdx.GetInt32());
+            }
 
             if (m.TryGetProperty("normalTexture", out var nt) &&
                 nt.TryGetProperty("index", out var ntIdx))
                 normalMap = ReadTextureBytes(root, bin, ntIdx.GetInt32());
 
-            materials.Add(new GlbMaterial { Name = name, BaseColorPng = baseColor, NormalMapPng = normalMap });
+            // If MR slot was absent, fall back to occlusion. Both slots conventionally
+            // share the same ORM image so either one is the right source for Mask1.
+            if (mask1 is null &&
+                m.TryGetProperty("occlusionTexture", out var ot) &&
+                ot.TryGetProperty("index", out var otIdx))
+                mask1 = ReadTextureBytes(root, bin, otIdx.GetInt32());
+
+            if (m.TryGetProperty("emissiveTexture", out var et) &&
+                et.TryGetProperty("index", out var etIdx))
+                mask2 = ReadTextureBytes(root, bin, etIdx.GetInt32());
+
+            materials.Add(new GlbMaterial
+            {
+                Name = name,
+                BaseColorPng = baseColor,
+                NormalMapPng = normalMap,
+                Mask1Png = mask1,
+                Mask2Png = mask2,
+            });
         }
         return materials.ToArray();
     }

@@ -177,9 +177,13 @@ public static class GlbConverter
     static IEnumerable<(string DdtName, byte[] Png)> EnumerateMaterialPngs(GlbMaterial mat)
     {
         if (mat.BaseColorPng is { Length: > 0 })
-            yield return (mat.Name, mat.BaseColorPng);
+            yield return (MaterialExporter.GetDdtKey(mat.Name, TextureRole.BaseColor), mat.BaseColorPng);
         if (mat.NormalMapPng is { Length: > 0 })
-            yield return ($"{mat.Name}_normal", mat.NormalMapPng);
+            yield return (MaterialExporter.GetDdtKey(mat.Name, TextureRole.Normal), mat.NormalMapPng);
+        if (mat.Mask1Png is { Length: > 0 })
+            yield return (MaterialExporter.GetDdtKey(mat.Name, TextureRole.Masks1), mat.Mask1Png);
+        if (mat.Mask2Png is { Length: > 0 })
+            yield return (MaterialExporter.GetDdtKey(mat.Name, TextureRole.Masks2), mat.Mask2Png);
     }
 
     static bool ExtrasContainDdt(GlbExtras? extras, string ddtName)

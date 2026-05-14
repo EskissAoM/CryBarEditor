@@ -750,4 +750,107 @@ public class GlbExporterTests
         Assert.True(ex.TryGetProperty("crybar", out var crybar));
         Assert.True(crybar.TryGetProperty("tmm", out _));
     }
+
+    [Fact]
+    public void ExportGlb_MaterialWithAllFourPngs_EmitsFourImagesAndAllSlots()
+    {
+        var (tmm, dataFile) = CreateMinimalModel();
+        var basePng   = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1 };
+        var normalPng = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 2 };
+        var mask1Png  = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 3 };
+        var mask2Png  = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 4 };
+
+        var materials = new[]
+        {
+            new GlbExporter.GlbMaterial
+            {
+                Name = "armory_a_age2",
+                BaseColorPng = basePng,
+                NormalMapPng = normalPng,
+                Mask1Png = mask1Png,
+                Mask2Png = mask2Png,
+            },
+        };
+
+        var glb = GlbExporter.ExportGlb(tmm, dataFile, materials: materials)!;
+        var root = ExtractJson(glb);
+
+        var images = root.GetProperty("images");
+        Assert.Equal(4, images.GetArrayLength());
+
+        var textures = root.GetProperty("textures");
+        Assert.Equal(4, textures.GetArrayLength());
+
+        var mat = root.GetProperty("materials")[0];
+        var pbr = mat.GetProperty("pbrMetallicRoughness");
+        Assert.True(pbr.TryGetProperty("baseColorTexture", out _));
+        Assert.True(pbr.TryGetProperty("metallicRoughnessTexture", out var mrt));
+        Assert.True(mat.TryGetProperty("normalTexture", out _));
+        Assert.True(mat.TryGetProperty("occlusionTexture", out var oct));
+        Assert.True(mat.TryGetProperty("emissiveTexture", out _));
+
+        // MR and occlusion must reference the same texture index (same ORM image)
+        Assert.Equal(mrt.GetProperty("index").GetInt32(), oct.GetProperty("index").GetInt32());
+
+        // emissiveFactor should be [1,1,1] so the player-color mask actually shows through
+        var ef = mat.GetProperty("emissiveFactor");
+        Assert.Equal(3, ef.GetArrayLength());
+        Assert.Equal(1f, ef[0].GetSingle());
+        Assert.Equal(1f, ef[1].GetSingle());
+        Assert.Equal(1f, ef[2].GetSingle());
+
+        // PBR factors should be 1.0 when MR texture is present
+        Assert.Equal(1f, pbr.GetProperty("metallicFactor").GetSingle());
+        Assert.Equal(1f, pbr.GetProperty("roughnessFactor").GetSingle());
+    }
+
+    [Fact]
+    public void ExportGlb_MaterialWithMask1Only_NoEmissive()
+    {
+        var (tmm, dataFile) = CreateMinimalModel();
+        var basePng  = new byte[] { 0x89, 1 };
+        var mask1Png = new byte[] { 0x89, 3 };
+
+        var materials = new[]
+        {
+            new GlbExporter.GlbMaterial
+            {
+                Name = "m",
+                BaseColorPng = basePng,
+                Mask1Png = mask1Png,
+            },
+        };
+
+        var glb = GlbExporter.ExportGlb(tmm, dataFile, materials: materials)!;
+        var mat = ExtractJson(glb).GetProperty("materials")[0];
+
+        Assert.False(mat.TryGetProperty("emissiveTexture", out _));
+        Assert.True(mat.TryGetProperty("occlusionTexture", out _));
+        Assert.True(mat.GetProperty("pbrMetallicRoughness").TryGetProperty("metallicRoughnessTexture", out _));
+    }
+
+    [Fact]
+    public void ExportGlb_MaterialWithMask2Only_HasEmissiveNoOcclusion()
+    {
+        var (tmm, dataFile) = CreateMinimalModel();
+        var basePng  = new byte[] { 0x89, 1 };
+        var mask2Png = new byte[] { 0x89, 4 };
+
+        var materials = new[]
+        {
+            new GlbExporter.GlbMaterial
+            {
+                Name = "m",
+                BaseColorPng = basePng,
+                Mask2Png = mask2Png,
+            },
+        };
+
+        var glb = GlbExporter.ExportGlb(tmm, dataFile, materials: materials)!;
+        var mat = ExtractJson(glb).GetProperty("materials")[0];
+
+        Assert.True(mat.TryGetProperty("emissiveTexture", out _));
+        Assert.False(mat.TryGetProperty("occlusionTexture", out _));
+        Assert.False(mat.GetProperty("pbrMetallicRoughness").TryGetProperty("metallicRoughnessTexture", out _));
+    }
 }
