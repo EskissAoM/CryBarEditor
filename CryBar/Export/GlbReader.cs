@@ -66,6 +66,8 @@ public sealed class GlbMaterial
     public required string Name { get; init; }
     public byte[]? BaseColorPng { get; init; }
     public byte[]? NormalMapPng { get; init; }
+    public byte[]? Mask1Png { get; init; }
+    public byte[]? Mask2Png { get; init; }
 }
 
 public static class GlbReader
