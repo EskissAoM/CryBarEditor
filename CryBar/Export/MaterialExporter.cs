@@ -122,4 +122,15 @@ public static class MaterialExporter
     public static bool IsNormalRole(string textureName) =>
         textureName.Equals("Normals", StringComparison.OrdinalIgnoreCase) ||
         textureName.Equals("Normal",  StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True if the texture role name maps to AOMR's Masks (ORM: R=Occlusion, G=Roughness, B=Metallic).</summary>
+    public static bool IsMasks1Role(string textureName) =>
+        textureName.Equals("Masks",  StringComparison.OrdinalIgnoreCase) ||
+        textureName.Equals("Mask1",  StringComparison.OrdinalIgnoreCase) ||
+        textureName.Equals("Masks1", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True if the texture role name maps to AOMR's Masks2 (player-color mask, R channel).</summary>
+    public static bool IsMasks2Role(string textureName) =>
+        textureName.Equals("Masks2", StringComparison.OrdinalIgnoreCase) ||
+        textureName.Equals("Mask2",  StringComparison.OrdinalIgnoreCase);
 }
