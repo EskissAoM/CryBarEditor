@@ -2671,15 +2671,28 @@ public class IntegrationTests
 
         Assert.True(sampled > 0, "No .material files sampled");
 
+        // Roles AOMR uses that this plan intentionally does not round-trip through GLB.
+        // Add new names here if a future game update introduces another role we deliberately ignore;
+        // remove them if/when proper support is added.
+        var knownOutOfScope = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Details",
+            "Cloth Damage Mask",
+            "Emissive Texture",
+            "Emissive Crawling Texture",
+        };
+
         var unknown = seenRoles.Where(r =>
             !MaterialExporter.IsBaseColorRole(r) &&
             !MaterialExporter.IsNormalRole(r)    &&
             !MaterialExporter.IsMasks1Role(r)    &&
-            !MaterialExporter.IsMasks2Role(r)).ToList();
+            !MaterialExporter.IsMasks2Role(r)    &&
+            !knownOutOfScope.Contains(r)).ToList();
 
         Assert.True(unknown.Count == 0,
             $"Unrecognized texture role names: [{string.Join(", ", unknown)}]. " +
-            "Either extend IsMasks1Role/IsMasks2Role to accept them or document why they're ignored.");
+            "Either extend IsMasks1Role/IsMasks2Role to accept them, add them to the knownOutOfScope set, " +
+            "or document why they're ignored.");
 
         await Task.CompletedTask;
     }
