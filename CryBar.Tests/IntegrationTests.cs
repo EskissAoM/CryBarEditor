@@ -2626,5 +2626,63 @@ public class IntegrationTests
             $"fott26 has {unresolved.Count} unresolved textures: [{string.Join(", ", unresolved.Take(10))}]");
     }
 
+    // Diagnostic: confirms IsBaseColorRole/IsNormalRole/IsMasks1Role/IsMasks2Role cover all texture role names
+    // actually used by the game's .material XMLs. Safe to delete once stable across releases.
+    [SkippableFact]
+    public async Task MaterialFiles_RoleNames_AreAllRecognizedByHelpers()
+    {
+        Skip.IfNot(GameInstalled,
+            "AOM:R game install not found at default Steam path or AOMR_GAME_PATH");
+
+        // Sample up to 200 .material(.XMB) entries; collect distinct texture role names.
+        // FileIndex has no global-enumeration API, so walk all BARs in GamePath.
+        var seenRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int sampled = 0;
+
+        foreach (var barPath in Directory.GetFiles(GamePath, "*.bar", SearchOption.AllDirectories))
+        {
+            if (sampled >= 200) break;
+            using var stream = File.OpenRead(barPath);
+            var bar = new BarFile(stream);
+            if (!bar.Load(out _) || bar.Entries is null) continue;
+
+            foreach (var entry in bar.Entries)
+            {
+                if (sampled >= 200) break;
+                if (!entry.Name.EndsWith(".material.XMB", StringComparison.OrdinalIgnoreCase) &&
+                    !entry.Name.EndsWith(".material",     StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                using var pooled = entry.ReadDataDecompressedPooled(stream);
+                if (pooled is null) continue;
+                var xml = entry.Name.EndsWith(".XMB", StringComparison.OrdinalIgnoreCase)
+                    ? ConversionHelper.ConvertXmbToXmlText(pooled.Span)
+                    : System.Text.Encoding.UTF8.GetString(pooled.Span);
+                if (xml is null) continue;
+
+                var mats = MaterialExporter.ParseMaterialXml(xml);
+                foreach (var mat in mats)
+                    foreach (var texName in mat.Textures.Keys)
+                        seenRoles.Add(texName);
+
+                sampled++;
+            }
+        }
+
+        Assert.True(sampled > 0, "No .material files sampled");
+
+        var unknown = seenRoles.Where(r =>
+            !MaterialExporter.IsBaseColorRole(r) &&
+            !MaterialExporter.IsNormalRole(r)    &&
+            !MaterialExporter.IsMasks1Role(r)    &&
+            !MaterialExporter.IsMasks2Role(r)).ToList();
+
+        Assert.True(unknown.Count == 0,
+            $"Unrecognized texture role names: [{string.Join(", ", unknown)}]. " +
+            "Either extend IsMasks1Role/IsMasks2Role to accept them or document why they're ignored.");
+
+        await Task.CompletedTask;
+    }
+
     #endregion
 }
