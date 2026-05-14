@@ -180,6 +180,10 @@ public static class GlbConverter
             yield return (mat.Name, mat.BaseColorPng);
         if (mat.NormalMapPng is { Length: > 0 })
             yield return ($"{mat.Name}_normal", mat.NormalMapPng);
+        if (mat.Mask1Png is { Length: > 0 })
+            yield return ($"{mat.Name}_masks1", mat.Mask1Png);
+        if (mat.Mask2Png is { Length: > 0 })
+            yield return ($"{mat.Name}_masks2", mat.Mask2Png);
     }
 
     static bool ExtrasContainDdt(GlbExtras? extras, string ddtName)
