@@ -309,16 +309,16 @@ public partial class MainWindow
         var resolved = await resolver.ResolveAsync(tmmFileName);
         if (resolved == null) return null;
 
-        // Only convert textures that glTF actually uses (Masks/Masks2 have no standard PBR slot).
-        // TODO: map Masks channels to metallicRoughnessTexture/occlusionTexture, Masks2 to emissiveTexture.
         var textureTasks = new Dictionary<string, Task<byte[]?>>();
         foreach (var mat in resolved.Value.Materials)
         {
             foreach (var (texName, texPath) in mat.Textures)
             {
-                bool isBase = MaterialExporter.IsBaseColorRole(texName);
+                bool isBase   = MaterialExporter.IsBaseColorRole(texName);
                 bool isNormal = !isBase && MaterialExporter.IsNormalRole(texName);
-                if (!isBase && !isNormal) continue;
+                bool isMask1  = !isBase && !isNormal && MaterialExporter.IsMasks1Role(texName);
+                bool isMask2  = !isBase && !isNormal && !isMask1 && MaterialExporter.IsMasks2Role(texName);
+                if (!isBase && !isNormal && !isMask1 && !isMask2) continue;
 
                 if (!textureTasks.ContainsKey(texPath) &&
                     resolved.Value.Textures.TryGetValue(texPath, out var texInfo))
@@ -330,7 +330,11 @@ public partial class MainWindow
                         var img = new DDTImage(texInfo.DdtData);
                         if (img.ParseHeader())
                         {
-                            var ddtKey = isBase ? mat.Name : $"{mat.Name}_normal";
+                            string ddtKey =
+                                isBase   ? mat.Name :
+                                isNormal ? $"{mat.Name}_normal" :
+                                isMask1  ? $"{mat.Name}_masks1" :
+                                           $"{mat.Name}_masks2";
                             sourceDdtsOut.Add((ddtKey, img));
                         }
                     }
@@ -339,20 +343,29 @@ public partial class MainWindow
         }
         await Task.WhenAll(textureTasks.Values);
 
-        // Build material list using completed results
         var matList = new List<GlbExporter.GlbMaterial>();
         foreach (var mat in resolved.Value.Materials)
         {
-            byte[]? baseColorPng = null, normalPng = null;
+            byte[]? baseColorPng = null, normalPng = null, mask1Png = null, mask2Png = null;
             foreach (var (texName, texPath) in mat.Textures)
             {
                 if (!textureTasks.TryGetValue(texPath, out var task)) continue;
                 var pngBytes = task.Result;
                 if (pngBytes == null) continue;
-                if (MaterialExporter.IsBaseColorRole(texName)) baseColorPng = pngBytes;
-                else if (MaterialExporter.IsNormalRole(texName)) normalPng = pngBytes;
+
+                if      (MaterialExporter.IsBaseColorRole(texName)) baseColorPng = pngBytes;
+                else if (MaterialExporter.IsNormalRole(texName))    normalPng    = pngBytes;
+                else if (MaterialExporter.IsMasks1Role(texName))    mask1Png     = pngBytes;
+                else if (MaterialExporter.IsMasks2Role(texName))    mask2Png     = pngBytes;
             }
-            matList.Add(new GlbExporter.GlbMaterial { Name = mat.Name, BaseColorPng = baseColorPng, NormalMapPng = normalPng });
+            matList.Add(new GlbExporter.GlbMaterial
+            {
+                Name = mat.Name,
+                BaseColorPng = baseColorPng,
+                NormalMapPng = normalPng,
+                Mask1Png = mask1Png,
+                Mask2Png = mask2Png,
+            });
         }
         return matList;
     }
