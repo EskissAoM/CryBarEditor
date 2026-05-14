@@ -21,7 +21,6 @@ using System.Threading.Channels;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using Avalonia.Interactivity;
-using CryBar.Utilities;
 
 namespace CryBarEditor.Windows;
 

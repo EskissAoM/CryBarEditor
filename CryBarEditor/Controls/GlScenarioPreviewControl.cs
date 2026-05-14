@@ -578,9 +578,10 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
             out vec4 vColor;
             void main()
             {
-                // Match the disc's vertical offset (billboard + ring use + 0.4)
-                // so the arrow extends from the disc center outward.
-                gl_Position = uMvp * vec4(aPos.x, aPos.y * uYScale + 0.4, aPos.z, 1.0);
+                // Discs sit at +0.4; the small extra lift keeps the arrow from
+                // z-fighting its own disc in top-down views. Other discs in front still
+                // occlude the arrow since they write depth at their (closer) center.
+                gl_Position = uMvp * vec4(aPos.x, aPos.y * uYScale + 0.42, aPos.z, 1.0);
                 vColor = aColor;
             }
             """;
@@ -1021,14 +1022,11 @@ public class GlScenarioPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.UseProgram(_yawArrowProgram);
         gl.UniformMatrix4fv(_uYawArrowMvp, 1, false, &mvp.M11);
         gl.Uniform1f(_uYawArrowYScale, HeightScale);
-        // Stay on top like the ring overlay.
-        gl.Disable(GL_DEPTH_TEST);
         if (_glLineWidth != null) _glLineWidth(3.0f);
         gl.BindVertexArray(_yawArrowVao);
         gl.DrawArrays(GL_LINES, 0, _yawArrowVertexCount);
         gl.BindVertexArray(0);
         if (_glLineWidth != null) _glLineWidth(1.0f);
-        gl.Enable(GL_DEPTH_TEST);
     }
 
     unsafe void DrawEntitySelection(GlInterface gl, Matrix4x4 view, Matrix4x4 proj)
