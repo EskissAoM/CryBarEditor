@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 
+using CryBar.Utilities;
 using CryBarEditor.Classes;
 
 using System;
@@ -71,12 +72,9 @@ public partial class QuickAccessWindow : SimpleWindow
         var filter = _filter.Trim();
         foreach (var entry in _allEntries)
         {
-            if (filter.Length > 0)
-            {
-                var fullPath = entry.DirectoryPath + entry.DisplayName;
-                if (!fullPath.Contains(filter, StringComparison.OrdinalIgnoreCase))
-                    continue;
-            }
+            var fullPath = entry.DirectoryPath + entry.DisplayName;
+            if (!GlobMatcher.IsMatch(fullPath, filter))
+                continue;
             FilteredEntries.Add(entry);
         }
         OnPropertyChanged(nameof(StatusText));

@@ -4,6 +4,7 @@ using Avalonia.Interactivity;
 
 using CryBar.Dependencies;
 using CryBar.Indexing;
+using CryBar.Utilities;
 using CryBarEditor.Classes;
 
 using System;
@@ -116,14 +117,12 @@ public partial class DependenciesWindow : SimpleWindow
         {
             if (filter.Length > 0)
             {
-                // Match against group name, entity type, or any reference value
-                var matchesGroup = group.DisplayName.Contains(filter, StringComparison.OrdinalIgnoreCase)
-                    || group.EntityTypeLabel.Contains(filter, StringComparison.OrdinalIgnoreCase);
+                var matchesGroup = GlobMatcher.IsMatch(group.DisplayName, filter)
+                    || GlobMatcher.IsMatch(group.EntityTypeLabel, filter);
 
                 if (!matchesGroup)
                 {
-                    var matchesRef = group.References.Any(r =>
-                        r.RawValue.Contains(filter, StringComparison.OrdinalIgnoreCase));
+                    var matchesRef = group.References.Any(r => GlobMatcher.IsMatch(r.RawValue, filter));
                     if (!matchesRef) continue;
                 }
             }

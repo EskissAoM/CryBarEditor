@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 
+using CryBar.Utilities;
 using CryBarEditor.Classes;
 
 namespace CryBarEditor.Windows;
@@ -128,11 +129,10 @@ public partial class PickerWindow : SimpleWindow
         }
         else
         {
-            var cmp = System.StringComparison.OrdinalIgnoreCase;
             foreach (var it in _allItems)
             {
-                if (it.Display.Contains(filter, cmp) ||
-                    (it.Group is not null && it.Group.Contains(filter, cmp)))
+                if (GlobMatcher.IsMatch(it.Display, filter) ||
+                    (it.Group is not null && GlobMatcher.IsMatch(it.Group, filter)))
                 {
                     FilteredItems.Add(it);
                     if (ReferenceEquals(it, prevSelected)) prevStillVisible = true;

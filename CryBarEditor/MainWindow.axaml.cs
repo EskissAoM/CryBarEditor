@@ -42,6 +42,7 @@ public partial class MainWindow : SimpleWindow
 
     // SEARCH SETTINGS that are saved
     public string _searchExclusionFilter = "";
+    public bool _searchIsInclusionFilter = false;
     public bool _searchCaseSensitive = true;
     public bool _searchRegex = false;
     public bool _searchFilesOnly = false;
@@ -641,6 +642,7 @@ public partial class MainWindow : SimpleWindow
                 LoadBAR(config.BarFile, false);
 
             _searchExclusionFilter = config.SearchExclusionFilter ?? "";
+            _searchIsInclusionFilter = config.SearchIsInclusionFilter ?? false;
             _searchCaseSensitive = config.SearchCaseSensitive ?? true;
             _searchRegex = config.SearchUseRegex ?? false;
             _searchFilesOnly = config.SearchFilesOnly ?? false;
@@ -697,6 +699,7 @@ public partial class MainWindow : SimpleWindow
             _lastConfiguration.BarFile = _barStream?.Name;
             _lastConfiguration.LastVersionCheck = _latestVersion;
             _lastConfiguration.SearchExclusionFilter = _searchExclusionFilter;
+            _lastConfiguration.SearchIsInclusionFilter = _searchIsInclusionFilter;
             _lastConfiguration.SearchCaseSensitive = _searchCaseSensitive;
             _lastConfiguration.SearchUseRegex = _searchRegex;
             _lastConfiguration.SearchFilesOnly = _searchFilesOnly;

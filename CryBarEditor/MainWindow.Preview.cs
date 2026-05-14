@@ -1183,11 +1183,9 @@ public partial class MainWindow
         var q = EntryQuery;
         foreach (var e in entries)
         {
-            // filter by query
-            if (q.Length > 0 && !e.RelativePath.Contains(q, StringComparison.OrdinalIgnoreCase))
+            if (!GlobMatcher.IsMatch(e.RelativePath, q))
                 continue;
 
-            // filter by override status
             if (_filterOnlyOverriddenBarEntries)
             {
                 var fullRel = GetBARFullRelativePath(e);
@@ -1204,11 +1202,9 @@ public partial class MainWindow
         var q = FilesQuery;
         foreach (var e in entries)
         {
-            // filter by query
-            if (q.Length > 0 && !e.RelativePath.Contains(q, StringComparison.OrdinalIgnoreCase))
+            if (!GlobMatcher.IsMatch(e.RelativePath, q))
                 continue;
 
-            // filter by override status
             if (_filterOnlyOverriddenFiles)
             {
                 var fullRel = GetRootFullRelativePath(e);
@@ -1225,8 +1221,7 @@ public partial class MainWindow
         var q = BankQuery;
         foreach (var e in events)
         {
-            // filter by query
-            if (q.Length > 0 && !e.Path.Contains(q, StringComparison.OrdinalIgnoreCase))
+            if (!GlobMatcher.IsMatch(e.Path, q))
                 continue;
 
             yield return e;

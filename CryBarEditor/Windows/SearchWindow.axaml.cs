@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Threading;
 
 using CryBar.Bar;
+using CryBar.Utilities;
 
 using CryBarEditor.Classes;
 
@@ -30,6 +31,7 @@ public partial class SearchWindow : SimpleWindow
     string _filterWarning = "";
     string _query = "";
     string _exclusionFilter = "";
+    bool _isInclusionFilter = false;
     bool _isRegex = false;
     bool _isCaseSensitive = true;
     bool _isFilesOnly = false;
@@ -44,6 +46,21 @@ public partial class SearchWindow : SimpleWindow
     public string FilterWarning { get => _filterWarning; set { _filterWarning = value; OnSelfChanged(); } }
     public bool HasFilterWarning => !string.IsNullOrEmpty(_filterWarning);
     public string ExclusionFilter { get => _exclusionFilter; set { _exclusionFilter = value; _ = RebuildExclusionRegex(); OnSelfChanged(); } }
+    public bool IsInclusionFilter
+    {
+        get => _isInclusionFilter;
+        set
+        {
+            _isInclusionFilter = value;
+            OnSelfChanged();
+            OnPropertyChanged(nameof(FilterLabel));
+            OnPropertyChanged(nameof(FilterPlaceholder));
+        }
+    }
+    public string FilterLabel => _isInclusionFilter ? "File inclusion filter:" : "File exclusion filter:";
+    public string FilterPlaceholder => _isInclusionFilter
+        ? "*.txt, *.xml, *.cfg"
+        : "*.mythscn, *.blob, specific_file.bar";
     public bool IsRegex { get => _isRegex; set { _isRegex = value; OnSelfChanged(); } }
     public bool IsCaseSensitive { get => _isCaseSensitive; set { _isCaseSensitive = value; OnSelfChanged(); } }
     public bool IsFilesOnly { get => _isFilesOnly; set { _isFilesOnly = value; OnSelfChanged(); } }
@@ -86,6 +103,7 @@ public partial class SearchWindow : SimpleWindow
         owner.OnBarFileLoaded += _barFileLoadedHandler;
 
         ExclusionFilter = _owner._searchExclusionFilter;
+        IsInclusionFilter = _owner._searchIsInclusionFilter;
         IsCaseSensitive = _owner._searchCaseSensitive;
         IsRegex = _owner._searchRegex;
         IsFilesOnly = _owner._searchFilesOnly;
@@ -143,7 +161,7 @@ public partial class SearchWindow : SimpleWindow
 
                     var patterns = filter
                         .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-                        .Select(p => EscapeFilter(p));
+                        .Select(GlobMatcher.ToRegexPattern);
 
                     var pattern = $"^({string.Join("|", patterns)})$";
                     _fileExclusionRegex = new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -158,20 +176,27 @@ public partial class SearchWindow : SimpleWindow
         }
     }
 
-    static string EscapeFilter(string filter) => Regex.Escape(filter).Replace("\\*", ".*");
+    bool IsFileExcluded(string filename)
+    {
+        var rgx = _fileExclusionRegex;
+        if (rgx == null)
+            return false;
 
-    bool IsFileExcluded(string filename) => _fileExclusionRegex?.IsMatch(filename) ?? false;
+        return _isInclusionFilter ? !rgx.IsMatch(filename) : rgx.IsMatch(filename);
+    }
 
     void EnsureSettingsSaved()
     {
         // save used filter
         if (_owner != null &&
             (_owner._searchExclusionFilter != _exclusionFilter ||
+             _owner._searchIsInclusionFilter != _isInclusionFilter ||
              _owner._searchCaseSensitive != _isCaseSensitive ||
              _owner._searchRegex != _isRegex ||
              _owner._searchFilesOnly != _isFilesOnly))
         {
             _owner._searchExclusionFilter = _exclusionFilter;
+            _owner._searchIsInclusionFilter = _isInclusionFilter;
             _owner._searchCaseSensitive = _isCaseSensitive;
             _owner._searchRegex = _isRegex;
             _owner._searchFilesOnly = _isFilesOnly;

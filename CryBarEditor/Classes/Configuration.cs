@@ -10,6 +10,7 @@ public class Configuration
     public string? BarFile { get; set; }
     public string? LastVersionCheck { get; set; }
     public string? SearchExclusionFilter { get; set; }
+    public bool? SearchIsInclusionFilter { get; set; }
     public bool? SearchCaseSensitive { get; set; }
     public bool? SearchUseRegex { get; set; }
     public bool? SearchFilesOnly { get; set; }

@@ -105,13 +105,28 @@
 				Margin="0,0,10,0"
 				VerticalAlignment="Center"
 				DockPanel.Dock="Left"
-				Text="File exclusion filter:" />
+				Text="{Binding FilterLabel}" />
+			<ToggleButton
+				Margin="5,0,0,0"
+				DockPanel.Dock="Right"
+				IsChecked="{Binding IsInclusionFilter, Mode=TwoWay}"
+				IsEnabled="{Binding !CurrentlySearching}"
+				ToolTip.Tip="Toggle whitelist (include only) / blacklist (exclude)">
+				<Panel>
+					<micons:MaterialIcon Width="16" Height="16"
+										 Kind="FilterMinusOutline"
+										 IsVisible="{Binding !IsInclusionFilter}" />
+					<micons:MaterialIcon Width="16" Height="16"
+										 Kind="FilterPlusOutline"
+										 IsVisible="{Binding IsInclusionFilter}" />
+				</Panel>
+			</ToggleButton>
 			<TextBox
 				x:Name="txtExclusionFilter"
 				HorizontalAlignment="Stretch"
 				IsEnabled="{Binding !CurrentlySearching}"
 				Text="{Binding ExclusionFilter, Mode=TwoWay}"
-				PlaceholderText="*.mythscn, *.blob, specific_file.bar" />
+				PlaceholderText="{Binding FilterPlaceholder}" />
 		</DockPanel>
 		<TextBlock Margin="0,0,0,5" DockPanel.Dock="Top"
 				   Foreground="#f5d442"
