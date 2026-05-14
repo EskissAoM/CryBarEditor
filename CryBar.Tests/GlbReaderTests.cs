@@ -829,4 +829,117 @@ public class GlbReaderTests
         img.Save(ms, new SixLabors.ImageSharp.Formats.Png.PngEncoder());
         return ms.ToArray();
     }
+
+    [Fact]
+    public void ReadMaterials_GlbWithFourPbrSlots_PopulatesAllFourPngs()
+    {
+        var (tmm, dataFile) = CreateMinimalModel();
+
+        var basePng   = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 1 };
+        var normalPng = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 2, 2 };
+        var mask1Png  = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 3, 3 };
+        var mask2Png  = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 4, 4 };
+
+        var materials = new[]
+        {
+            new GlbExporter.GlbMaterial
+            {
+                Name = "m",
+                BaseColorPng = basePng,
+                NormalMapPng = normalPng,
+                Mask1Png = mask1Png,
+                Mask2Png = mask2Png,
+            },
+        };
+
+        var glb = GlbExporter.ExportGlb(tmm, dataFile, materials: materials)!;
+        var model = GlbReader.Parse(glb);
+
+        Assert.Single(model.Materials);
+        var mat = model.Materials[0];
+        Assert.Equal(basePng,   mat.BaseColorPng);
+        Assert.Equal(normalPng, mat.NormalMapPng);
+        Assert.Equal(mask1Png,  mat.Mask1Png);
+        Assert.Equal(mask2Png,  mat.Mask2Png);
+    }
+
+    [Fact]
+    public void ReadMaterials_GlbWithOcclusionOnly_FallsBackToOcclusionForMask1()
+    {
+        // Test that when metallicRoughnessTexture is absent, Mask1Png falls back to occlusionTexture.
+        var occlusionPng = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 5, 5 };
+        var jsonTemplate = "{{\"asset\":{{\"version\":\"2.0\"}},\"scene\":0,\"scenes\":[{{\"nodes\":[0]}}],\"nodes\":[{{\"mesh\":0}}],\"meshes\":[{{\"primitives\":[{{\"attributes\":{{\"POSITION\":0,\"NORMAL\":1,\"TANGENT\":2,\"TEXCOORD_0\":3}},\"indices\":4,\"material\":0}}]}}],\"materials\":[{{\"name\":\"TestMat\",\"occlusionTexture\":{{\"index\":0}}}}],\"textures\":[{{\"source\":0}}],\"images\":[{{\"mimeType\":\"image/png\",\"bufferView\":3}}],\"accessors\":[{{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\",\"min\":[0,0,0],\"max\":[1,1,1]}},{{\"bufferView\":0,\"byteOffset\":36,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\",\"min\":[0,0,0],\"max\":[1,1,1]}},{{\"bufferView\":0,\"byteOffset\":72,\"componentType\":5126,\"count\":3,\"type\":\"VEC4\",\"min\":[0,0,0,1],\"max\":[1,1,1,1]}},{{\"bufferView\":0,\"byteOffset\":120,\"componentType\":5126,\"count\":3,\"type\":\"VEC2\",\"min\":[0,0],\"max\":[1,1]}},{{\"bufferView\":1,\"componentType\":5125,\"count\":3,\"type\":\"SCALAR\"}}],\"bufferViews\":[{{\"buffer\":0,\"byteLength\":144}},{{\"buffer\":0,\"byteOffset\":144,\"byteLength\":6}},{{\"buffer\":0,\"byteOffset\":150,\"byteLength\":0}},{{\"buffer\":0,\"byteOffset\":150,\"byteLength\":{0}}}],\"buffers\":[{{\"byteLength\":{1}}}]}}";
+        var json = string.Format(jsonTemplate, occlusionPng.Length, 150 + occlusionPng.Length);
+        var glb = BuildGlbForTest(json, bin =>
+        {
+            int pos = 0;
+            // POSITION: 3 verts at [0,0,0], [1,0,0], [0,1,0]
+            System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 0f); pos += 4;
+            System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 0f); pos += 4;
+            System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 0f); pos += 4;
+            System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 1f); pos += 4;
+            System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 0f); pos += 4;
+            System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 0f); pos += 4;
+            System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 0f); pos += 4;
+            System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 1f); pos += 4;
+            System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 0f); pos += 4;
+            // NORMAL: [0,0,1] x3 (36 bytes)
+            for (int i = 0; i < 3; i++)
+            {
+                System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 0f); pos += 4;
+                System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 0f); pos += 4;
+                System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 1f); pos += 4;
+            }
+            // TANGENT: [1,0,0,1] x3 (48 bytes)
+            for (int i = 0; i < 3; i++)
+            {
+                System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 1f); pos += 4;
+                System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 0f); pos += 4;
+                System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 0f); pos += 4;
+                System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 1f); pos += 4;
+            }
+            // TEXCOORD_0: [0,0], [1,0], [0,1] (24 bytes)
+            System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 0f); pos += 4;
+            System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 0f); pos += 4;
+            System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 1f); pos += 4;
+            System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 0f); pos += 4;
+            System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 0f); pos += 4;
+            System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(bin.AsSpan(pos), 1f); pos += 4;
+            // INDICES: 0, 1, 2 (6 bytes)
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(bin.AsSpan(pos), 0); pos += 2;
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(bin.AsSpan(pos), 1); pos += 2;
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(bin.AsSpan(pos), 2); pos += 2;
+            // OCCLUSION IMAGE (at byte offset 150)
+            occlusionPng.CopyTo(bin.AsSpan(pos));
+        }, totalBinLength: 150 + occlusionPng.Length);
+
+        var model = GlbReader.Parse(glb);
+        Assert.Single(model.Materials);
+        Assert.Equal(occlusionPng, model.Materials[0].Mask1Png);
+        Assert.Null(model.Materials[0].Mask2Png);
+    }
+
+    static byte[] BuildGlbForTest(string json, Action<byte[]> writeBin, int totalBinLength)
+    {
+        var jsonBytes = System.Text.Encoding.UTF8.GetBytes(json);
+        int jsonPadded = (jsonBytes.Length + 3) & ~3;
+        int binPadded  = (totalBinLength + 3) & ~3;
+        int total = 12 + 8 + jsonPadded + 8 + binPadded;
+        var glb = new byte[total];
+        int off = 0;
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(glb.AsSpan(off), 0x46546C67u); off += 4;
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(glb.AsSpan(off), 2u); off += 4;
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(glb.AsSpan(off), (uint)total); off += 4;
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(glb.AsSpan(off), (uint)jsonPadded); off += 4;
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(glb.AsSpan(off), 0x4E4F534Au); off += 4;
+        jsonBytes.CopyTo(glb.AsSpan(off));
+        for (int i = jsonBytes.Length; i < jsonPadded; i++) glb[off + i] = 0x20;
+        off += jsonPadded;
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(glb.AsSpan(off), (uint)binPadded); off += 4;
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(glb.AsSpan(off), 0x004E4942u); off += 4;
+        var bin = new byte[binPadded];
+        writeBin(bin);
+        bin.CopyTo(glb.AsSpan(off));
+        return glb;
+    }
 }
