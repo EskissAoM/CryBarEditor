@@ -108,8 +108,10 @@
 						   VerticalAlignment="Center" />
 				<NumericUpDown x:Name="_txtMipmapNumber"
 							   IsEnabled="{Binding !Busy}"
-							   Minimum="1" 
-							   Value="1" />
+							   Minimum="1"
+							   Value="1"
+							   Increment="1"
+							   FormatString="0" />
 			</StackPanel>
 
 			<CheckBox x:Name="_chkApplyToAll"

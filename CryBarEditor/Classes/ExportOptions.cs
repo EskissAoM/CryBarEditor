@@ -40,7 +40,7 @@ public class ExportOptions
     /// <summary>Emit .fbximport files alongside .glb / .tma</summary>
     public bool EmitFbximport { get; set; }
 
-    /// <summary>Whether any file in the selection is convertible (XMB/DDT)</summary>
+    /// <summary>Whether any file in the selection is convertible (XMB/DDT/DDS)</summary>
     public bool AnyConvertible { get; set; }
 
     /// <summary>Open exported files in the configured editor after export</summary>

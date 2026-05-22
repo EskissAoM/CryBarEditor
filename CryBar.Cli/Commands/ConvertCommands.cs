@@ -3,9 +3,13 @@ using System.Text;
 using System.Xml;
 
 using CryBar.Bar;
+using CryBar.BCnEncoder.Shared;
 using CryBar.Cli.Helpers;
 using CryBar.Scenario;
 using CryBar.Utilities;
+
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
 
 using Spectre.Console;
 
@@ -61,6 +65,19 @@ public static class ConvertCommands
                 await File.WriteAllBytesAsync(output, tga);
                 return true;
             }));
+
+        // DDS in this game is never L33t/Alz4-wrapped, so the compression check is skipped.
+        convertCommand.Add(BuildAsync("dds-to-png", "Convert DDS texture to PNG", "Path to .dds file", ".png",
+            async (input, output) =>
+            {
+                var data = await File.ReadAllBytesAsync(input);
+                var png = await ConversionHelper.ConvertDdsToPngBytes(data);
+                if (png == null) { OutputHelper.Error("Failed to convert DDS to PNG."); return false; }
+                await File.WriteAllBytesAsync(output, png);
+                return true;
+            }));
+
+        convertCommand.Add(CreatePngToDds());
 
         convertCommand.Add(BuildAsync("tmm-to-obj", "Convert TMM model to OBJ", "Path to .tmm file", ".obj",
             async (input, output) =>
@@ -246,6 +263,66 @@ public static class ConvertCommands
         }
 
         return (tmmBytes, tmmDataBytes);
+    }
+
+    static Command CreatePngToDds()
+    {
+        var inputArg = new Argument<FileInfo>("input") { Description = "Path to image file (.png/.tga/.jpg/.bmp)" };
+        var outputOption = new Option<string?>("-o", "--output") { Description = "Output .dds path (default: same name with .dds extension)" };
+        var formatOption = new Option<string>("--format") { Description = "BCn format: bc1 | bc3 | bc7 (default bc7)", DefaultValueFactory = _ => "bc7" };
+        var mipsOption = new Option<string>("--mipmaps") { Description = "auto | N (default auto = full chain)", DefaultValueFactory = _ => "auto" };
+        var srgbOption = new Option<bool>("--srgb") { Description = "Tag output as sRGB (DX10 header)" };
+
+        var cmd = new Command("png-to-dds", "Convert image to DDS texture") { inputArg, outputOption, formatOption, mipsOption, srgbOption };
+
+        cmd.SetAction(async parseResult =>
+        {
+            OutputHelper.ApplyGlobalOptions(parseResult);
+
+            var inputFile = parseResult.GetValue(inputArg);
+            if (inputFile == null || !inputFile.Exists)
+            {
+                OutputHelper.Error($"Input file not found: {inputFile?.FullName ?? "(null)"}");
+                return 1;
+            }
+
+            var inputPath = inputFile.FullName;
+            var output = parseResult.GetValue(outputOption);
+            var outputPath = ResolveOutputPath(inputPath, output, ".dds");
+
+            var format = (parseResult.GetValue(formatOption) ?? "bc7").ToLowerInvariant() switch
+            {
+                "bc1" => CompressionFormat.Bc1,
+                "bc3" => CompressionFormat.Bc3,
+                _ => CompressionFormat.Bc7
+            };
+
+            var mipsStr = parseResult.GetValue(mipsOption) ?? "auto";
+            byte mipmaps;
+            if (mipsStr.Equals("auto", StringComparison.OrdinalIgnoreCase)) mipmaps = 0;
+            else if (!byte.TryParse(mipsStr, out mipmaps)) mipmaps = 0;
+
+            var srgb = parseResult.GetValue(srgbOption);
+
+            OutputHelper.EnsureDir(outputPath);
+
+            try
+            {
+                using var image = Image.Load<Rgba32>(inputPath);
+                var bytes = await ConversionHelper.EncodeImageToDdsBytes(image, format, srgb, mipmaps);
+                await File.WriteAllBytesAsync(outputPath, bytes);
+            }
+            catch (Exception ex)
+            {
+                OutputHelper.Error($"Conversion failed: {ex.Message}");
+                return 1;
+            }
+
+            ReportSuccess(inputPath, outputPath);
+            return 0;
+        });
+
+        return cmd;
     }
 
     static Command CreateXsToRm()

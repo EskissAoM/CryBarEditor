@@ -1,3 +1,8 @@
+using CryBar.BCnEncoder.Decoder;
+using CryBar.BCnEncoder.Encoder;
+using CryBar.BCnEncoder.Shared;
+using CryBar.BCnEncoder.Shared.ImageFiles;
+using CommunityToolkit.HighPerformance;
 using CryBar.Export;
 using CryBar.TMM;
 
@@ -7,6 +12,7 @@ using SixLabors.ImageSharp.Formats.Tga;
 using SixLabors.ImageSharp.PixelFormats;
 
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace CryBar.Bar;
@@ -45,6 +51,125 @@ public static class ConversionHelper
     {
         var ddt = new DDTImage(data);
         using var image = await BarFormatConverter.ParseDDT(ddt, token: token);
+        if (image == null) return null;
+        using var memory = new MemoryStream();
+        await image.SaveAsPngAsync(memory, new PngEncoder
+        {
+            CompressionLevel = PngCompressionLevel.BestSpeed
+        }, token);
+        return memory.ToArray();
+    }
+
+    public readonly record struct DdsSummary(int Width, int Height, int Mips, string FormatName);
+
+    /// <summary>
+    /// Reads dimensions, mip count, and DXGI format name from a DDS file header.
+    /// Returns null when the header is unparseable.
+    /// </summary>
+    public static DdsSummary? GetDdsSummary(ReadOnlyMemory<byte> data)
+    {
+        DdsFile dds;
+        try
+        {
+            using var ms = new MemoryStream(data.ToArray(), writable: false);
+            dds = DdsFile.Load(ms);
+        }
+        catch { return null; }
+
+        var dxgi = dds.header.ddsPixelFormat.IsDxt10Format
+            ? dds.dx10Header.dxgiFormat
+            : dds.header.ddsPixelFormat.DxgiFormat;
+
+        int mips = dds.Faces.Count > 0 ? dds.Faces[0].MipMaps.Length : 1;
+        return new DdsSummary((int)dds.header.dwWidth, (int)dds.header.dwHeight, mips, dxgi.ToString());
+    }
+
+    /// <summary>
+    /// Decodes a DDS file to an ImageSharp Rgba32 image.
+    /// Returns null for unparseable input, cubemap/volume DDS, or HDR (BC6H) variants.
+    /// </summary>
+    public static async Task<Image<Rgba32>?> DecodeDdsToImage(
+        ReadOnlyMemory<byte> data, CancellationToken token = default)
+    {
+        DdsFile dds;
+        try
+        {
+            using var ms = new MemoryStream(data.ToArray(), writable: false);
+            dds = DdsFile.Load(ms);
+        }
+        catch { return null; }
+
+        if (dds.Faces.Count != 1) return null;
+
+        var dxgi = dds.header.ddsPixelFormat.IsDxt10Format
+            ? dds.dx10Header.dxgiFormat
+            : dds.header.ddsPixelFormat.DxgiFormat;
+        if (dxgi == DxgiFormat.DxgiFormatBc6HUf16 || dxgi == DxgiFormat.DxgiFormatBc6HSf16)
+            return null;
+
+        int w = (int)dds.header.dwWidth;
+        int h = (int)dds.header.dwHeight;
+
+        ColorRgba32[] pixels;
+        try { pixels = await new BcDecoder().DecodeAsync(dds, token); }
+        catch { return null; }
+
+        var pixelBytes = MemoryMarshal.AsBytes(pixels.AsSpan());
+        return Image.LoadPixelData<Rgba32>(pixelBytes, w, h);
+    }
+
+    /// <summary>
+    /// Encodes an Rgba32 image to DDS bytes using BCn compression.
+    /// sRGB is expressed via the DX10 header DXGI format; legacy FourCC fallback is non-sRGB.
+    /// </summary>
+    public static async Task<byte[]> EncodeImageToDdsBytes(
+        Image<Rgba32> image,
+        CompressionFormat format,
+        bool sRgb,
+        byte mipmapLevels,
+        CancellationToken token = default)
+    {
+        int w = image.Width;
+        int h = image.Height;
+
+        var pixels = new ColorRgba32[w * h];
+        image.CopyPixelDataTo(MemoryMarshal.AsBytes(pixels.AsSpan()));
+        var mem2D = pixels.AsMemory().AsMemory2D(h, w);
+
+        var encoder = new BcEncoder(format);
+        encoder.OutputOptions.FileFormat = OutputFileFormat.Dds;
+        encoder.OutputOptions.GenerateMipMaps = mipmapLevels != 1;
+        encoder.OutputOptions.MaxMipMapLevel = mipmapLevels <= 0 ? -1 : mipmapLevels;
+        // sRGB DXGI variants are only addressable via the DX10 header path.
+        encoder.OutputOptions.DdsPreferDxt10Header = sRgb;
+
+        var dds = await encoder.EncodeToDdsAsync(mem2D, token);
+
+        if (sRgb)
+        {
+            dds.dx10Header.dxgiFormat = format switch
+            {
+                CompressionFormat.Bc1 or CompressionFormat.Bc1WithAlpha => DxgiFormat.DxgiFormatBc1UnormSrgb,
+                CompressionFormat.Bc2 => DxgiFormat.DxgiFormatBc2UnormSrgb,
+                CompressionFormat.Bc3 => DxgiFormat.DxgiFormatBc3UnormSrgb,
+                CompressionFormat.Bc7 => DxgiFormat.DxgiFormatBc7UnormSrgb,
+                _ => dds.dx10Header.dxgiFormat
+            };
+        }
+
+        using var ms = new MemoryStream();
+        dds.Write(ms);
+        return ms.ToArray();
+    }
+
+    /// <summary>
+    /// Converts DDS image data to PNG bytes.
+    /// Returns null when the DDS is unparseable or an unsupported variant.
+    /// </summary>
+    public static async Task<byte[]?> ConvertDdsToPngBytes(
+        ReadOnlyMemory<byte> data, CancellationToken token = default)
+    {
+        using var image = await DecodeDdsToImage(data, token);
         if (image == null) return null;
         using var memory = new MemoryStream();
         await image.SaveAsPngAsync(memory, new PngEncoder
@@ -238,6 +363,7 @@ public static class ConversionHelper
     {
         if (extension.Equals(".xmb", StringComparison.OrdinalIgnoreCase)) return null;
         if (extension.Equals(".ddt", StringComparison.OrdinalIgnoreCase)) return ".tga";
+        if (extension.Equals(".dds", StringComparison.OrdinalIgnoreCase)) return ".png";
         if (extension.Equals(".tmm", StringComparison.OrdinalIgnoreCase)) return tmmToGltf ? ".glb" : ".obj";
         return null;
     }
@@ -249,6 +375,7 @@ public static class ConversionHelper
     {
         return extension.Equals(".xmb", StringComparison.OrdinalIgnoreCase) ||
                extension.Equals(".ddt", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".dds", StringComparison.OrdinalIgnoreCase) ||
                extension.Equals(".tmm", StringComparison.OrdinalIgnoreCase);
     }
 }

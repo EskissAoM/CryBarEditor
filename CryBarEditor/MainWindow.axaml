@@ -154,7 +154,9 @@
 					<MenuItem Header="XMB to XML" Click="MenuItem_ConvertXMBtoXML" />
 					<MenuItem Header="DDT to TGA" Click="MenuItem_ConvertDDTtoTGA" />
 					<MenuItem Header="DDT to PNG" Click="MenuItem_ConvertDDTtoPNG" />
+					<MenuItem Header="DDS to PNG" Click="MenuItem_ConvertDDStoPNG" />
 					<MenuItem Header="Image to DDT" Click="MenuItem_ConvertToDDT" />
+					<MenuItem Header="Image to DDS" Click="MenuItem_ConvertPNGtoDDS" />
 					<MenuItem Header="TMM to OBJ" Click="MenuItem_ConvertTMMtoOBJ" />
 					<MenuItem Header="TMM to glTF" Click="MenuItem_ConvertTMMtoGLTF" />
 					<MenuItem Header="GLB to TMM" Click="MenuItem_ConvertGLBtoTMM" />

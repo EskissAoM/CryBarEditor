@@ -459,6 +459,11 @@ public static class BarCommands
                 var tgaBytes = await ConversionHelper.ConvertDdtToTgaBytes(decompressed.Memory);
                 return tgaBytes;
             }
+            else if (ext == ".dds")
+            {
+                var pngBytes = await ConversionHelper.ConvertDdsToPngBytes(decompressed.Memory);
+                return pngBytes;
+            }
             // For other convertible extensions or non-convertible, return decompressed data
             return decompressed.Span.ToArray();
         }

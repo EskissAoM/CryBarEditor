@@ -118,6 +118,15 @@ public partial class MainWindow
                             continue;
                         }
 
+                        if (ext == ".dds")
+                        {
+                            var ddsPngBytes = await ConversionHelper.ConvertDdsToPngBytes(data.Memory);
+                            if (ddsPngBytes == null)
+                                throw new InvalidDataException("Unsupported DDS variant (cubemap/HDR)");
+                            file.Write(ddsPngBytes);
+                            continue;
+                        }
+
                         // TMM->OBJ/glTF: find companion .tmm.data
                         if (ext == ".tmm")
                         {

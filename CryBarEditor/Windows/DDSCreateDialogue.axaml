@@ -1,0 +1,85 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        x:Class="CryBarEditor.Windows.DDSCreateDialogue"
+		WindowStartupLocation="CenterOwner"
+		WindowDecorations="None"
+		ExtendClientAreaToDecorationsHint="True"
+		Foreground="#d9d9d9"
+		Background="#141414"
+		DataContext="{Binding RelativeSource={RelativeSource Self}}"
+		CanResize="False"
+		d:DesignWidth="340" d:DesignHeight="240"
+		Width="340" MinHeight="240"
+		SizeToContent="Height"
+        Title="Create DDS from image">
+	<Border Padding="15,10" BorderThickness="2" BorderBrush="#d9d9d9">
+		<StackPanel>
+			<TextBlock Text="Create DDS from image" FontWeight="Bold" Margin="0,0,0,10" />
+
+			<TextBlock Margin="0,0,0,16">
+				<Run Text="{Binding OutputFileShort}" Foreground="Cyan" />
+			</TextBlock>
+
+			<StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+				<TextBlock Text="Format: "
+						   Margin="0,0,8,0"
+						   VerticalAlignment="Center" />
+				<ComboBox SelectedIndex="2" x:Name="_comboFormat"
+						  IsEnabled="{Binding !Busy}">
+					<ComboBox.Items>
+						<ComboBoxItem Content="BC1 (DXT1, no alpha)" />
+						<ComboBoxItem Content="BC3 (DXT5, alpha)" />
+						<ComboBoxItem Content="BC7 (best quality)" />
+					</ComboBox.Items>
+				</ComboBox>
+			</StackPanel>
+
+			<StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+				<TextBlock Text="Generated mipmaps: "
+						   Margin="0,0,8,0"
+						   VerticalAlignment="Center" />
+				<NumericUpDown x:Name="_txtMipmapNumber"
+							   IsEnabled="{Binding !Busy}"
+							   Minimum="1"
+							   Value="1"
+							   Increment="1"
+							   FormatString="0" />
+			</StackPanel>
+
+			<CheckBox x:Name="_chkSrgb"
+					  Content="sRGB (DX10 header)"
+					  IsEnabled="{Binding !Busy}"
+					  Margin="0,8,0,0" />
+
+			<TextBlock Margin="0,12,0,0"
+					   Text="{Binding ErrorMessage}"
+					   Foreground="#ff7070"
+					   IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+					   TextWrapping="Wrap" />
+
+			<DockPanel LastChildFill="False" Margin="0,18,0,0">
+				<Button DockPanel.Dock="Left"
+						x:Name="_btnCreate"
+						Content="Create DDS"
+						IsDefault="True"
+						IsEnabled="{Binding !Busy}"
+						Click="CreateDDSClick"/>
+
+				<Button DockPanel.Dock="Right"
+						x:Name="_btnClose"
+						Content="Close"
+						IsCancel="True"
+						IsEnabled="{Binding !Busy}"
+						Click="CloseClick" />
+			</DockPanel>
+
+			<ProgressBar IsIndeterminate="True"
+						 Height="6"
+						 IsVisible="{Binding Busy}"
+						 Margin="-10,8,-10,0" />
+		</StackPanel>
+	</Border>
+</Window>

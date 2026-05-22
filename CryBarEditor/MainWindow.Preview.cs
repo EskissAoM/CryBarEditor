@@ -294,6 +294,28 @@ public partial class MainWindow
                     await SetImagePreview(image, token);
                     return;
                 }
+                else if (ext == ".dds")
+                {
+                    HideTmmPreview();
+
+                    var summary = ConversionHelper.GetDdsSummary(data.Memory);
+                    if (summary == null)
+                    {
+                        PreviewedFileNote = "(Failed to parse DDS)";
+                        return;
+                    }
+
+                    using var image = await ConversionHelper.DecodeDdsToImage(data.Memory, token);
+                    if (image == null)
+                    {
+                        PreviewedFileNote = "(Unsupported DDS variant)";
+                        return;
+                    }
+
+                    PreviewedFileNote = $"[{summary.Value.FormatName} {summary.Value.Width}x{summary.Value.Height}, {summary.Value.Mips} Mips]";
+                    await SetImagePreview(image, token);
+                    return;
+                }
                 else if (ext == ".tmm")
                 {
                     var tmm = new TmmFile(data.Memory);

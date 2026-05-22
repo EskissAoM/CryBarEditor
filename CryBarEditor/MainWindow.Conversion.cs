@@ -76,24 +76,29 @@ public partial class MainWindow
     }
 
     async void MenuItem_ConvertDDTtoTGA(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-        => await ConvertDdtToFormat(sender, "TGA", ".tga", d => ConversionHelper.ConvertDdtToTgaBytes(d));
+        => await ConvertImageToFormat(sender, "DDT", "*.ddt", "TGA", ".tga", d => ConversionHelper.ConvertDdtToTgaBytes(d));
 
     async void MenuItem_ConvertDDTtoPNG(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-        => await ConvertDdtToFormat(sender, "PNG", ".png", d => ConversionHelper.ConvertDdtToPngBytes(d));
+        => await ConvertImageToFormat(sender, "DDT", "*.ddt", "PNG", ".png", d => ConversionHelper.ConvertDdtToPngBytes(d));
 
-    async Task ConvertDdtToFormat(object? sender, string formatName, string extension,
+    async void MenuItem_ConvertDDStoPNG(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        => await ConvertImageToFormat(sender, "DDS", "*.dds", "PNG", ".png", d => ConversionHelper.ConvertDdsToPngBytes(d));
+
+    async Task ConvertImageToFormat(object? sender, string sourceName, string sourcePattern,
+        string formatName, string extension,
         Func<ReadOnlyMemory<byte>, Task<byte[]?>> converter)
     {
-        var file = await PickFile(sender, $"Convert DDT to {formatName}", [new("DDT Image") { Patterns = ["*.ddt"] }]);
+        var file = await PickFile(sender, $"Convert {sourceName} to {formatName}",
+            [new($"{sourceName} Image") { Patterns = [sourcePattern] }]);
         if (file == null) return;
 
         var out_file = PickOutFile(file, new_extension: extension, overwrite: true);
         try
         {
             using var data = await PooledBuffer.FromFile(file);
-            using var ddt_data = BarCompression.EnsureDecompressedPooled(data, out _);
-            var convertedBytes = await converter(ddt_data.Memory);
-            if (convertedBytes == null) throw new InvalidDataException("Failed to convert DDT file");
+            using var decompressed = BarCompression.EnsureDecompressedPooled(data, out _);
+            var convertedBytes = await converter(decompressed.Memory);
+            if (convertedBytes == null) throw new InvalidDataException($"Failed to convert {sourceName} file");
 
             File.WriteAllBytes(out_file, convertedBytes);
 
@@ -167,6 +172,25 @@ public partial class MainWindow
         try
         {
             var dialogue = new DDTCreateDialogue(in_file, out_file);
+            await dialogue.ShowDialog(this);
+        }
+        catch (Exception ex)
+        {
+            _ = ShowError(ex.Message);
+        }
+    }
+
+    async void MenuItem_ConvertPNGtoDDS(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var in_file = await PickFile(sender, "Create DDS from image", [new("Image file") {
+            Patterns = ["*.png", "*.tga", "*.jpg", "*.jpeg", "*.bmp"] }]);
+
+        if (in_file == null) return;
+
+        var out_file = PickOutFile(in_file, new_extension: ".dds", overwrite: true);
+        try
+        {
+            var dialogue = new DDSCreateDialogue(in_file, out_file);
             await dialogue.ShowDialog(this);
         }
         catch (Exception ex)
