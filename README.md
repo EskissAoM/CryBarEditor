@@ -23,6 +23,7 @@ The purpose of this tool is to enable fast and easy modding of Age of Mythology 
     - BAR (decoding)
     - XMB (decoding + encoding)
     - DDT (decoding + encoding)
+    - DDS (decoding + encoding)
     - TMM (decoding + encoding)
     - TMM.DATA (decoding + encoding)
     - TMA (decoding + encoding)
@@ -38,10 +39,11 @@ The purpose of this tool is to enable fast and easy modding of Age of Mythology 
   - Convert XMB -> XML
   - Convert DDT -> TGA
   - Convert DDT -> PNG
+  - Convert DDS -> PNG
   - Convert TMM -> OBJ (optionally with materials)
   - Convert TMM -> GLB (glTF) (optionally with materials, animations, and `.fbximport` sidecars)
   - Convert GLB -> TMM/TMM.DATA/TMA/DDT (full reverse pipeline; preserves bones, attachments, materials, animations and animation_controllers)
-  - Convert image -> DDT
+  - Convert image -> DDT/DDS
   - Convert mythscn -> XML
   - Convert XML -> mythscn
   - Compress with Alz4/L33t
