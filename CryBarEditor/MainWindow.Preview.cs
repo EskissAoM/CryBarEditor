@@ -302,6 +302,7 @@ public partial class MainWindow
                     if (summary == null)
                     {
                         PreviewedFileNote = "(Failed to parse DDS)";
+                        await SetImagePreview(null);
                         return;
                     }
 
@@ -309,6 +310,7 @@ public partial class MainWindow
                     if (image == null)
                     {
                         PreviewedFileNote = "(Unsupported DDS variant)";
+                        await SetImagePreview(null);
                         return;
                     }
 
