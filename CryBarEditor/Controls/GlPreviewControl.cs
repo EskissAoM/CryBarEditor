@@ -150,9 +150,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         RequestNextFrameRendering();
     }
 
-    // Queue of actions to run on the GL render thread on the next frame. Drained at the
-    // start of OnOpenGlRender. Used by the host (MainWindow) to upload textures and free
-    // GL handles without owning a GL context itself.
+    // Drained at the start of OnOpenGlRender; lets the host run GL ops without owning a context.
     readonly ConcurrentQueue<Action<GlInterface>> _glActionQueue = new();
 
     /// <summary>Schedules an action to run on the GL render thread before the next frame is drawn.</summary>
@@ -229,21 +227,14 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
     const double AnimDurationMs = 200.0;
     readonly System.Diagnostics.Stopwatch _animClock = new();
 
-    // Function pointer for glUniform3f (not exposed by Avalonia's GlInterface)
+    // Function pointers not exposed by Avalonia's GlInterface; resolved in OnOpenGlInit.
     unsafe delegate* unmanaged<int, float, float, float, void> _glUniform3f;
-    // Function pointer for glUniform4f (not exposed by Avalonia's GlInterface)
     unsafe delegate* unmanaged<int, float, float, float, float, void> _glUniform4f;
-    // Function pointer for glUniformMatrix3fv (not exposed by Avalonia's GlInterface)
     unsafe delegate* unmanaged<int, int, byte, float*, void> _glUniformMatrix3fv;
-    // Function pointer for glLineWidth (not exposed by Avalonia's GlInterface)
     unsafe delegate* unmanaged<float, void> _glLineWidth;
-    // Function pointer for glGenerateMipmap (not exposed by Avalonia's GlInterface)
     unsafe delegate* unmanaged<int, void> _glGenerateMipmap;
-    // Function pointer for glBlendFunc (not exposed by Avalonia's GlInterface)
     unsafe delegate* unmanaged<uint, uint, void> _glBlendFunc;
-    // Function pointer for glReadPixels (not exposed by Avalonia's GlInterface)
     unsafe delegate* unmanaged<int, int, int, int, uint, uint, void*, void> _glReadPixels;
-    // Function pointer for glTexSubImage2D (not exposed by Avalonia's GlInterface)
     unsafe delegate* unmanaged<uint, int, int, int, int, int, uint, uint, void*, void> _glTexSubImage2D;
 
     // Mouse tracking
@@ -395,7 +386,6 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         string vsPreamble = isGles ? "#version 300 es\n" : "#version 330 core\n";
         string fsPreamble = isGles ? "#version 300 es\nprecision mediump float;\n" : "#version 330 core\n";
 
-        // Get proc address for glUniform3f (not in Avalonia's GlInterface)
         _glUniform3f = (delegate* unmanaged<int, float, float, float, void>)gl.GetProcAddress("glUniform3f");
         _glUniform4f = (delegate* unmanaged<int, float, float, float, float, void>)gl.GetProcAddress("glUniform4f");
         _glUniformMatrix3fv = (delegate* unmanaged<int, int, byte, float*, void>)gl.GetProcAddress("glUniformMatrix3fv");
@@ -426,16 +416,13 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, _ebo);
 
         const int stride = PreviewMeshData.VertexStrideBytes;
-        // layout 0 = pos (3 floats)
         gl.VertexAttribPointer(0, 3, GL_FLOAT, 0, stride, IntPtr.Zero);
         gl.EnableVertexAttribArray(0);
-        // layout 1 = normal (3 floats)
         gl.VertexAttribPointer(1, 3, GL_FLOAT, 0, stride, new IntPtr(PreviewMeshData.VertexNormalByteOffset));
         gl.EnableVertexAttribArray(1);
-        // layout 2 = uv (2 floats)
         gl.VertexAttribPointer(2, 2, GL_FLOAT, 0, stride, new IntPtr(PreviewMeshData.VertexUvByteOffset));
         gl.EnableVertexAttribArray(2);
-        // layout 3 = tangent (4 floats) - solid shader ignores it
+        // Tangent at layout 3; solid shader ignores it, textured shader needs it for TBN.
         gl.VertexAttribPointer(3, 4, GL_FLOAT, 0, stride, new IntPtr(PreviewMeshData.VertexTangentByteOffset));
         gl.EnableVertexAttribArray(3);
 
@@ -467,11 +454,9 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         int vi = 0;
         for (int i = -half; i <= half; i++)
         {
-            // Line parallel to X axis at Z = i*step
             float z = i * step;
             verts[vi++] = -extent; verts[vi++] = 0; verts[vi++] = z;
             verts[vi++] =  extent; verts[vi++] = 0; verts[vi++] = z;
-            // Line parallel to Z axis at X = i*step
             float x = i * step;
             verts[vi++] = x; verts[vi++] = 0; verts[vi++] = -extent;
             verts[vi++] = x; verts[vi++] = 0; verts[vi++] =  extent;
@@ -573,8 +558,7 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         gl.DeleteVertexArray(_gizmoVao);
         gl.DeleteProgram(_gizmoProgram);
 
-        // Free any owned texture handles. The host's LRU cache holds the same handles, but
-        // they're invalid once the GL context is gone - DeinitGl normalizes that ownership.
+        // Handles in the host's LRU cache mirror these but are invalid once the context dies.
         if (_activeTextures != null)
         {
             _activeTextures.DisposeGl(h => gl.DeleteTexture(h));
@@ -642,12 +626,12 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
         var target = new Vector3(_camera.TargetX, _camera.TargetY, _camera.TargetZ);
         var lightDir = Vector3.Normalize(eye - target);
 
-        bool textured = _useTextured && _activeTextures != null;
+        // Snapshot once; the UI thread can null _activeTextures between this read and the deref below.
+        var activeTextures = _activeTextures;
+        bool textured = _useTextured && activeTextures != null;
 
-        // System.Numerics is row-major, row-vector: v' = v * MVP
-        // GLSL is column-major, column-vector: v' = MVP * v
-        // Passing row-major data to glUniformMatrix4fv(transpose=false) reinterprets rows as
-        // columns, which is the exact transpose needed for the convention switch.
+        // System.Numerics rows reinterpreted as GLSL columns IS the transpose GLSL expects,
+        // so pass transpose=false to glUniformMatrix4fv throughout.
         if (textured)
         {
             gl.UseProgram(_texturedProgram);
@@ -662,15 +646,13 @@ public class GlPreviewControl : OpenGlControlBase, ICustomHitTest
             BindSolidProgram(gl, mvp, lightDir);
         }
 
-        // Draw all mesh groups; in textured mode, fall back to solid for groups
-        // that have no basecolor binding so the geometry never silently disappears.
-        // Track current program so we only re-bind solid uniforms once per fallback run.
+        // In textured mode, fall back to solid for groups with no basecolor so geometry never vanishes.
         bool solidProgramActive = !textured;
         for (int g = 0; g < mesh.DrawGroups.Length; g++)
         {
             var (offset, count) = mesh.DrawGroups[g];
 
-            if (textured && _activeTextures!.MeshGroupBindings.TryGetValue(g, out var binding) && binding.BaseColor.HasValue)
+            if (textured && activeTextures!.MeshGroupBindings.TryGetValue(g, out var binding) && binding.BaseColor.HasValue)
             {
                 if (solidProgramActive)
                 {
