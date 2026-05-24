@@ -516,43 +516,48 @@ public partial class MainWindow
             _txtEditor.IsVisible = true;
             _imgPreview.IsVisible = false;
             _imgPreview.Source = null;
+            var oldEmpty = _previewImage;
+            _previewImage = null;
+            oldEmpty?.Dispose();
             return;
         }
 
-        if (_previewImage != null)
-        {
-            _previewImage.Dispose();
-            _previewImage = null;
-        }
-
-        _imageZoomLevel = 1.0;
-        RefreshImageScale();
-
+        Bitmap? newBitmap = null;
         try
         {
-            using (var stream = new MemoryStream())
+            using var stream = new MemoryStream();
+            await image.SaveAsPngAsync(stream, new SixLabors.ImageSharp.Formats.Png.PngEncoder
             {
-                await image.SaveAsPngAsync(stream, new SixLabors.ImageSharp.Formats.Png.PngEncoder
-                {
-                    CompressionLevel = SixLabors.ImageSharp.Formats.Png.PngCompressionLevel.BestSpeed
-                }, token);
+                CompressionLevel = SixLabors.ImageSharp.Formats.Png.PngCompressionLevel.BestSpeed
+            }, token);
 
-                if (token.IsCancellationRequested || _previewImage != null) return;
+            if (token.IsCancellationRequested) return;
 
-                stream.Seek(0, SeekOrigin.Begin);
-                _previewImage = new Bitmap(stream);
-            }
+            stream.Seek(0, SeekOrigin.Begin);
+            newBitmap = new Bitmap(stream);
         }
         catch (OperationCanceledException) { return; }
         catch
         {
-            // note error or just ignore it?
             return;
         }
 
+        if (token.IsCancellationRequested)
+        {
+            newBitmap.Dispose();
+            return;
+        }
+
+        // Swap on the UI thread with no await between Source assignment and Dispose,
+        // so the compositor never sees Source pointing to a disposed Bitmap.
+        var oldBitmap = _previewImage;
+        _previewImage = newBitmap;
+        _imgPreview.Source = newBitmap;
         _txtEditor.IsVisible = false;
         _imgPreview.IsVisible = true;
-        _imgPreview.Source = _previewImage;
+        _imageZoomLevel = 1.0;
+        RefreshImageScale();
+        oldBitmap?.Dispose();
     }
 
     public async Task SetEditorText(string extension, string text, string? cacheKey = null)
