@@ -159,8 +159,7 @@ public partial class MainWindow
         Length:  {s.LengthMs}ms
         Type:    FSB5 subsound
 
-        This audio is not exposed as an FMOD event. Use Play or Export to
-        listen to it or save it as a WAV file.
+        This audio is not exposed as an FMOD event
         """);
     }
 
