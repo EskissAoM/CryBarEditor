@@ -125,11 +125,47 @@ public partial class MainWindow
         return entry != null && !ReferenceEquals(entry, _currentlyPreviewedItem) ? entry : null;
     }
 
-    public async Task Preview(FMODEvent? e)
+    public async Task Preview(IBankItem? item)
     {
-        if (e == null || _fmodBank == null)
+        if (item == null || _fmodBank == null)
             return;
 
+        if (item is FMODSubsound s)
+        {
+            PreviewSubsound(s);
+            return;
+        }
+
+        if (item is FMODEvent ev)
+            await PreviewEvent(ev);
+    }
+
+    void PreviewSubsound(FMODSubsound s)
+    {
+        HideTmmPreview();
+
+        // Subsounds have no soundset -> hide the event-only "Export All Sounds" action
+        _lastSoundsetResolution = null;
+        OnPropertyChanged(nameof(CanExportAllSounds));
+
+        PreviewedFileName = $"FMOD sound: \"{s.Name}\"";
+        PreviewedFileNote = "";
+        PreviewedFileData = $"Length: {s.LengthMs}ms";
+
+        _ = SetImagePreview(null);
+        _ = SetEditorText(".txt",
+        $"""
+        Name:    {s.Name}
+        Length:  {s.LengthMs}ms
+        Type:    FSB5 subsound
+
+        This audio is not exposed as an FMOD event. Use Play or Export to
+        listen to it or save it as a WAV file.
+        """);
+    }
+
+    async Task PreviewEvent(FMODEvent e)
+    {
         HideTmmPreview();
 
         PreviewedFileName = $"FMOD event: \"${e.Path}\"";
@@ -1201,10 +1237,16 @@ public partial class MainWindow
     public void RefreshBankEntries()
     {
         BankEntries.Clear();
-        if (_fmodBank?.Events == null)
+        if (_fmodBank == null)
             return;
 
-        BankEntries.AddItems(FilterBankEvents(_fmodBank.Events));
+        BankEntries.AddItems(FilterBankItems(EnumerateBankItems(_fmodBank)));
+    }
+
+    static IEnumerable<IBankItem> EnumerateBankItems(FMODBank bank)
+    {
+        foreach (var e in bank.Events) yield return e;
+        foreach (var s in bank.Subsounds) yield return s;
     }
 
     IEnumerable<BarFileEntry> FilterBAR(IEnumerable<BarFileEntry> entries)
@@ -1245,15 +1287,15 @@ public partial class MainWindow
         }
     }
 
-    IEnumerable<FMODEvent> FilterBankEvents(IEnumerable<FMODEvent> events)
+    IEnumerable<IBankItem> FilterBankItems(IEnumerable<IBankItem> items)
     {
         var q = BankQuery;
-        foreach (var e in events)
+        foreach (var i in items)
         {
-            if (!GlobMatcher.IsMatch(e.Path, q))
+            if (!GlobMatcher.IsMatch(i.DisplayName, q))
                 continue;
 
-            yield return e;
+            yield return i;
         }
     }
     #endregion

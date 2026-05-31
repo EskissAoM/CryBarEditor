@@ -42,10 +42,10 @@ public partial class MainWindow
 
     async void MenuItem_ShowDependenciesFmod(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (SelectedBankEntry == null || _fmodBank == null) return;
+        if (SelectedBankEntry is not FMODEvent selectedEvent || _fmodBank == null) return;
 
         // Resolve FMOD event to its soundset file and read its content
-        var resolution = await ResolveFmodEventSoundsAsync(SelectedBankEntry);
+        var resolution = await ResolveFmodEventSoundsAsync(selectedEvent);
         if (resolution == null)
         {
             _ = ShowError("Could not resolve soundset for this event.\nMake sure a root directory with Sound.bar is loaded.");

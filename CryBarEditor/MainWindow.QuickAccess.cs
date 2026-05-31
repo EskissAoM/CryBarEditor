@@ -31,10 +31,10 @@ public partial class MainWindow
     {
         get
         {
-            if (SelectedBankEntry == null) return "Add to Quick Access";
+            if (SelectedBankEntry is not FMODEvent ev) return "Add to Quick Access";
             var bankRelPath = GetBankRelativePath();
             if (bankRelPath == null) return "Add to Quick Access";
-            var key = QuickAccessEntry.FromFmodEvent(SelectedBankEntry, bankRelPath).GetKey();
+            var key = QuickAccessEntry.FromFmodEvent(ev, bankRelPath).GetKey();
             return _quickAccessEntries.Any(e => e.GetKey() == key) ? "Remove from Quick Access" : "Add to Quick Access";
         }
     }
@@ -97,11 +97,11 @@ public partial class MainWindow
 
     void MenuItem_ToggleQuickAccessFmod(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (SelectedBankEntry == null) return;
+        if (SelectedBankEntry is not FMODEvent ev) return;
         var bankRelPath = GetBankRelativePath();
         if (bankRelPath == null) return;
 
-        var entry = QuickAccessEntry.FromFmodEvent(SelectedBankEntry, bankRelPath);
+        var entry = QuickAccessEntry.FromFmodEvent(ev, bankRelPath);
         ToggleQuickAccessEntry(entry);
     }
 

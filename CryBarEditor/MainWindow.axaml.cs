@@ -60,7 +60,7 @@ public partial class MainWindow : SimpleWindow
     FileStream? _barStream = null;
     FileIndex? _fileIndex = null;
     BarFileEntry? _selectedBarEntry = null;
-    FMODEvent? _selectedBankEntry = null;
+    IBankItem? _selectedBankEntry = null;
     RootFileEntry? _selectedRootFileEntry = null;
     // Currently-rendered preview item; can differ from SelectedRoot/Bar when the
     // other panel previewed something since. Compared by reference, so the choice
@@ -175,8 +175,8 @@ public partial class MainWindow : SimpleWindow
     public ObservableCollectionExtended<RootFileEntry> SelectedRootFileEntries { get; } = new();
     public ObservableCollectionExtended<BarFileEntry> SelectedBarFileEntries { get; } = new();
 
-    public ObservableCollectionExtended<FMODEvent> BankEntries { get; } = new();
-    public ObservableCollectionExtended<FMODEvent> SelectedBankEntries { get; } = new();
+    public ObservableCollectionExtended<IBankItem> BankEntries { get; } = new();
+    public ObservableCollectionExtended<IBankItem> SelectedBankEntries { get; } = new();
 
     // this is used just to notify override icons to update
     public bool ShowOverridenIcons => true;
@@ -307,7 +307,7 @@ public partial class MainWindow : SimpleWindow
         }
     }
 
-    public FMODEvent? SelectedBankEntry
+    public IBankItem? SelectedBankEntry
     {
         get => _selectedBankEntry; set
         {
@@ -321,6 +321,10 @@ public partial class MainWindow : SimpleWindow
             _ = Preview(value);
         }
     }
+
+    /// <summary>True when the selected bank entry is an event (vs a raw FSB5 subsound).</summary>
+    public bool SelectedBankIsEvent => _selectedBankEntry is FMODEvent;
+
     void RefreshSelectedProperties()
     {
         OnPropertyChanged(nameof(CanExport));
@@ -328,6 +332,7 @@ public partial class MainWindow : SimpleWindow
         OnPropertyChanged(nameof(CanExportAndIsDDT));
         OnPropertyChanged(nameof(SelectedCanHaveAdditiveMod));
         OnPropertyChanged(nameof(CanOpenInEditor));
+        OnPropertyChanged(nameof(SelectedBankIsEvent));
     }
     #endregion
 

@@ -295,10 +295,10 @@ public partial class MainWindow
 
     async void BankItem_ExportAllSounds(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (SelectedBankEntry == null || _fmodBank == null)
+        if (SelectedBankEntry is not FMODEvent selectedEvent || _fmodBank == null)
             return;
 
-        var resolution = await ResolveFmodEventSoundsAsync(SelectedBankEntry);
+        var resolution = await ResolveFmodEventSoundsAsync(selectedEvent);
         if (resolution == null)
         {
             _ = ShowError("Could not resolve soundset for this event.\nMake sure a root directory with Sound.bar is loaded.");
@@ -329,9 +329,9 @@ public partial class MainWindow
 
         var targetCount = sounds.Count;
         var maxAttempts = targetCount * 20;
-        var selectedEntry = SelectedBankEntry;
+        var selectedEntry = selectedEvent;
 
-        bank_play_csc?.Cancel();
+        StopBankPlayback();
         bank_play_csc = new();
         var token = bank_play_csc.Token;
 

@@ -373,22 +373,47 @@
 						<TextBlock DockPanel.Dock="Top" Margin="0,6,0,0">
 							<Run Text="Events: " FontWeight="Bold"/>
 							<Run Text="{Binding FmodBank?.Events?.Length}"/>
+							<Run Text="    Sounds: " FontWeight="Bold"/>
+							<Run Text="{Binding FmodBank?.Subsounds?.Length}"/>
 						</TextBlock>
 						
 						<ListBox ItemsSource="{Binding BankEntries}" Margin="0,10,0,0"
 								SelectionMode="Single"
+								DoubleTapped="BankEntryList_DoubleTapped"
 								SelectedItems="{Binding SelectedBankEntries, Mode=TwoWay}"
 								SelectedItem="{Binding SelectedBankEntry, Mode=TwoWay}">
-							<ListBox.ItemTemplate>
+							<ListBox.DataTemplates>
 								<DataTemplate x:DataType="cc:FMODEvent">
 									<StackPanel Orientation="Horizontal" Height="19">
-										<micons:MaterialIcon Kind="MusicNote" Width="16" Height="16" 
-														Margin="0,0,5,0" Foreground="#6f96bf" 
-														VerticalAlignment="Center"/>
+										<Button Click="BankItem_IconPlay" IsVisible="{Binding !IsPlaying}" ToolTip.Tip="Play"
+												Padding="0" Margin="0,0,5,0" Width="16" Height="16" Background="Transparent"
+												BorderThickness="0" VerticalAlignment="Center" Cursor="Hand">
+											<micons:MaterialIcon Kind="MusicNote" Width="16" Height="16" Foreground="#6f96bf"/>
+										</Button>
+										<Button Click="BankItem_StopPlayback" IsVisible="{Binding IsPlaying}" ToolTip.Tip="Stop"
+												Padding="0" Margin="0,0,5,0" Width="16" Height="16" Background="Transparent"
+												BorderThickness="0" VerticalAlignment="Center" Cursor="Hand">
+											<micons:MaterialIcon Kind="Stop" Width="16" Height="16" Foreground="#d06a5a"/>
+										</Button>
 										<TextBlock Text="{Binding Path}" VerticalAlignment="Center"/>
 									</StackPanel>
 								</DataTemplate>
-							</ListBox.ItemTemplate>
+								<DataTemplate x:DataType="cc:FMODSubsound">
+									<StackPanel Orientation="Horizontal" Height="19">
+										<Button Click="BankItem_IconPlay" IsVisible="{Binding !IsPlaying}" ToolTip.Tip="Play"
+												Padding="0" Margin="0,0,5,0" Width="16" Height="16" Background="Transparent"
+												BorderThickness="0" VerticalAlignment="Center" Cursor="Hand">
+											<micons:MaterialIcon Kind="Waveform" Width="16" Height="16" Foreground="#c89b5a"/>
+										</Button>
+										<Button Click="BankItem_StopPlayback" IsVisible="{Binding IsPlaying}" ToolTip.Tip="Stop"
+												Padding="0" Margin="0,0,5,0" Width="16" Height="16" Background="Transparent"
+												BorderThickness="0" VerticalAlignment="Center" Cursor="Hand">
+											<micons:MaterialIcon Kind="Stop" Width="16" Height="16" Foreground="#d06a5a"/>
+										</Button>
+										<TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>
+									</StackPanel>
+								</DataTemplate>
+							</ListBox.DataTemplates>
 							<ListBox.ContextMenu>
 								<ContextMenu>
 									<MenuItem Header="Play" 
@@ -402,14 +427,16 @@
 										Icon="{micons:MaterialIconExt Kind=MusicBoxMultiple}"
 										Click="BankItem_ExportAllSounds"
 										IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).CanExportAllSounds}" />
-									<Separator />
+									<Separator IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankIsEvent}" />
 									<MenuItem Header="{Binding #mainWindow.((ce:MainWindow)DataContext).FmodQuickAccessToggleText}"
 										Icon="{micons:MaterialIconExt Kind=Star}"
-										Click="MenuItem_ToggleQuickAccessFmod" />
-									<Separator />
+										Click="MenuItem_ToggleQuickAccessFmod"
+										IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankIsEvent}" />
+									<Separator IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankIsEvent}" />
 									<MenuItem Header="Show dependencies"
 										Icon="{micons:MaterialIconExt Kind=FileTreeOutline}"
-										Click="MenuItem_ShowDependenciesFmod" />
+										Click="MenuItem_ShowDependenciesFmod"
+										IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankIsEvent}" />
 								</ContextMenu>
 							</ListBox.ContextMenu>
 						</ListBox>

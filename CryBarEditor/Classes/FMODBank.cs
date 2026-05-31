@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,6 +25,7 @@ public class FMODBank : IDisposable
     public string BankPath { get; }
 
     public FMODEvent[] Events { get; init; }
+    public FMODSubsound[] Subsounds { get; init; }
 
 #pragma warning disable CS0414
     bool _disposed;
@@ -33,7 +36,8 @@ public class FMODBank : IDisposable
         string bankPath,
         byte[] bankData,
         byte[]? bankMasterData = null,
-        byte[]? bankMasterStringsData = null)
+        byte[]? bankMasterStringsData = null,
+        CancellationToken token = default)
     {
         BankPath = bankPath;
 
@@ -43,14 +47,134 @@ public class FMODBank : IDisposable
         _bankMasterStringsData = bankMasterStringsData;
 
         (_bank, _bankMaster, _bankMasterStrings) = LoadBanksIntoSystem(_system);
+        token.ThrowIfCancellationRequested();
 
-        // Load events
+        // Load events (asset/streaming banks like music.bank have none; that's expected)
         var r = _bank.getEventList(out var events);
-        if (r != FMOD.RESULT.OK || events == null) throw new Exception("Failed to load FMOD bank event list: " + r);
+        if (r != FMOD.RESULT.OK) throw new Exception("Failed to load FMOD bank event list: " + r);
 
+        events ??= [];
         Events = new FMODEvent[events.Length];
         for (int i = 0; i < events.Length; i++)
             Events[i] = new FMODEvent(system, events[i], _bankData, _bankMasterData, bankMasterStringsData);
+
+        // Load audio embedded directly as FSB5 subsounds (not exposed as events)
+        Subsounds = BuildSubsounds(system, token);
+    }
+
+    /// <summary>
+    /// Enumerates the bank's embedded FSB5 sound banks and exposes each subsound.
+    /// Asset/streaming banks (e.g. music.bank) carry their audio here with no events.
+    /// </summary>
+    FMODSubsound[] BuildSubsounds(FMOD.Studio.System system, CancellationToken token)
+    {
+        var ranges = FindFsb5Ranges(_bankData);
+        if (ranges.Count == 0) return [];
+
+        system.getCoreSystem(out var core);
+
+        var list = new List<FMODSubsound>();
+        foreach (var (start, length) in ranges)
+        {
+            // Point FMOD at the FSB5 in place via fileoffset - no per-range copy of the bank.
+            var sound = OpenFsb(core, start, length, FMOD.MODE.CREATECOMPRESSEDSAMPLE, out var r);
+            if (r != FMOD.RESULT.OK) continue;
+
+            sound.getNumSubSounds(out var count);
+            for (int i = 0; i < count; i++)
+            {
+                token.ThrowIfCancellationRequested();
+
+                sound.getSubSound(i, out var sub);
+                sub.getName(out var name, 256);
+                sub.getLength(out var lengthMs, FMOD.TIMEUNIT.MS);
+                list.Add(new FMODSubsound(_bankData, (uint)start, length, i, name, (int)lengthMs));
+            }
+
+            sound.release();
+        }
+
+        return list.ToArray();
+    }
+
+    /// <summary>
+    /// Opens the FSB5 container at <paramref name="fileOffset"/> directly from the shared
+    /// bank bytes (no copy). Caller supplies the extra mode flags (CREATECOMPRESSEDSAMPLE
+    /// for fast header enumeration, CREATESTREAM for playback/export).
+    /// </summary>
+    FMOD.Sound OpenFsb(FMOD.System core, int fileOffset, uint length, FMOD.MODE mode, out FMOD.RESULT r)
+    {
+        // length must be the container size, not the whole bank: with OPENMEMORY + fileoffset
+        // FMOD reads `length` bytes starting AT fileoffset, so passing the full bank length
+        // overruns the buffer by fileoffset bytes and crashes the runtime on large banks.
+        var ex = new FMOD.CREATESOUNDEXINFO();
+        ex.cbsize = Marshal.SizeOf(ex);
+        ex.length = length;
+        ex.fileoffset = (uint)fileOffset;
+
+        r = core.createSound(_bankData, FMOD.MODE.OPENMEMORY | mode, ref ex, out var sound);
+        return sound;
+    }
+
+    /// <summary>
+    /// Returns the byte ranges of each genuine "FSB5" container inside the bank.
+    /// The 4-byte magic also appears by coincidence inside compressed audio, so each
+    /// candidate is validated against its self-declared header - feeding a bogus offset
+    /// to createSound makes FMOD read far out of bounds and crash the runtime.
+    /// </summary>
+    static List<(int start, uint length)> FindFsb5Ranges(byte[] data)
+    {
+        ReadOnlySpan<byte> magic = "FSB5"u8;
+        var span = (ReadOnlySpan<byte>)data;
+
+        // Vectorized scan - a manual byte loop over a ~474MB bank costs hundreds of ms.
+        var ranges = new List<(int, uint)>();
+        int from = 0;
+        while (from <= span.Length - magic.Length)
+        {
+            int rel = span[from..].IndexOf(magic);
+            if (rel < 0) break;
+
+            int start = from + rel;
+            if (TryReadFsb5Size(data, start, out long total))
+            {
+                ranges.Add((start, (uint)total));
+                from = start + (int)total; // skip the container body - it can't hold another header
+            }
+            else
+            {
+                from = start + magic.Length;
+            }
+        }
+
+        return ranges;
+    }
+
+    /// <summary>
+    /// Validates the FSB5 header at <paramref name="offset"/> and returns the container's
+    /// total byte size. Rejects coincidental magic matches whose header fields are
+    /// nonsensical or describe a container that would not fit inside the buffer.
+    /// </summary>
+    static bool TryReadFsb5Size(byte[] data, int offset, out long total)
+    {
+        total = 0;
+
+        const int HeaderSize = 0x3C; // FSB5 base header (v0/v1)
+        if (offset < 0 || offset + HeaderSize > data.Length)
+            return false;
+
+        uint version    = BitConverter.ToUInt32(data, offset + 0x04);
+        uint numSamples = BitConverter.ToUInt32(data, offset + 0x08);
+        uint shdrSize   = BitConverter.ToUInt32(data, offset + 0x0C);
+        uint nameSize   = BitConverter.ToUInt32(data, offset + 0x10);
+        uint dataSize   = BitConverter.ToUInt32(data, offset + 0x14);
+
+        if (version != 0 && version != 1) return false;
+        if (numSamples == 0 || numSamples > 1_000_000) return false;
+        if (shdrSize == 0 || dataSize == 0) return false;
+
+        total = HeaderSize + (long)shdrSize + nameSize + dataSize;
+        return offset + total <= data.Length;
     }
 
     (Bank bank, Bank? bank_master, Bank? bank_strings) LoadBanksIntoSystem(FMOD.Studio.System system)
@@ -148,7 +272,48 @@ public class FMODBank : IDisposable
     }
 }
 
-public class FMODEvent
+/// <summary>
+/// A playable/exportable entry in an FMOD bank - either an <see cref="FMODEvent"/>
+/// or an <see cref="FMODSubsound"/> (raw audio from an asset bank's FSB5).
+/// </summary>
+public interface IBankItem : INotifyPropertyChanged
+{
+    /// <summary>Label shown in the bank entry list.</summary>
+    string DisplayName { get; }
+
+    /// <summary>True for events, false for raw FSB5 subsounds.</summary>
+    bool IsEvent { get; }
+
+    int LengthMs { get; }
+
+    /// <summary>True while this entry is the one currently being played back.</summary>
+    bool IsPlaying { get; set; }
+
+    Task Play(CancellationToken token = default);
+    void Export(string output_path_wav, CancellationToken token = default);
+}
+
+public abstract class BankItemBase : INotifyPropertyChanged
+{
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    protected void OnPropertyChanged([CallerMemberName] string? name = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+
+    bool _isPlaying;
+    public bool IsPlaying
+    {
+        get => _isPlaying;
+        set
+        {
+            if (_isPlaying == value) return;
+            _isPlaying = value;
+            OnPropertyChanged();
+        }
+    }
+}
+
+public class FMODEvent : BankItemBase, IBankItem
 {
     public string Id { get; set; }
     public string Path { get; set; }
@@ -160,6 +325,9 @@ public class FMODEvent
     public float MaxDistance { get; set; }
     public bool IsDopplerEnabled { get; set; }
     public string[] Parameters { get; set; }
+
+    public string DisplayName => Path;
+    public bool IsEvent => true;
 
     public readonly FMOD.Studio.EventDescription eventDescription;
     readonly FMOD.Studio.System _system;
@@ -321,7 +489,7 @@ public class FMODEvent
         WriteWav(wavPath, trimmedPcm, channels, sampleRate, bitsPerSample);
     }
 
-    static void WriteWav(string path, byte[] pcmData, int channels, int sampleRate, int bitsPerSample)
+    internal static void WriteWav(string path, byte[] pcmData, int channels, int sampleRate, int bitsPerSample, bool floatFormat = false)
     {
         int byteRate = sampleRate * channels * (bitsPerSample / 8);
         short blockAlign = (short)(channels * (bitsPerSample / 8));
@@ -337,7 +505,7 @@ public class FMODEvent
         // fmt subchunk
         bw.Write("fmt "u8);
         bw.Write(16);                         // subchunk1 size (PCM)
-        bw.Write((short)1);                   // audio format (1 = PCM)
+        bw.Write((short)(floatFormat ? 3 : 1)); // audio format (1 = PCM, 3 = IEEE float)
         bw.Write((short)channels);
         bw.Write(sampleRate);
         bw.Write(byteRate);
@@ -435,4 +603,140 @@ public class FMODEvent
         }
     }
 
+}
+
+/// <summary>
+/// A single subsound inside an FMOD bank's embedded FSB5 sound bank. Used for asset
+/// banks (e.g. music.bank) whose audio is not exposed as events. Self-contained: each
+/// Play/Export spins up its own FMOD system from the sliced FSB5 bytes.
+/// </summary>
+public sealed class FMODSubsound : BankItemBase, IBankItem
+{
+    readonly byte[] _bankData;
+    readonly uint _fileOffset;
+    readonly uint _length;
+    readonly int _index;
+
+    public string Name { get; }
+    public int LengthMs { get; }
+
+    public string DisplayName => Name;
+    public bool IsEvent => false;
+
+    public FMODSubsound(byte[] bankData, uint fileOffset, uint length, int index, string? name, int lengthMs)
+    {
+        _bankData = bankData;
+        _fileOffset = fileOffset;
+        _length = length;
+        _index = index;
+        Name = string.IsNullOrEmpty(name) ? $"subsound_{index}" : name;
+        LengthMs = lengthMs;
+    }
+
+    FMOD.Sound CreateSubSound(FMOD.System core, FMOD.MODE extraMode, out FMOD.Sound parent)
+    {
+        // Share the bank bytes and seek to the FSB5 via fileoffset instead of copying it out.
+        // length is the container size: full-buffer length + fileoffset overruns and crashes.
+        var ex = new FMOD.CREATESOUNDEXINFO();
+        ex.cbsize = Marshal.SizeOf(ex);
+        ex.length = _length;
+        ex.fileoffset = _fileOffset;
+        ex.initialsubsound = _index; // a stream decodes only its active subsound; readData on a non-initial one reads the wrong region
+
+        var r = core.createSound(_bankData, FMOD.MODE.OPENMEMORY | FMOD.MODE.CREATESTREAM | extraMode, ref ex, out parent);
+        if (r != FMOD.RESULT.OK) throw new Exception("Failed to create sound from FSB5: " + r);
+
+        r = parent.getSubSound(_index, out var sub);
+        if (r != FMOD.RESULT.OK) throw new Exception("Failed to get FSB5 subsound: " + r);
+
+        return sub;
+    }
+
+    public async Task Play(CancellationToken token = default)
+    {
+        FMOD.Studio.System.create(out var studio);
+        try
+        {
+            var r = studio.initialize(32, FMOD.Studio.INITFLAGS.NORMAL, FMOD.INITFLAGS.NORMAL, nint.Zero);
+            if (r != FMOD.RESULT.OK) throw new Exception("Failed to initialize FMOD system: " + r);
+
+            studio.getCoreSystem(out var core);
+            var sound = CreateSubSound(core, FMOD.MODE.DEFAULT, out var parent);
+
+            r = core.playSound(sound, default, false, out var channel);
+            if (r != FMOD.RESULT.OK) throw new Exception("Failed to play subsound: " + r);
+
+            while (!token.IsCancellationRequested)
+            {
+                core.update();
+                channel.isPlaying(out var playing);
+                if (!playing) break;
+                await Task.Delay(10);
+            }
+
+            channel.stop();
+            parent.release();
+        }
+        finally
+        {
+            studio.release();
+        }
+    }
+
+    public void Export(string output_path_wav, CancellationToken token = default)
+    {
+        // Decode the subsound's PCM directly. Real-time NRT rendering of the FSB5 stream
+        // re-reads a small window and loops it, turning a few seconds into minutes of garbage.
+        FMOD.Studio.System.create(out var studio);
+        try
+        {
+            var r = studio.initialize(32, FMOD.Studio.INITFLAGS.NORMAL, FMOD.INITFLAGS.NORMAL, nint.Zero);
+            if (r != FMOD.RESULT.OK) throw new Exception("Failed to initialize FMOD system: " + r);
+
+            studio.getCoreSystem(out var core);
+            // ACCURATETIME so FMOD accounts for the codec's encoder delay/padding - without it
+            // the decode drops samples off the head and tail of short clips.
+            var sound = CreateSubSound(core, FMOD.MODE.ACCURATETIME, out var parent);
+            try
+            {
+                sound.setMode(FMOD.MODE.LOOP_OFF); // so readData reports EOF at the true end
+                sound.seekData(0);                 // start at the subsound's first sample
+
+                sound.getFormat(out _, out var format, out int channels, out int bits);
+                sound.getDefaults(out float frequency, out _);
+                sound.getLength(out uint pcmBytes, FMOD.TIMEUNIT.PCMBYTES); // exact, thanks to ACCURATETIME
+
+                // Read up to the exact PCM length. The codec's final decode block can overrun
+                // (repeating a few ms past the true end), so it is trimmed below. Fall back to a
+                // generous bound only if the exact length is unavailable.
+                long limit = pcmBytes > 0 ? pcmBytes : ((long)LengthMs / 1000 + 10) * 48000 * 2 * 4;
+
+                using var ms = new MemoryStream(pcmBytes > 0 ? (int)pcmBytes : 0);
+                var chunk = new byte[64 * 1024];
+                while (ms.Length < limit)
+                {
+                    token.ThrowIfCancellationRequested();
+
+                    r = sound.readData(chunk, out uint read);
+                    if (read > 0) ms.Write(chunk, 0, (int)read);
+                    if (r != FMOD.RESULT.OK) break; // ERR_FILE_EOF at the end
+                }
+
+                var pcm = ms.ToArray();
+                if (pcmBytes > 0 && pcm.Length > pcmBytes)
+                    Array.Resize(ref pcm, (int)pcmBytes); // drop the codec's tail padding/repeat
+
+                FMODEvent.WriteWav(output_path_wav, pcm, channels, (int)frequency, bits,
+                    format == FMOD.SOUND_FORMAT.PCMFLOAT);
+            }
+            finally
+            {
+                parent.release();
+            }
+        }
+        finally
+        {
+            studio.release();
+        }
+    }
 }

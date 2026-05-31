@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Input.Platform;
 using CryBar.Bar;
+using CryBarEditor.Classes;
 using CryBarEditor.Windows;
 
 using System;
@@ -120,15 +121,76 @@ public partial class MainWindow
     }
 
     CancellationTokenSource? bank_play_csc = null;
-    void BankItem_Play(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (SelectedBankEntry == null || FmodBank == null)
-            return;
+    IBankItem? _currentlyPlaying = null;
 
+    void BankItem_Play(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => PlaySelectedBankItem();
+
+    void BankEntryList_DoubleTapped(object? sender, Avalonia.Input.TappedEventArgs e) => PlaySelectedBankItem();
+
+    void PlaySelectedBankItem()
+    {
+        if (SelectedBankEntry != null && FmodBank != null)
+            PlayBankItem(SelectedBankEntry);
+    }
+
+    // Click on the type icon (music note / waveform) of a row plays that entry.
+    void BankItem_IconPlay(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if ((sender as Control)?.DataContext is IBankItem item && FmodBank != null)
+            PlayBankItem(item);
+    }
+
+    // Click on the Stop icon shown on the currently-playing row.
+    void BankItem_StopPlayback(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        e.Handled = true;
+        StopBankPlayback();
+    }
+
+    async void PlayBankItem(IBankItem item)
+    {
+        // Only one entry plays at a time; stop whatever is playing first (clears its icon).
+        StopBankPlayback();
+
+        var csc = new CancellationTokenSource();
+        bank_play_csc = csc;
+
+        _currentlyPlaying = item;
+        item.IsPlaying = true;
+        try
+        {
+            await item.Play(csc.Token);
+        }
+        catch { /* cancelled or playback failed */ }
+        finally
+        {
+            // A superseding play (incl. re-playing the same item) installs its own csc;
+            // only the still-current invocation may clear shared state. Keying on `item`
+            // identity breaks when the same item is replayed.
+            if (ReferenceEquals(bank_play_csc, csc))
+            {
+                item.IsPlaying = false;
+                _currentlyPlaying = null;
+                bank_play_csc = null;
+            }
+
+            csc.Dispose();
+        }
+    }
+
+    void StopBankPlayback()
+    {
+        // Don't dispose here - the owning PlayBankItem disposes its own csc once its
+        // awaited Play unwinds; disposing now would race that still-running task.
         bank_play_csc?.Cancel();
-        bank_play_csc?.Dispose();
-        bank_play_csc = new();
-        _ = SelectedBankEntry.Play(bank_play_csc.Token);
+        bank_play_csc = null;
+
+        if (_currentlyPlaying != null)
+        {
+            _currentlyPlaying.IsPlaying = false;
+            _currentlyPlaying = null;
+        }
     }
 
     void MenuItem_OpenExportedInEditor(object? sender, Avalonia.Interactivity.RoutedEventArgs e)

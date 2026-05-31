@@ -707,11 +707,12 @@ public partial class MainWindow
         if (SelectedBankEntry == null || FmodBank == null)
             return;
 
+        var entry = SelectedBankEntry;
         var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
             DefaultExtension = ".wav",
-            SuggestedFileName = Path.GetFileNameWithoutExtension(SelectedBankEntry.Path) + ".wav",
-            Title = "Export FMOD event"
+            SuggestedFileName = Path.GetFileNameWithoutExtension(entry.DisplayName) + ".wav",
+            Title = entry.IsEvent ? "Export FMOD event" : "Export FMOD sound"
         });
 
         if (file == null)
@@ -723,14 +724,17 @@ public partial class MainWindow
         try
         {
             var outputPath = file.Path.LocalPath;
-            SelectedBankEntry.Export(outputPath, bank_play_csc.Token);
-            FMODEvent.TrimSilence(outputPath);
+            entry.Export(outputPath, bank_play_csc.Token);
 
-            _ = ShowSuccess("FMOD event export completed.\n");
+            // NRT event rendering pads silence; raw subsounds are already tight.
+            if (entry.IsEvent)
+                FMODEvent.TrimSilence(outputPath);
+
+            _ = ShowSuccess("FMOD export completed.\n");
         }
         catch (Exception ex)
         {
-            _ = ShowError("FMOD event export failed.\n" + ex.Message);
+            _ = ShowError("FMOD export failed.\n" + ex.Message);
         }
         finally
         {
