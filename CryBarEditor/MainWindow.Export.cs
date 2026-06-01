@@ -786,10 +786,10 @@ public partial class MainWindow
             plans.Add((item, names));
         }
 
-        await RunBankExport($"Exporting {items.Length} FMOD entries", outputDir, (p, token) =>
+        await RunBankExport($"Exporting {items.Length} FMOD entries", outputDir, (p, v, token) =>
         {
             var sw = Stopwatch.StartNew();
-            int ok = 0, failed = 0;
+            int ok = 0, failed = 0, done = 0;
             var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var (item, variantNames) in plans)
@@ -825,6 +825,8 @@ public partial class MainWindow
                 }
                 catch (OperationCanceledException) { throw; }
                 catch { failed++; }
+
+                v.Report((double)++done / plans.Count);
             }
 
             sw.Stop();
@@ -839,11 +841,13 @@ public partial class MainWindow
     /// window), stops any current playback, then runs <paramref name="work"/> on a background thread
     /// with cancellation and uniform cancelled/failed reporting.
     /// </summary>
-    async Task RunBankExport(string title, string outputDir, Action<IProgress<string?>, CancellationToken> work)
+    async Task RunBankExport(string title, string outputDir, Action<IProgress<string?>, IProgress<double>, CancellationToken> work)
     {
         var progress = new Progress<string?>();
+        var progressValue = new Progress<double>();
         IProgress<string?> p = progress;
-        var prompt = ShowProgress(title, progress);
+        IProgress<double> v = progressValue;
+        var prompt = ShowProgress(title, progress, progressValue);
         prompt.OpenFolderPath = outputDir;
 
         StopBankPlayback();
@@ -852,7 +856,7 @@ public partial class MainWindow
 
         await Task.Run(() =>
         {
-            try { work(p, token); }
+            try { work(p, v, token); }
             catch (OperationCanceledException) { p.Report("Export cancelled."); }
             catch (Exception ex) { p.Report($"Export failed: {ex.Message}"); }
             finally { p.Report(null); }

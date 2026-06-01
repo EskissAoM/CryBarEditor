@@ -324,10 +324,10 @@ public partial class MainWindow
 
         var variantNames = SortedVariantFilenames(sounds);
 
-        await RunBankExport($"Exporting {sounds.Count} sounds", outputDir, (p, token) =>
+        await RunBankExport($"Exporting {sounds.Count} sounds", outputDir, (p, v, token) =>
         {
             var sw = Stopwatch.StartNew();
-            int exported = ExportEventVariants(selectedEvent, variantNames, outputDir, p, token);
+            int exported = ExportEventVariants(selectedEvent, variantNames, outputDir, p, token, v);
             sw.Stop();
 
             var msg = $"Exported {exported}/{variantNames.Count} unique sounds in {sw.Elapsed.TotalSeconds:0.00}s";
@@ -350,7 +350,7 @@ public partial class MainWindow
     /// Runs synchronously (blocking FMOD work) - call from a background task.
     /// </summary>
     static int ExportEventVariants(FMODEvent ev, IReadOnlyList<string> sortedVariantNames,
-        string outputDir, IProgress<string?> p, CancellationToken token)
+        string outputDir, IProgress<string?> p, CancellationToken token, IProgress<double>? progress = null)
     {
         var targetCount = sortedVariantNames.Count;
         var maxAttempts = targetCount * 20;
@@ -371,7 +371,10 @@ public partial class MainWindow
 
                 var fileData = File.ReadAllBytes(tempPath);
                 if (!uniqueSounds.ContainsKey(fileData.Length))
+                {
                     uniqueSounds[fileData.Length] = fileData;
+                    progress?.Report((double)uniqueSounds.Count / targetCount);
+                }
             }
             catch (OperationCanceledException) { throw; }
             catch { /* single attempt failed, continue */ }

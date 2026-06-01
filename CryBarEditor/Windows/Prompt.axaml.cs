@@ -17,6 +17,7 @@ public partial class Prompt : SimpleWindow
     bool _canClose = true;
     PromptType _type = PromptType.Information;
     Progress<string?>? _progressReporter;
+    Progress<double>? _progressValueReporter;
     bool _progressFinished = false;
     bool _showSuccess = false;
     bool _showProgress = false;
@@ -54,7 +55,7 @@ public partial class Prompt : SimpleWindow
         InitializeComponent();
     }
 
-    public Prompt(PromptType type, string title, string text = "", Progress<string?>? progress_reporter = null) : this()
+    public Prompt(PromptType type, string title, string text = "", Progress<string?>? progress_reporter = null, Progress<double>? progress_value = null) : this()
     {
         _type = type;
         PromptText = text;
@@ -66,9 +67,9 @@ public partial class Prompt : SimpleWindow
         OnPropertyChanged(nameof(PromptIsProgress));
         OnPropertyChanged(nameof(PromptIsConfirm));
 
-        if (type == PromptType.Success) 
+        if (type == PromptType.Success)
             ShowSuccessIcon = true;
-        
+
         if (_progressReporter != null)
         {
             CanClose = false;
@@ -76,6 +77,20 @@ public partial class Prompt : SimpleWindow
             ShowProgressIcon = true;
             _progressReporter.ProgressChanged += ProgressChanged;
         }
+
+        if (progress_value != null)
+        {
+            _progressValueReporter = progress_value;
+            _progressValueReporter.ProgressChanged += ProgressValueChanged;
+            progressBar.IsIndeterminate = false;
+            progressBar.Value = 0;
+        }
+    }
+
+    void ProgressValueChanged(object? sender, double value)
+    {
+        if (_progressFinished) return;
+        progressBar.Value = Math.Clamp(value, 0, 1) * 100;
     }
 
     void ProgressChanged(object? sender, string? text)
@@ -145,6 +160,11 @@ public partial class Prompt : SimpleWindow
         if (_progressReporter != null)
         {
             _progressReporter.ProgressChanged -= ProgressChanged;
+        }
+
+        if (_progressValueReporter != null)
+        {
+            _progressValueReporter.ProgressChanged -= ProgressValueChanged;
         }
     }
 }

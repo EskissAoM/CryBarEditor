@@ -755,9 +755,9 @@ public partial class MainWindow : SimpleWindow
         return prompt.Confirmed;
     }
 
-    Prompt ShowProgress(string title, Progress<string?> progress)
+    Prompt ShowProgress(string title, Progress<string?> progress, Progress<double>? progressValue = null)
     {
-        var prompt = new Prompt(PromptType.Progress, title, progress_reporter: progress);
+        var prompt = new Prompt(PromptType.Progress, title, progress_reporter: progress, progress_value: progressValue);
         _ = prompt.ShowDialog(this);
         return prompt;
     }
