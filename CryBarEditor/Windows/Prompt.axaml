@@ -104,7 +104,7 @@
 
 				<Button Grid.Column="2" Content="Open Folder"
 						Click="OpenFolder_Click"
-						IsVisible="{Binding HasOpenFolder}"
+						IsVisible="{Binding CanOpenFolder}"
 						Margin="0,0,5,0" />
 				<Button Grid.Column="3" Content="Close"
 						Click="CloseButtonClick"

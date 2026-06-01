@@ -25,13 +25,17 @@ public partial class Prompt : SimpleWindow
 
     public string PromptText { get => _text; set { _text = value; OnSelfChanged(); } }
     public string PromptTitle { get => _title; set { _title = value; Title = value; OnSelfChanged(); } }
-    public bool CanClose { get => _canClose; set { _canClose = value; OnSelfChanged(); } }
+    public bool CanClose { get => _canClose; set { _canClose = value; OnSelfChanged(); OnPropertyChanged(nameof(CanOpenFolder)); } }
     public bool ProgressFinished { get => _progressFinished; set { _progressFinished = value; OnSelfChanged(); } }
     public string? LinkUrl { get => _linkUrl; set { _linkUrl = value; OnSelfChanged(); OnPropertyChanged(nameof(HasLink)); } }
-    public string? OpenFolderPath { get => _openFolderPath; set { _openFolderPath = value; OnSelfChanged(); OnPropertyChanged(nameof(HasOpenFolder)); } }
+    public string? OpenFolderPath { get => _openFolderPath; set { _openFolderPath = value; OnSelfChanged(); OnPropertyChanged(nameof(HasOpenFolder)); OnPropertyChanged(nameof(CanOpenFolder)); } }
 
     public bool HasLink => _linkUrl != null;
     public bool HasOpenFolder => _openFolderPath != null;
+
+    // Hidden while an export is still running (CanClose is false during progress) so it can't
+    // dismiss the dialog and orphan the background work.
+    public bool CanOpenFolder => HasOpenFolder && CanClose;
 
     public bool PromptIsError => _type == PromptType.Error;
     public bool PromptIsSuccess => _type == PromptType.Success;
@@ -123,6 +127,7 @@ public partial class Prompt : SimpleWindow
 
     void OpenFolder_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
+        if (!CanClose) return;
         if (_openFolderPath == null) return;
         var dir = Directory.Exists(_openFolderPath) ? _openFolderPath : Path.GetDirectoryName(_openFolderPath);
         if (dir == null) return;

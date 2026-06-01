@@ -25,7 +25,7 @@ public partial class MainWindow
     /// <summary>
     /// Whether the currently selected FMOD event has multiple sounds resolvable via soundset.
     /// </summary>
-    public bool CanExportAllSounds => _lastSoundsetResolution is { Soundset.Sounds.Count: > 1 };
+    public bool CanExportAllSounds => SelectedBankSingle && _lastSoundsetResolution is { Soundset.Sounds.Count: > 1 };
 
     SoundsetResolution? _lastSoundsetResolution;
 
@@ -322,102 +322,83 @@ public partial class MainWindow
         if (folders.Count == 0) return;
         var outputDir = folders[0].Path.LocalPath;
 
-        var progress = new Progress<string?>();
-        IProgress<string?> p = progress;
-        var prompt = ShowProgress($"Exporting {sounds.Count} sounds", progress);
-        prompt.OpenFolderPath = outputDir;
+        var variantNames = SortedVariantFilenames(sounds);
 
-        var targetCount = sounds.Count;
-        var maxAttempts = targetCount * 20;
-        var selectedEntry = selectedEvent;
-
-        StopBankPlayback();
-        bank_play_csc = new();
-        var token = bank_play_csc.Token;
-
-        // Sort soundset sounds by manifest duration for matching later
-        var sortedSoundset = sounds
-            .OrderBy(s => s.Length ?? double.MaxValue)
-            .ToList();
-
-        await Task.Run(() =>
+        await RunBankExport($"Exporting {sounds.Count} sounds", outputDir, (p, token) =>
         {
             var sw = Stopwatch.StartNew();
+            int exported = ExportEventVariants(selectedEvent, variantNames, outputDir, p, token);
+            sw.Stop();
+
+            var msg = $"Exported {exported}/{variantNames.Count} unique sounds in {sw.Elapsed.TotalSeconds:0.00}s";
+            if (exported < variantNames.Count)
+                msg += $"\nNote: Found {exported} unique variants out of {variantNames.Count} expected.";
+            p.Report(msg);
+        });
+    }
+
+    /// <summary>Soundset sound filenames sorted by manifest duration (variant match order).</summary>
+    static List<string> SortedVariantFilenames(IEnumerable<SoundsetSound> sounds) => sounds
+        .OrderBy(s => s.Length ?? double.MaxValue)
+        .Select(s => Path.GetFileName(s.Filename))
+        .ToList();
+
+    /// <summary>
+    /// Renders every distinct soundset variant of one event into <paramref name="outputDir"/> (best-effort).
+    /// A variant is picked at random per play, so we render repeatedly and dedup by trimmed size, then map
+    /// size-sorted renders to the length-sorted soundset filenames. Returns the number of variants written.
+    /// Runs synchronously (blocking FMOD work) - call from a background task.
+    /// </summary>
+    static int ExportEventVariants(FMODEvent ev, IReadOnlyList<string> sortedVariantNames,
+        string outputDir, IProgress<string?> p, CancellationToken token)
+    {
+        var targetCount = sortedVariantNames.Count;
+        var maxAttempts = targetCount * 20;
+
+        var uniqueSounds = new Dictionary<long, byte[]>(); // key = trimmed file size (duration proxy)
+        for (int attempt = 0; attempt < maxAttempts && uniqueSounds.Count < targetCount; attempt++)
+        {
+            token.ThrowIfCancellationRequested();
+            p.Report($"{ev.DisplayName}: attempt {attempt + 1}/{maxAttempts} - {uniqueSounds.Count}/{targetCount} variants...");
+
+            var tempPath = Path.Combine(Path.GetTempPath(), $"crybar_fmod_{Guid.NewGuid()}.wav");
             try
             {
-                // Export via NRT multiple times, deduplicate by file size (proxy for duration) after trimming.
-                var uniqueSounds = new Dictionary<long, byte[]>(); // key = trimmed file size
+                ev.Export(tempPath, token, (uint)(attempt + 1));
+                if (!File.Exists(tempPath)) continue;
 
-                for (int attempt = 0; attempt < maxAttempts && uniqueSounds.Count < targetCount; attempt++)
-                {
-                    token.ThrowIfCancellationRequested();
-                    p.Report($"Attempt {attempt + 1}/{maxAttempts} - found {uniqueSounds.Count}/{targetCount} unique sounds...");
+                FMODEvent.TrimSilence(tempPath);
 
-                    var tempPath = Path.Combine(Path.GetTempPath(), $"crybar_fmod_{Guid.NewGuid()}.wav");
-                    try
-                    {
-                        selectedEntry.Export(tempPath, token);
-                        if (!File.Exists(tempPath)) continue;
-
-                        FMODEvent.TrimSilence(tempPath);
-
-                        var fileData = File.ReadAllBytes(tempPath);
-
-                        if (!uniqueSounds.ContainsKey(fileData.Length))
-                            uniqueSounds[fileData.Length] = fileData;
-                    }
-                    catch (OperationCanceledException) { throw; }
-                    catch { /* single attempt failed, continue */ }
-                    finally
-                    {
-                        try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
-                    }
-                }
-
-                // Match exported sounds to original filenames via duration sorting.
-                // Trimmed durations differ from manifest durations in absolute value,
-                // but their relative ordering is preserved - so sort both sides and match positionally.
-                var sortedExports = uniqueSounds.OrderBy(kv => kv.Key).Select(kv => kv.Value).ToList();
-
-                int exported = 0;
-                for (int i = 0; i < sortedExports.Count; i++)
-                {
-                    string outName;
-                    if (i < sortedSoundset.Count)
-                    {
-                        outName = Path.GetFileName(sortedSoundset[i].Filename);
-                    }
-                    else
-                    {
-                        var eventName = SoundsetParser.ExtractEventName(selectedEntry.Path) ?? "sound";
-                        outName = $"{eventName}_{i + 1}.wav";
-                    }
-
-                    var outPath = Path.Combine(outputDir, outName);
-                    p.Report($"Writing {outName}...");
-                    File.WriteAllBytes(outPath, sortedExports[i]);
-                    exported++;
-                }
-
-                sw.Stop();
-                var msg = $"Exported {exported}/{targetCount} unique sounds in {sw.Elapsed.TotalSeconds:0.00}s";
-                if (uniqueSounds.Count < targetCount)
-                    msg += $"\nNote: Found {uniqueSounds.Count} unique variants out of {targetCount} expected.";
-                p.Report(msg);
+                var fileData = File.ReadAllBytes(tempPath);
+                if (!uniqueSounds.ContainsKey(fileData.Length))
+                    uniqueSounds[fileData.Length] = fileData;
             }
-            catch (OperationCanceledException)
-            {
-                p.Report("Export cancelled.");
-            }
-            catch (Exception ex)
-            {
-                p.Report($"Export failed: {ex.Message}");
-            }
+            catch (OperationCanceledException) { throw; }
+            catch { /* single attempt failed, continue */ }
             finally
             {
-                p.Report(null);
+                try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
             }
-        }, token);
+        }
+
+        // Trimmed durations differ from manifest durations in absolute value, but their relative
+        // ordering is preserved - so sort both sides and match positionally.
+        var sortedExports = uniqueSounds.OrderBy(kv => kv.Key).Select(kv => kv.Value).ToList();
+
+        int exported = 0;
+        for (int i = 0; i < sortedExports.Count; i++)
+        {
+            string outName = i < sortedVariantNames.Count
+                ? sortedVariantNames[i]
+                : $"{SoundsetParser.ExtractEventName(ev.Path) ?? "sound"}_{i + 1}.wav";
+
+            var outPath = Path.Combine(outputDir, outName);
+            p.Report($"Writing {outName}...");
+            File.WriteAllBytes(outPath, sortedExports[i]);
+            exported++;
+        }
+
+        return exported;
     }
 
     #endregion

@@ -133,6 +133,15 @@ public partial class MainWindow
             PlayBankItem(SelectedBankEntry);
     }
 
+    void BankContextMenu_Opened(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        _selectedBankCount = SelectedBankEntries.Count;
+        OnPropertyChanged(nameof(SelectedBankSingle));
+        OnPropertyChanged(nameof(SelectedBankMultiple));
+        OnPropertyChanged(nameof(SelectedBankIsEventSingle));
+        OnPropertyChanged(nameof(CanExportAllSounds));
+    }
+
     // Click on the type icon (music note / waveform) of a row plays that entry.
     void BankItem_IconPlay(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {

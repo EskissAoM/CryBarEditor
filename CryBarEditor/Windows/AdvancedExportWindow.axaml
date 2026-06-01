@@ -62,6 +62,16 @@
 				</StackPanel>
 			</Border>
 
+			<!-- Bank export: variant toggle (FMOD WAV export only) -->
+			<CheckBox DockPanel.Dock="Top" IsChecked="{Binding BankExportAllVariants}" Margin="0,0,0,8"
+					  IsVisible="{Binding ShowBankAllVariants}">
+				<StackPanel>
+					<TextBlock Text="Export all variants of FMOD events" VerticalAlignment="Center" />
+					<TextBlock Text="Renders every soundset variant per event into a subfolder; subsounds export as-is"
+							   Foreground="Gray" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
+				</StackPanel>
+			</CheckBox>
+
 			<!-- Override file name (single file only) -->
 			<StackPanel DockPanel.Dock="Top" Margin="0,0,0,8" IsVisible="{Binding ShowOverrideName}">
 				<TextBlock Text="Override file name" FontWeight="Bold" Margin="0,0,0,4" />
@@ -71,16 +81,19 @@
 			</StackPanel>
 
 			<!-- Export mode checkboxes -->
-			<TextBlock DockPanel.Dock="Top" Text="Export mode" FontWeight="Bold" Margin="0,0,0,4" />
+			<TextBlock DockPanel.Dock="Top" Text="Export mode" FontWeight="Bold" Margin="0,0,0,4"
+					   IsVisible="{Binding !IsBankExport}" />
 
-			<CheckBox DockPanel.Dock="Top" IsChecked="{Binding DoCopy}" Margin="0,0,0,2">
+			<CheckBox DockPanel.Dock="Top" IsChecked="{Binding DoCopy}" Margin="0,0,0,2"
+					  IsVisible="{Binding !IsBankExport}">
 				<StackPanel Orientation="Horizontal">
 					<TextBlock Text="Copy (raw file)" VerticalAlignment="Center" />
 					<TextBlock Text=" - exports as-is from source" Foreground="Gray" VerticalAlignment="Center" />
 				</StackPanel>
 			</CheckBox>
 
-			<CheckBox DockPanel.Dock="Top" IsChecked="{Binding DoConvert}" Margin="0,0,0,2">
+			<CheckBox DockPanel.Dock="Top" IsChecked="{Binding DoConvert}" Margin="0,0,0,2"
+					  IsVisible="{Binding !IsBankExport}">
 				<StackPanel Orientation="Horizontal">
 					<TextBlock Text="Convert" VerticalAlignment="Center" />
 					<TextBlock Text=" - XMB->XML, DDT->TGA, TMM->OBJ, DDS->PNG" Foreground="Gray" VerticalAlignment="Center" />

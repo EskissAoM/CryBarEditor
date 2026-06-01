@@ -741,5 +741,133 @@ public partial class MainWindow
 
         }
     }
+
+    async void BankItem_ExportSelectedToFolder(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (FmodBank == null) return;
+
+        var items = SelectedBankEntries.ToArray();
+        if (items.Length == 0) return;
+
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = $"Export {items.Length} FMOD entries to...",
+            AllowMultiple = false
+        });
+        if (folders.Count == 0) return;
+        var outputDir = folders[0].Path.LocalPath;
+
+        bool anyEvents = items.Any(i => i.IsEvent);
+        var window = new AdvancedExportWindow(items.Length, anyEvents, outputDir, _lastConfiguration);
+        await window.ShowDialog(this);
+
+        var options = window.GetResult();
+        if (options == null) return;
+
+        // Persist only the bank toggle - the full SaveExportConfiguration would clobber the
+        // (inapplicable here, hence false) conversion preferences.
+        _lastConfiguration ??= new Configuration();
+        _lastConfiguration.ExportAllEventVariants = options.ExportAllEventVariants;
+        SaveConfiguration();
+
+        // Resolve soundsets up-front (needs the file index, async) so the worker stays pure-sync.
+        // A non-null name list means render all of an event's variants; null means a single WAV.
+        var plans = new List<(IBankItem item, List<string>? variantNames)>();
+        foreach (var item in items)
+        {
+            List<string>? names = null;
+            if (options.ExportAllEventVariants && item is FMODEvent ev)
+            {
+                var res = await ResolveFmodEventSoundsAsync(ev);
+                if (res is { Soundset.Sounds.Count: > 1 })
+                    names = SortedVariantFilenames(res.Soundset.Sounds);
+            }
+
+            plans.Add((item, names));
+        }
+
+        await RunBankExport($"Exporting {items.Length} FMOD entries", outputDir, (p, token) =>
+        {
+            var sw = Stopwatch.StartNew();
+            int ok = 0, failed = 0;
+            var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var (item, variantNames) in plans)
+            {
+                token.ThrowIfCancellationRequested();
+
+                var baseName = SanitizeFileName(Path.GetFileNameWithoutExtension(item.DisplayName));
+                if (string.IsNullOrWhiteSpace(baseName)) baseName = "sound";
+
+                try
+                {
+                    if (variantNames != null)
+                    {
+                        // Reserve the prefix so two events with the same base name don't
+                        // overwrite each other's flat {prefix}-{n}.wav variants.
+                        var prefix = UniqueName(usedNames, baseName, "");
+                        var targetNames = new List<string>(variantNames.Count);
+                        for (int i = 0; i < variantNames.Count; i++)
+                            targetNames.Add($"{prefix}-{i + 1}.wav");
+
+                        ExportEventVariants((FMODEvent)item, targetNames, outputDir, p, token);
+                    }
+                    else
+                    {
+                        var outName = UniqueName(usedNames, baseName, ".wav");
+                        var outPath = Path.Combine(outputDir, outName);
+                        p.Report($"Exporting {outName}...");
+                        item.Export(outPath, token);
+                        if (item.IsEvent) FMODEvent.TrimSilence(outPath);
+                    }
+
+                    ok++;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch { failed++; }
+            }
+
+            sw.Stop();
+            var msg = $"Exported {ok}/{items.Length} entries in {sw.Elapsed.TotalSeconds:0.00}s";
+            if (failed > 0) msg += $" ({failed} failed)";
+            p.Report(msg);
+        });
+    }
+
+    /// <summary>
+    /// Shared scaffolding for bank WAV exports: opens a modal progress dialog (disabling the main
+    /// window), stops any current playback, then runs <paramref name="work"/> on a background thread
+    /// with cancellation and uniform cancelled/failed reporting.
+    /// </summary>
+    async Task RunBankExport(string title, string outputDir, Action<IProgress<string?>, CancellationToken> work)
+    {
+        var progress = new Progress<string?>();
+        IProgress<string?> p = progress;
+        var prompt = ShowProgress(title, progress);
+        prompt.OpenFolderPath = outputDir;
+
+        StopBankPlayback();
+        bank_play_csc = new();
+        var token = bank_play_csc.Token;
+
+        await Task.Run(() =>
+        {
+            try { work(p, token); }
+            catch (OperationCanceledException) { p.Report("Export cancelled."); }
+            catch (Exception ex) { p.Report($"Export failed: {ex.Message}"); }
+            finally { p.Report(null); }
+        }, token);
+    }
+
+    /// <summary>Returns baseName+ext, suffixing _2, _3, ... until unique within <paramref name="used"/>.</summary>
+    static string UniqueName(HashSet<string> used, string baseName, string ext)
+    {
+        var name = baseName + ext;
+        int n = 2;
+        while (!used.Add(name))
+            name = $"{baseName}_{n++}{ext}";
+
+        return name;
+    }
     #endregion
 }

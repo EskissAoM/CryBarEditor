@@ -378,7 +378,7 @@
 						</TextBlock>
 						
 						<ListBox ItemsSource="{Binding BankEntries}" Margin="0,10,0,0"
-								SelectionMode="Single"
+								SelectionMode="Multiple"
 								DoubleTapped="BankEntryList_DoubleTapped"
 								SelectedItems="{Binding SelectedBankEntries, Mode=TwoWay}"
 								SelectedItem="{Binding SelectedBankEntry, Mode=TwoWay}">
@@ -415,28 +415,34 @@
 								</DataTemplate>
 							</ListBox.DataTemplates>
 							<ListBox.ContextMenu>
-								<ContextMenu>
-									<MenuItem Header="Play" 
+								<ContextMenu Opened="BankContextMenu_Opened">
+									<MenuItem Header="Play"
 											Icon="{micons:MaterialIconExt Kind=Play}"
-											Click="BankItem_Play" />
+											Click="BankItem_Play"
+											IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankSingle}" />
 									<MenuItem Header="Export"
 										Icon="{micons:MaterialIconExt Kind=Export}"
-										Click="BankItem_Export" />
+										Click="BankItem_Export"
+										IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankSingle}" />
+									<MenuItem Header="Export selected to folder..."
+										Icon="{micons:MaterialIconExt Kind=FolderArrowDownOutline}"
+										Click="BankItem_ExportSelectedToFolder"
+										IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankMultiple}" />
 									<Separator IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).CanExportAllSounds}"/>
 									<MenuItem Header="Export All Sounds (via soundset)"
 										Icon="{micons:MaterialIconExt Kind=MusicBoxMultiple}"
 										Click="BankItem_ExportAllSounds"
 										IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).CanExportAllSounds}" />
-									<Separator IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankIsEvent}" />
+									<Separator IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankIsEventSingle}" />
 									<MenuItem Header="{Binding #mainWindow.((ce:MainWindow)DataContext).FmodQuickAccessToggleText}"
 										Icon="{micons:MaterialIconExt Kind=Star}"
 										Click="MenuItem_ToggleQuickAccessFmod"
-										IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankIsEvent}" />
-									<Separator IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankIsEvent}" />
+										IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankIsEventSingle}" />
+									<Separator IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankIsEventSingle}" />
 									<MenuItem Header="Show dependencies"
 										Icon="{micons:MaterialIconExt Kind=FileTreeOutline}"
 										Click="MenuItem_ShowDependenciesFmod"
-										IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankIsEvent}" />
+										IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankIsEventSingle}" />
 								</ContextMenu>
 							</ListBox.ContextMenu>
 						</ListBox>

@@ -49,6 +49,9 @@ public class ExportOptions
     /// <summary>Override the base name (without extension) of the output file (single-file export only)</summary>
     public string? OverrideBaseName { get; set; }
 
+    /// <summary>Bank export: render every soundset variant of each FMOD event (vs a single WAV per entry)</summary>
+    public bool ExportAllEventVariants { get; set; }
+
     /// <summary>Whether the user confirmed (OK) or cancelled the dialog</summary>
     public bool Confirmed { get; set; }
 }

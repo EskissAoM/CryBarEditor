@@ -82,7 +82,7 @@ public partial class AdvancedExportWindow : SimpleWindow
         }
     }
 
-    public bool CanExport => DoCopy || DoConvert;
+    public bool CanExport => IsBankExport || DoCopy || DoConvert;
     public bool HasEditorCommand => _hasEditorCommand;
     public bool ShowOverrideName => _files.Count == 1;
     public double OverrideNameOpacity => _overrideNameModified ? 1.0 : 0.5;
@@ -108,6 +108,11 @@ public partial class AdvancedExportWindow : SimpleWindow
 
     public bool IsDirectExport { get; }
     public string? DirectExportPath { get; }
+
+    bool _bankExportAllVariants = true;
+    public bool IsBankExport { get; }
+    public bool ShowBankAllVariants { get; }
+    public bool BankExportAllVariants { get => _bankExportAllVariants; set { _bankExportAllVariants = value; OnSelfChanged(); } }
 
     public string TruncatedDirectExportPath => TruncatePath(DirectExportPath, 50);
 
@@ -274,6 +279,32 @@ public partial class AdvancedExportWindow : SimpleWindow
     }
 
     /// <summary>
+    /// Bank-export mode: WAV export of selected FMOD entries to a folder. The file-conversion
+    /// options don't apply, so only the "export all variants" toggle is shown.
+    /// </summary>
+    public AdvancedExportWindow(int entryCount, bool anyEvents, string folderPath, Configuration? savedConfig = null) : this()
+    {
+        IsBankExport = true;
+        IsDirectExport = true;
+        DirectExportPath = folderPath;
+        ShowBankAllVariants = anyEvents;
+
+        _result = new ExportOptions { DirectExport = true, DirectExportPath = folderPath };
+        FileSummary = $"{entryCount} FMOD entr{(entryCount == 1 ? "y" : "ies")} selected";
+
+        if (savedConfig?.ExportAllEventVariants is bool v) _bankExportAllVariants = v;
+
+        OnPropertyChanged(nameof(IsBankExport));
+        OnPropertyChanged(nameof(ShowBankAllVariants));
+        OnPropertyChanged(nameof(BankExportAllVariants));
+        OnPropertyChanged(nameof(FileSummary));
+        OnPropertyChanged(nameof(IsDirectExport));
+        OnPropertyChanged(nameof(DirectExportPath));
+        OnPropertyChanged(nameof(TruncatedDirectExportPath));
+        OnPropertyChanged(nameof(CanExport));
+    }
+
+    /// <summary>
     /// Returns the configured export options, or null if cancelled.
     /// </summary>
     public ExportOptions? GetResult() => _result.Confirmed ? _result : null;
@@ -321,6 +352,14 @@ public partial class AdvancedExportWindow : SimpleWindow
 
     void ExportClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
+        if (IsBankExport)
+        {
+            _result.ExportAllEventVariants = BankExportAllVariants;
+            _result.Confirmed = true;
+            Close();
+            return;
+        }
+
         _result.Copy = DoCopy;
         _result.Convert = DoConvert;
         _result.Decompress = DoDecompress;

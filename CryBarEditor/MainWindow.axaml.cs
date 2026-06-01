@@ -322,8 +322,13 @@ public partial class MainWindow : SimpleWindow
         }
     }
 
-    /// <summary>True when the selected bank entry is an event (vs a raw FSB5 subsound).</summary>
-    public bool SelectedBankIsEvent => _selectedBankEntry is FMODEvent;
+    /// <summary>Count of selected bank entries, refreshed when the bank context menu opens.</summary>
+    int _selectedBankCount;
+    public bool SelectedBankSingle => _selectedBankCount <= 1;
+    public bool SelectedBankMultiple => _selectedBankCount > 1;
+
+    /// <summary>True when exactly one bank entry is selected and it is an event (vs a raw FSB5 subsound).</summary>
+    public bool SelectedBankIsEventSingle => SelectedBankSingle && _selectedBankEntry is FMODEvent;
 
     void RefreshSelectedProperties()
     {
@@ -332,7 +337,7 @@ public partial class MainWindow : SimpleWindow
         OnPropertyChanged(nameof(CanExportAndIsDDT));
         OnPropertyChanged(nameof(SelectedCanHaveAdditiveMod));
         OnPropertyChanged(nameof(CanOpenInEditor));
-        OnPropertyChanged(nameof(SelectedBankIsEvent));
+        OnPropertyChanged(nameof(SelectedBankIsEventSingle));
     }
     #endregion
 
@@ -688,6 +693,7 @@ public partial class MainWindow : SimpleWindow
         _lastConfiguration.ExportTmmToGltf = options.TmmToGltf;
         _lastConfiguration.ExportAnimations = options.ExportAnimations;
         _lastConfiguration.ExportEmitFbximport = options.EmitFbximport;
+        _lastConfiguration.ExportAllEventVariants = options.ExportAllEventVariants;
         _lastConfiguration.ExportOpenInEditor = options.OpenInEditor;
         SaveConfiguration();
     }

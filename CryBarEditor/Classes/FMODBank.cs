@@ -519,6 +519,14 @@ public class FMODEvent : BankItemBase, IBankItem
     }
 
     public void Export(string output_path_wav, CancellationToken token = default)
+        => Export(output_path_wav, token, null);
+
+    /// <param name="randomSeed">
+    /// Seeds FMOD's RNG so a multi-variant event picks differently each render. Without an explicit
+    /// per-render seed, back-to-back exports keep picking the same variant; distinct seeds surface
+    /// every variant.
+    /// </param>
+    public void Export(string output_path_wav, CancellationToken token, uint? randomSeed)
     {
         // Create a new Studio system for exporting
         FMOD.Studio.System exportSystem;
@@ -530,6 +538,14 @@ public class FMODEvent : BankItemBase, IBankItem
 
         // Set DSP buffer size for NRT rendering
         coreSystem.setDSPBufferSize(512, 4);
+
+        if (randomSeed.HasValue)
+        {
+            var adv = new FMOD.ADVANCEDSETTINGS();
+            coreSystem.getAdvancedSettings(ref adv);
+            adv.randomSeed = randomSeed.Value;
+            coreSystem.setAdvancedSettings(ref adv);
+        }
 
         // Convert path to IntPtr
         nint pathPtr = Marshal.StringToHGlobalAnsi(output_path_wav);
