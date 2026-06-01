@@ -30,7 +30,6 @@ public static class TbnDecoder
 
         float wSq = MathF.Max(0.0f, 1.0f - (x * x + y * y + z * z));
         float w = MathF.Sqrt(wSq);
-        if (handedness != 0) w = -w;
 
         float mag = MathF.Sqrt(x * x + y * y + z * z + w * w);
         if (mag > 0.0f)

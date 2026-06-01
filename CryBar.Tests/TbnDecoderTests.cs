@@ -51,7 +51,7 @@ public class TbnDecoderTests
         ushort midWithHand = (ushort)(mid | 0x8000);
         var (_, _, _, w, hand) = TbnDecoder.QuatFromPacked(midWithHand, mid, mid);
         Assert.Equal(1, hand);
-        Assert.True(w < 0); // w negated when handedness=1
+        Assert.True(w >= 0); // handedness is a bitangent-flip flag, not a w-sign
     }
 
     [Fact]

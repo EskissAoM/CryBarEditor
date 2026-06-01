@@ -256,11 +256,8 @@ public static class TmmWriter
         float mag = MathF.Sqrt(x * x + y * y + z * z + w * w);
         if (mag > 0.0f) { x /= mag; y /= mag; z /= mag; w /= mag; }
 
-        // Ensure w sign matches handedness encoding used by TbnDecoder.QuatFromPacked:
-        //   handedness=0 => decoder leaves w = +sqrt(...) => stored quat must have w >= 0
-        //   handedness=1 => decoder negates  w = -sqrt(...) => stored quat must have w <= 0
-        if (handedness == 0 && w < 0.0f) { x = -x; y = -y; z = -z; w = -w; }
-        else if (handedness == 1 && w > 0.0f) { x = -x; y = -y; z = -z; w = -w; }
+        // Decoder reconstructs w = +sqrt(...), so store the w >= 0 representative.
+        if (w < 0.0f) { x = -x; y = -y; z = -z; w = -w; }
 
         ushort px = (ushort)(TbnDecoder.FloatToU15(x) | (handedness != 0 ? 0x8000 : 0));
         ushort py = (ushort)TbnDecoder.FloatToU15(y);
