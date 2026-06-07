@@ -114,6 +114,10 @@ public partial class AdvancedExportWindow : SimpleWindow
     public bool ShowBankAllVariants { get; }
     public bool BankExportAllVariants { get => _bankExportAllVariants; set { _bankExportAllVariants = value; OnSelfChanged(); } }
 
+    bool _bankRetainSubfolders = true;
+    /// <summary>Bank folder export: recreate the resolved relative tree under the chosen folder.</summary>
+    public bool BankRetainSubfolders { get => _bankRetainSubfolders; set { _bankRetainSubfolders = value; OnSelfChanged(); } }
+
     public string TruncatedDirectExportPath => TruncatePath(DirectExportPath, 50);
 
     public bool HasOverwriteWarning { get; }
@@ -293,10 +297,12 @@ public partial class AdvancedExportWindow : SimpleWindow
         FileSummary = $"{entryCount} FMOD entr{(entryCount == 1 ? "y" : "ies")} selected";
 
         if (savedConfig?.ExportAllEventVariants is bool v) _bankExportAllVariants = v;
+        if (savedConfig?.ExportRetainSubfolders is bool rs) _bankRetainSubfolders = rs;
 
         OnPropertyChanged(nameof(IsBankExport));
         OnPropertyChanged(nameof(ShowBankAllVariants));
         OnPropertyChanged(nameof(BankExportAllVariants));
+        OnPropertyChanged(nameof(BankRetainSubfolders));
         OnPropertyChanged(nameof(FileSummary));
         OnPropertyChanged(nameof(IsDirectExport));
         OnPropertyChanged(nameof(DirectExportPath));
@@ -355,6 +361,7 @@ public partial class AdvancedExportWindow : SimpleWindow
         if (IsBankExport)
         {
             _result.ExportAllEventVariants = BankExportAllVariants;
+            _result.RetainSubfolders = BankRetainSubfolders;
             _result.Confirmed = true;
             Close();
             return;

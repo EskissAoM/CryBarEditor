@@ -1,9 +1,11 @@
 using Avalonia.Controls;
+using Avalonia.Input.Platform;
 using Avalonia.Platform.Storage;
 using CryBar;
 using CryBar.Bar;
 using CryBar.Dependencies;
 using CryBar.Export;
+using CryBar.Sound;
 using CryBar.TMM;
 using CryBar.Indexing;
 using CryBar.Utilities;
@@ -702,56 +704,37 @@ public partial class MainWindow
         }
     }
 
-    async void BankItem_Export(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    /// <summary>
+    /// "Export (copy)": writes the selected bank items into the configured Export Root Directory,
+    /// always recreating each sound's resolved relative folder tree (like BAR-entry copy export).
+    /// </summary>
+    async void BankItem_ExportCopy(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (SelectedBankEntry == null || FmodBank == null)
-            return;
+        if (FmodBank == null || !Directory.Exists(_exportRootDirectory)) return;
 
-        var entry = SelectedBankEntry;
-        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-        {
-            DefaultExtension = ".wav",
-            SuggestedFileName = Path.GetFileNameWithoutExtension(entry.DisplayName) + ".wav",
-            Title = entry.IsEvent ? "Export FMOD event" : "Export FMOD sound"
-        });
+        var items = SelectedBankEntries.ToArray();
+        if (items.Length == 0) return;
 
-        if (file == null)
-            return;
-
-        bank_play_csc?.Cancel();
-        bank_play_csc = new();
-
-        try
-        {
-            var outputPath = file.Path.LocalPath;
-            entry.Export(outputPath, bank_play_csc.Token);
-
-            // NRT event rendering pads silence; raw subsounds are already tight.
-            if (entry.IsEvent)
-                FMODEvent.TrimSilence(outputPath);
-
-            _ = ShowSuccess("FMOD export completed.\n");
-        }
-        catch (Exception ex)
-        {
-            _ = ShowError("FMOD export failed.\n" + ex.Message);
-        }
-        finally
-        {
-
-        }
+        var jobs = await BuildBankExportJobsAsync(items, _exportRootDirectory, retainSubfolders: true, allVariants: true);
+        var label = items.Length == 1 ? "entry" : "entries";
+        await RunBankJobsExport($"Exporting {items.Length} FMOD {label} (copy)", _exportRootDirectory, jobs);
     }
 
-    async void BankItem_ExportSelectedToFolder(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    /// <summary>
+    /// "Export to...": pick a folder, then the advanced window (retain-subfolders + all-variants),
+    /// and export the selected bank items there.
+    /// </summary>
+    async void BankItem_ExportTo(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (FmodBank == null) return;
 
         var items = SelectedBankEntries.ToArray();
         if (items.Length == 0) return;
 
+        var label = items.Length == 1 ? "entry" : "entries";
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
-            Title = $"Export {items.Length} FMOD entries to...",
+            Title = $"Export {items.Length} FMOD {label} to...",
             AllowMultiple = false
         });
         if (folders.Count == 0) return;
@@ -764,73 +747,178 @@ public partial class MainWindow
         var options = window.GetResult();
         if (options == null) return;
 
-        // Persist only the bank toggle - the full SaveExportConfiguration would clobber the
-        // (inapplicable here, hence false) conversion preferences.
+        // Persist only the bank toggles - the full SaveExportConfiguration would clobber the
+        // (inapplicable here) conversion preferences.
         _lastConfiguration ??= new Configuration();
         _lastConfiguration.ExportAllEventVariants = options.ExportAllEventVariants;
+        _lastConfiguration.ExportRetainSubfolders = options.RetainSubfolders;
         SaveConfiguration();
 
-        // Resolve soundsets up-front (needs the file index, async) so the worker stays pure-sync.
-        // A non-null name list means render all of an event's variants; null means a single WAV.
-        var plans = new List<(IBankItem item, List<string>? variantNames)>();
-        foreach (var item in items)
-        {
-            List<string>? names = null;
-            if (options.ExportAllEventVariants && item is FMODEvent ev)
-            {
-                var res = await ResolveFmodEventSoundsAsync(ev);
-                if (res is { Soundset.Sounds.Count: > 1 })
-                    names = SortedVariantFilenames(res.Soundset.Sounds);
-            }
+        var jobs = await BuildBankExportJobsAsync(items, outputDir,
+            retainSubfolders: options.RetainSubfolders, allVariants: options.ExportAllEventVariants);
+        await RunBankJobsExport($"Exporting {items.Length} FMOD {label}", outputDir, jobs);
+    }
 
-            plans.Add((item, names));
+    /// <summary>Copies the resolved file path(s) of the selected bank item to the clipboard.</summary>
+    async void BankItem_CopyFilePath(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var entry = SelectedBankEntry;
+        if (entry == null) return;
+
+        await ResolveBankItemPathsAsync();
+
+        string? text = null;
+        if (entry is FMODSubsound s)
+        {
+            // ResolvedPath/FullRelativePath are already duration-disambiguated to a single best path.
+            text = s.FullRelativePath;
+        }
+        else if (entry is FMODEvent ev)
+        {
+            var subs = await ResolveEventSubsoundsAsync(ev);
+            var paths = subs.Where(x => x.FullRelativePath != null)
+                            .Select(x => x.FullRelativePath!)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .ToList();
+            if (paths.Count > 0) text = string.Join("\n", paths);
         }
 
-        await RunBankExport($"Exporting {items.Length} FMOD entries", outputDir, (p, v, token) =>
+        if (!string.IsNullOrEmpty(text))
+            Clipboard?.SetTextAsync(text);
+    }
+
+    /// <summary>A single planned bank WAV export - its <see cref="Run"/> writes the file(s).</summary>
+    sealed class BankExportJob
+    {
+        public required string Label;
+        public required Action<IProgress<string?>, CancellationToken> Run;
+    }
+
+    /// <summary>
+    /// Plans bank export jobs (async, needs the file index). Subsounds export directly to their
+    /// resolved path; events fan out to their matching in-bank subsounds, falling back to the
+    /// render-retry path only when no subsounds back the event's variants.
+    /// </summary>
+    async Task<List<BankExportJob>> BuildBankExportJobsAsync(
+        IReadOnlyList<IBankItem> items, string baseDir, bool retainSubfolders, bool allVariants)
+    {
+        await ResolveBankItemPathsAsync(); // ensure subsounds carry resolved paths
+
+        var jobs = new List<BankExportJob>();
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddSubsoundJob(FMODSubsound sub)
+        {
+            var target = ComputeSubsoundTarget(sub, baseDir, retainSubfolders, used);
+            jobs.Add(new BankExportJob
+            {
+                Label = sub.Name,
+                Run = (p, token) => ExportWavTo(target, p, t => sub.Export(t, token)),
+            });
+        }
+
+        void AddRenderSingleJob(FMODEvent ev, string evBase)
+        {
+            var target = Path.Combine(baseDir, UniqueName(used, evBase, ".wav"));
+            jobs.Add(new BankExportJob
+            {
+                Label = evBase,
+                Run = (p, token) => ExportWavTo(target, p, t => { ev.Export(t, token); FMODEvent.TrimSilence(t); }),
+            });
+        }
+
+        foreach (var item in items)
+        {
+            if (item is FMODSubsound s)
+            {
+                AddSubsoundJob(s);
+                continue;
+            }
+            if (item is not FMODEvent ev) continue;
+
+            var resolution = await ResolveFmodEventSoundsAsync(ev);
+            var matched = resolution != null ? MatchEventSubsounds(resolution) : [];
+
+            var evBase = SanitizeFileName(SoundsetParser.ExtractEventName(ev.Path)
+                ?? Path.GetFileNameWithoutExtension(ev.DisplayName));
+            if (string.IsNullOrWhiteSpace(evBase)) evBase = "event";
+
+            if (matched.Count > 0)
+            {
+                // Deterministic: export the backing subsound(s) directly.
+                foreach (var sub in allVariants ? matched : matched.Take(1)) AddSubsoundJob(sub);
+            }
+            else if (allVariants && resolution is { Soundset.Sounds.Count: > 0 })
+            {
+                // Fallback: render every variant. Names are flat into baseDir; prefix keeps two
+                // same-named events from clobbering each other's {prefix}-{n}.wav.
+                var prefix = UniqueName(used, evBase, "");
+                var targetNames = SortedVariantFilenames(resolution.Soundset.Sounds)
+                    .Select((_, i) => $"{prefix}-{i + 1}.wav").ToList();
+                jobs.Add(new BankExportJob
+                {
+                    Label = evBase,
+                    Run = (p, token) =>
+                    {
+                        p.Report($"Rendering variants of {evBase}...");
+                        ExportEventVariants(ev, targetNames, baseDir, p, token);
+                    },
+                });
+            }
+            else
+            {
+                // Fallback: render a single representative take.
+                AddRenderSingleJob(ev, evBase);
+            }
+        }
+
+        return jobs;
+    }
+
+    /// <summary>
+    /// Output path for a subsound: its resolved relative tree under <paramref name="baseDir"/>
+    /// (extension forced to .wav since we export decoded PCM) when retaining subfolders and a
+    /// path is known; otherwise a unique flat <c>name.wav</c>.
+    /// </summary>
+    string ComputeSubsoundTarget(FMODSubsound s, string baseDir, bool retainSubfolders, HashSet<string> used)
+    {
+        if (retainSubfolders && !string.IsNullOrEmpty(s.FullRelativePath))
+            return Path.Combine(baseDir, Path.ChangeExtension(s.FullRelativePath, ".wav"));
+
+        var baseName = SanitizeFileName(s.Name);
+        if (string.IsNullOrWhiteSpace(baseName)) baseName = "sound";
+        return Path.Combine(baseDir, UniqueName(used, baseName, ".wav"));
+    }
+
+    /// <summary>Creates the target's directory, reports progress, then runs <paramref name="write"/>.</summary>
+    static void ExportWavTo(string target, IProgress<string?> p, Action<string> write)
+    {
+        var dir = Path.GetDirectoryName(target);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        p.Report($"Exporting {Path.GetFileName(target)}...");
+        write(target);
+    }
+
+    /// <summary>Runs a planned set of bank export jobs through the modal progress scaffolding.</summary>
+    async Task RunBankJobsExport(string title, string baseDir, List<BankExportJob> jobs)
+    {
+        await RunBankExport(title, baseDir, (p, v, token) =>
         {
             var sw = Stopwatch.StartNew();
             int ok = 0, failed = 0, done = 0;
-            var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var (item, variantNames) in plans)
+            foreach (var job in jobs)
             {
                 token.ThrowIfCancellationRequested();
-
-                var baseName = SanitizeFileName(Path.GetFileNameWithoutExtension(item.DisplayName));
-                if (string.IsNullOrWhiteSpace(baseName)) baseName = "sound";
-
-                try
-                {
-                    if (variantNames != null)
-                    {
-                        // Reserve the prefix so two events with the same base name don't
-                        // overwrite each other's flat {prefix}-{n}.wav variants.
-                        var prefix = UniqueName(usedNames, baseName, "");
-                        var targetNames = new List<string>(variantNames.Count);
-                        for (int i = 0; i < variantNames.Count; i++)
-                            targetNames.Add($"{prefix}-{i + 1}.wav");
-
-                        ExportEventVariants((FMODEvent)item, targetNames, outputDir, p, token);
-                    }
-                    else
-                    {
-                        var outName = UniqueName(usedNames, baseName, ".wav");
-                        var outPath = Path.Combine(outputDir, outName);
-                        p.Report($"Exporting {outName}...");
-                        item.Export(outPath, token);
-                        if (item.IsEvent) FMODEvent.TrimSilence(outPath);
-                    }
-
-                    ok++;
-                }
+                try { job.Run(p, token); ok++; }
                 catch (OperationCanceledException) { throw; }
                 catch { failed++; }
 
-                v.Report((double)++done / plans.Count);
+                v.Report(jobs.Count == 0 ? 1 : (double)++done / jobs.Count);
             }
 
             sw.Stop();
-            var msg = $"Exported {ok}/{items.Length} entries in {sw.Elapsed.TotalSeconds:0.00}s";
+            var msg = $"Exported {ok}/{jobs.Count} item(s) in {sw.Elapsed.TotalSeconds:0.00}s";
             if (failed > 0) msg += $" ({failed} failed)";
             p.Report(msg);
         });

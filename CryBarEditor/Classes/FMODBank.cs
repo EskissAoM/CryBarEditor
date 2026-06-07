@@ -639,6 +639,23 @@ public sealed class FMODSubsound : BankItemBase, IBankItem
     public string DisplayName => Name;
     public bool IsEvent => false;
 
+    // --- Resolved file path (populated by the editor from soundmanifest/soundset data) ---
+    // FMOD subsounds carry no path; the editor matches Name against the sound path index and
+    // fills these in after the bank loads. Null/empty until (and unless) a match is found.
+    // These are read in code only (not data-bound), so plain auto-properties suffice.
+
+    /// <summary>First resolved relative path (e.g. "music\aotg_theme\x.wav"), or null.</summary>
+    public string? ResolvedPath { get; set; }
+
+    /// <summary>All resolved candidate paths (more than one = ambiguous). Empty if unresolved.</summary>
+    public IReadOnlyList<string> ResolvedPaths { get; set; } = [];
+
+    /// <summary>
+    /// First resolved path prefixed with the sound root (Sound.bar root), e.g.
+    /// "game\sound\music\aotg_theme\x.wav". Computed and stored by the editor.
+    /// </summary>
+    public string? FullRelativePath { get; set; }
+
     public FMODSubsound(byte[] bankData, uint fileOffset, uint length, int index, string? name, int lengthMs)
     {
         _bankData = bankData;

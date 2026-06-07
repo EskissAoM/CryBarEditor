@@ -55,19 +55,32 @@
 				<StackPanel>
 					<StackPanel Orientation="Horizontal">
 						<micons:MaterialIcon Kind="FileExportOutline" Width="18" Height="18" Margin="0,0,6,0" Foreground="#edc042" VerticalAlignment="Center" />
+						<!-- Bank folder export keeps a folder structure when 'Retain subfolders' is on -->
+						<TextBlock Text="Export to chosen folder"
+								   VerticalAlignment="Center" Foreground="#e0d8a0" IsVisible="{Binding IsBankExport}" />
 						<TextBlock Text="Direct export - files placed directly, no folder structure"
-								   VerticalAlignment="Center" Foreground="#e0d8a0" />
+								   VerticalAlignment="Center" Foreground="#e0d8a0" IsVisible="{Binding !IsBankExport}" />
 					</StackPanel>
 					<TextBlock Text="{Binding TruncatedDirectExportPath}" Foreground="Gray" Margin="24,4,0,0" />
 				</StackPanel>
 			</Border>
+
+			<!-- Bank export: retain subfolders (FMOD WAV folder export only) -->
+			<CheckBox DockPanel.Dock="Top" IsChecked="{Binding BankRetainSubfolders}" Margin="0,0,0,8"
+					  IsVisible="{Binding IsBankExport}">
+				<StackPanel>
+					<TextBlock Text="Retain subfolders" VerticalAlignment="Center" />
+					<TextBlock Text="Recreate each sound's resolved folder path under the chosen folder; off = flat"
+							   Foreground="Gray" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
+				</StackPanel>
+			</CheckBox>
 
 			<!-- Bank export: variant toggle (FMOD WAV export only) -->
 			<CheckBox DockPanel.Dock="Top" IsChecked="{Binding BankExportAllVariants}" Margin="0,0,0,8"
 					  IsVisible="{Binding ShowBankAllVariants}">
 				<StackPanel>
 					<TextBlock Text="Export all variants of FMOD events" VerticalAlignment="Center" />
-					<TextBlock Text="Renders every soundset variant per event into a subfolder; subsounds export as-is"
+					<TextBlock Text="Exports every sound variant of an event (resolved from soundset); falls back to rendering when subsounds aren't found"
 							   Foreground="Gray" FontSize="11" Margin="0,2,0,0" TextWrapping="Wrap" />
 				</StackPanel>
 			</CheckBox>

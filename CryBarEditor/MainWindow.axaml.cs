@@ -330,6 +330,9 @@ public partial class MainWindow : SimpleWindow
     /// <summary>True when exactly one bank entry is selected and it is an event (vs a raw FSB5 subsound).</summary>
     public bool SelectedBankIsEventSingle => SelectedBankSingle && _selectedBankEntry is FMODEvent;
 
+    /// <summary>True when an export root directory is configured (gates the bank "Export (copy)" action).</summary>
+    public bool HasExportDirectory => Directory.Exists(_exportRootDirectory);
+
     void RefreshSelectedProperties()
     {
         OnPropertyChanged(nameof(CanExport));

@@ -23,11 +23,16 @@ public partial class MainWindow
     Dictionary<string, SoundManifestEntry>? _cachedSoundManifest;
 
     /// <summary>
-    /// Whether the currently selected FMOD event has multiple sounds resolvable via soundset.
+    /// Combined stem -> relative path index built from soundmanifest + all soundset files.
+    /// Used to recover file paths for FMOD subsounds/events. Invalidated with the file index.
     /// </summary>
-    public bool CanExportAllSounds => SelectedBankSingle && _lastSoundsetResolution is { Soundset.Sounds.Count: > 1 };
+    SoundPathIndex? _cachedSoundPathIndex;
 
-    SoundsetResolution? _lastSoundsetResolution;
+    /// <summary>
+    /// Root path of the Sound.bar that holds the manifest (e.g. "game\sound"), prefixed onto
+    /// resolved relative paths so exported subsounds mirror the BAR-entry directory layout.
+    /// </summary>
+    string? _soundRootPath;
 
     /// <summary>
     /// Cache of parsed soundset definition files, keyed by source file identifier.
@@ -113,41 +118,11 @@ public partial class MainWindow
     /// </summary>
     async ValueTask<(SoundsetDefinition? soundset, string? sourceFile)> TryFindInSoundsetFileAsync(string fileName, string eventName)
     {
-        if (_fileIndex == null) return (null, null);
+        var definitions = await GetOrParseSoundsetDefinitionsAsync(fileName);
+        if (definitions == null) return (null, null);
 
-        // Check cache first
-        List<SoundsetDefinition>? cached;
-        lock (_cachedSoundsetFilesLock)
-            _cachedSoundsetFiles.TryGetValue(fileName, out cached);
-        if (cached != null)
-        {
-            var found = SoundsetParser.FindSoundset(cached, eventName);
-            if (found != null) return (found, fileName);
-            return (null, null);
-        }
-
-        // Load and parse the file
-        var entries = _fileIndex.Find(fileName);
-        if (entries.Count == 0) return (null, null);
-
-        using var data = await ReadFromIndexEntryPooledAsync(entries[0]);
-        if (data == null) return (null, null);
-
-        using var decompressed = BarCompression.EnsureDecompressedPooled(data, out _);
-        var xmlText = ConversionHelper.GetTextContent(decompressed.Span, fileName);
-
-        try
-        {
-            var definitions = SoundsetParser.ParseSoundsetXml(xmlText);
-            lock (_cachedSoundsetFilesLock)
-                _cachedSoundsetFiles[fileName] = definitions;
-
-            var soundset = SoundsetParser.FindSoundset(definitions, eventName);
-            if (soundset != null) return (soundset, fileName);
-        }
-        catch { /* parsing failed, skip */ }
-
-        return (null, null);
+        var soundset = SoundsetParser.FindSoundset(definitions, eventName);
+        return soundset != null ? (soundset, fileName) : (null, null);
     }
 
     /// <summary>
@@ -222,8 +197,175 @@ public partial class MainWindow
     void ClearSoundCaches()
     {
         _cachedSoundManifest = null;
+        _cachedSoundPathIndex = null;
+        _soundRootPath = null;
+        _pathsResolvedForBank = null; // re-resolve subsound paths against the rebuilt index
         lock (_cachedSoundsetFilesLock)
             _cachedSoundsetFiles.Clear();
+    }
+
+    #endregion
+
+    #region Sound Path Index
+
+    /// <summary>
+    /// Builds (once) and returns the combined sound path index from soundmanifest + every
+    /// soundsets_*.soundset file, and captures <see cref="_soundRootPath"/> from Sound.bar.
+    /// Returns null if no file index is loaded.
+    /// </summary>
+    async ValueTask<SoundPathIndex?> GetOrLoadSoundPathIndexAsync()
+    {
+        if (_cachedSoundPathIndex != null) return _cachedSoundPathIndex;
+        if (_fileIndex == null) return null;
+
+        // Capture the sound root from the Sound.bar that holds the manifest (mirrors how
+        // GetBARFullRelativePath prefixes BarFile.RootPath onto entry relative paths).
+        var manifestEntries = _fileIndex.Find("soundmanifest.xml.XMB");
+        if (manifestEntries.Count > 0)
+        {
+            var me = manifestEntries[0];
+            if (me.Source == FileIndexSource.BarEntry && me.BarFilePath != null)
+                _soundRootPath = GetOrLoadBar(me.BarFilePath)?.Bar.RootPath;
+        }
+
+        var manifest = await GetOrLoadSoundManifestAsync();
+
+        // Parse every soundset file and collect all definitions.
+        var allDefs = new List<SoundsetDefinition>();
+        foreach (var fileName in FindSoundsetFileNames())
+        {
+            var defs = await GetOrParseSoundsetDefinitionsAsync(fileName);
+            if (defs != null) allDefs.AddRange(defs);
+        }
+
+        _cachedSoundPathIndex = SoundPathIndex.BuildFrom(manifest?.Values, allDefs);
+        return _cachedSoundPathIndex;
+    }
+
+    /// <summary>
+    /// Parses a soundset file (cache-aware) and returns all its definitions, or null on failure.
+    /// Shares the <see cref="_cachedSoundsetFiles"/> cache with the soundset resolver.
+    /// </summary>
+    async ValueTask<List<SoundsetDefinition>?> GetOrParseSoundsetDefinitionsAsync(string fileName)
+    {
+        if (_fileIndex == null) return null;
+
+        List<SoundsetDefinition>? cached;
+        lock (_cachedSoundsetFilesLock)
+            _cachedSoundsetFiles.TryGetValue(fileName, out cached);
+        if (cached != null) return cached;
+
+        var entries = _fileIndex.Find(fileName);
+        if (entries.Count == 0) return null;
+
+        using var data = await ReadFromIndexEntryPooledAsync(entries[0]);
+        if (data == null) return null;
+
+        using var decompressed = BarCompression.EnsureDecompressedPooled(data, out _);
+        var xmlText = ConversionHelper.GetTextContent(decompressed.Span, fileName);
+
+        try
+        {
+            var definitions = SoundsetParser.ParseSoundsetXml(xmlText);
+            lock (_cachedSoundsetFilesLock)
+                _cachedSoundsetFiles[fileName] = definitions;
+            return definitions;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The bank whose subsounds currently carry resolved paths (skips redundant passes).</summary>
+    FMODBank? _pathsResolvedForBank;
+
+    /// <summary>Cached Name -> subsound lookup, rebuilt only when the loaded bank changes.</summary>
+    Dictionary<string, FMODSubsound>? _subsoundByName;
+    FMODBank? _subsoundByNameForBank;
+
+    /// <summary>
+    /// Drops per-bank caches. Must be called when the loaded bank is disposed - the caches hold
+    /// FMODSubsound references that pin the (potentially huge) bank byte array alive.
+    /// </summary>
+    void ResetBankItemCaches()
+    {
+        _pathsResolvedForBank = null;
+        _subsoundByName = null;
+        _subsoundByNameForBank = null;
+    }
+
+    /// <summary>
+    /// Resolves and assigns file paths to all subsounds of the loaded bank by matching their
+    /// names against the sound path index. Best-effort: items with no match keep null paths.
+    /// Idempotent per bank; cleared when the sound index is rebuilt (see <see cref="ClearSoundCaches"/>).
+    /// </summary>
+    async Task ResolveBankItemPathsAsync()
+    {
+        var bank = _fmodBank;
+        if (bank == null || ReferenceEquals(_pathsResolvedForBank, bank)) return;
+
+        var index = await GetOrLoadSoundPathIndexAsync();
+        if (index == null) return; // no file index yet - retry on a later call
+
+        var root = _soundRootPath ?? "";
+        foreach (var sub in bank.Subsounds)
+        {
+            // ResolveBest disambiguates same-named clips by matching the subsound's duration
+            // against the manifest's per-path length (samples differ - the FSB5 is re-encoded).
+            var all = index.ResolveAll(sub.Name);
+            var best = index.ResolveBest(sub.Name, sub.LengthMs);
+            sub.ResolvedPaths = all;
+            sub.ResolvedPath = best;
+            sub.FullRelativePath = best != null ? Path.Combine(root, best) : null;
+        }
+        _pathsResolvedForBank = bank;
+    }
+
+    /// <summary>
+    /// Resolves an FMOD event to the actual subsounds in the SAME bank that back its soundset
+    /// variants. Returns the matched, de-duplicated subsounds (each with its resolved path).
+    /// Empty when the event has no soundset or none of its variants are present as subsounds.
+    /// </summary>
+    async ValueTask<List<FMODSubsound>> ResolveEventSubsoundsAsync(FMODEvent ev)
+    {
+        if (_fmodBank == null) return [];
+
+        var resolution = await ResolveFmodEventSoundsAsync(ev);
+        if (resolution == null) return [];
+
+        // Ensure subsound paths are resolved (for naming/export downstream).
+        await ResolveBankItemPathsAsync();
+
+        return MatchEventSubsounds(resolution);
+    }
+
+    /// <summary>
+    /// Matches a resolved soundset's variant filenames to subsounds in the loaded bank (by name).
+    /// Returns the matched, de-duplicated subsounds in soundset order.
+    /// </summary>
+    List<FMODSubsound> MatchEventSubsounds(SoundsetResolution resolution)
+    {
+        var result = new List<FMODSubsound>();
+        var bank = _fmodBank;
+        if (bank == null) return result;
+
+        if (!ReferenceEquals(_subsoundByNameForBank, bank))
+        {
+            var map = new Dictionary<string, FMODSubsound>(StringComparer.OrdinalIgnoreCase);
+            foreach (var s in bank.Subsounds) map.TryAdd(s.Name, s);
+            _subsoundByName = map;
+            _subsoundByNameForBank = bank;
+        }
+
+        var seen = new HashSet<FMODSubsound>();
+        foreach (var sound in resolution.Soundset.Sounds)
+        {
+            if (_subsoundByName!.TryGetValue(SoundPathIndex.GetStem(sound.Filename), out var sub) && seen.Add(sub))
+                result.Add(sub);
+        }
+
+        return result;
     }
 
     #endregion
@@ -231,111 +373,54 @@ public partial class MainWindow
     #region Sound Preview Text
 
     /// <summary>
-    /// Builds the "Contained Sounds" section for FMOD event preview.
+    /// Formats the "Contained Sounds" section for FMOD event preview from an already-resolved
+    /// soundset (resolution == null means no match / no file index).
     /// </summary>
-    async ValueTask<string> BuildSoundsetPreviewTextAsync(FMODEvent fmodEvent)
+    string BuildSoundsetPreviewText(FMODEvent fmodEvent, SoundsetResolution? resolution)
     {
         if (_fileIndex == null)
-        {
-            _lastSoundsetResolution = null;
-            OnPropertyChanged(nameof(CanExportAllSounds));
             return "\nContained Sounds:\n  (file index not available - load a root directory first)";
-        }
 
-        try
+        if (resolution == null)
         {
-            var resolution = await ResolveFmodEventSoundsAsync(fmodEvent);
-            _lastSoundsetResolution = resolution;
-            OnPropertyChanged(nameof(CanExportAllSounds));
-            if (resolution == null)
-            {
-                var eventName = SoundsetParser.ExtractEventName(fmodEvent.Path);
-                return $"\nContained Sounds:\n  (no matching soundset found for \"{eventName ?? fmodEvent.Path}\")";
-            }
-
-            var sb = new StringBuilder();
-            sb.AppendLine();
-            sb.Append($"Contained Sounds: (from {resolution.SourceFile})");
-            if (resolution.HasManifestData)
-                sb.Append(" [enriched with soundmanifest]");
-            sb.AppendLine();
-
-            var soundset = resolution.Soundset;
-            sb.Append($"  Soundset: {soundset.Name}");
-            if (soundset.Volume.HasValue)
-                sb.Append($", Volume: {soundset.Volume.Value:F4}");
-            if (soundset.MaxNum.HasValue)
-                sb.Append($", MaxNum: {soundset.MaxNum.Value}");
-            sb.AppendLine();
-            sb.AppendLine($"  Sound files ({soundset.Sounds.Count}):");
-
-            foreach (var sound in soundset.Sounds)
-            {
-                sb.Append($"    - {sound.Filename}");
-                if (sound.Volume.HasValue)
-                    sb.Append($"  [vol: {sound.Volume.Value:F4}]");
-                if (sound.Weight.HasValue)
-                    sb.Append($"  [weight: {sound.Weight.Value:F4}]");
-                if (sound.Length.HasValue)
-                    sb.Append($"  [{sound.Length.Value:F3}s]");
-                sb.AppendLine();
-            }
-
-            return sb.ToString();
+            var eventName = SoundsetParser.ExtractEventName(fmodEvent.Path);
+            return $"\nContained Sounds:\n  (no matching soundset found for \"{eventName ?? fmodEvent.Path}\")";
         }
-        catch (Exception ex)
+
+        var sb = new StringBuilder();
+        sb.AppendLine();
+        sb.Append($"Contained Sounds: (from {resolution.SourceFile})");
+        if (resolution.HasManifestData)
+            sb.Append(" [enriched with soundmanifest]");
+        sb.AppendLine();
+
+        var soundset = resolution.Soundset;
+        sb.Append($"  Soundset: {soundset.Name}");
+        if (soundset.Volume.HasValue)
+            sb.Append($", Volume: {soundset.Volume.Value:F4}");
+        if (soundset.MaxNum.HasValue)
+            sb.Append($", MaxNum: {soundset.MaxNum.Value}");
+        sb.AppendLine();
+        sb.AppendLine($"  Sound files ({soundset.Sounds.Count}):");
+
+        foreach (var sound in soundset.Sounds)
         {
-            return $"\nContained Sounds:\n  (error resolving: {ex.Message})";
+            sb.Append($"    - {sound.Filename}");
+            if (sound.Volume.HasValue)
+                sb.Append($"  [vol: {sound.Volume.Value:F4}]");
+            if (sound.Weight.HasValue)
+                sb.Append($"  [weight: {sound.Weight.Value:F4}]");
+            if (sound.Length.HasValue)
+                sb.Append($"  [{sound.Length.Value:F3}s]");
+            sb.AppendLine();
         }
+
+        return sb.ToString();
     }
 
     #endregion
 
-    #region Export All Sounds
-
-    async void BankItem_ExportAllSounds(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (SelectedBankEntry is not FMODEvent selectedEvent || _fmodBank == null)
-            return;
-
-        var resolution = await ResolveFmodEventSoundsAsync(selectedEvent);
-        if (resolution == null)
-        {
-            _ = ShowError("Could not resolve soundset for this event.\nMake sure a root directory with Sound.bar is loaded.");
-            return;
-        }
-
-        var sounds = resolution.Soundset.Sounds;
-        if (sounds.Count == 0)
-        {
-            _ = ShowError("Soundset has no sound files.");
-            return;
-        }
-
-        // Pick a destination folder
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-        {
-            Title = $"Export {sounds.Count} sounds from \"{resolution.SoundsetName}\"",
-            AllowMultiple = false
-        });
-
-        if (folders.Count == 0) return;
-        var outputDir = folders[0].Path.LocalPath;
-
-        var variantNames = SortedVariantFilenames(sounds);
-
-        await RunBankExport($"Exporting {sounds.Count} sounds", outputDir, (p, v, token) =>
-        {
-            var sw = Stopwatch.StartNew();
-            int exported = ExportEventVariants(selectedEvent, variantNames, outputDir, p, token, v);
-            sw.Stop();
-
-            var msg = $"Exported {exported}/{variantNames.Count} unique sounds in {sw.Elapsed.TotalSeconds:0.00}s";
-            if (exported < variantNames.Count)
-                msg += $"\nNote: Found {exported} unique variants out of {variantNames.Count} expected.";
-            p.Report(msg);
-        });
-    }
+    #region Event Variant Rendering (fallback)
 
     /// <summary>Soundset sound filenames sorted by manifest duration (variant match order).</summary>
     static List<string> SortedVariantFilenames(IEnumerable<SoundsetSound> sounds) => sounds

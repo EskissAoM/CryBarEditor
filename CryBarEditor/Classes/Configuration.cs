@@ -22,6 +22,7 @@ public class Configuration
     public bool? ExportAnimations { get; set; }
     public bool? ExportEmitFbximport { get; set; }
     public bool? ExportAllEventVariants { get; set; }
+    public bool? ExportRetainSubfolders { get; set; }
     public string? EditorCommand { get; set; }
     public bool? ExportOpenInEditor { get; set; }
     public string? StringTableLanguage { get; set; }

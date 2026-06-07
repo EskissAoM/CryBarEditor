@@ -420,19 +420,17 @@
 											Icon="{micons:MaterialIconExt Kind=Play}"
 											Click="BankItem_Play"
 											IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankSingle}" />
-									<MenuItem Header="Export"
-										Icon="{micons:MaterialIconExt Kind=Export}"
-										Click="BankItem_Export"
-										IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankSingle}" />
-									<MenuItem Header="Export selected to folder..."
+									<MenuItem Header="Export (copy)"
+										Icon="{micons:MaterialIconExt Kind=ContentCopy}"
+										Click="BankItem_ExportCopy"
+										IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).HasExportDirectory}" />
+									<MenuItem Header="Export to..."
 										Icon="{micons:MaterialIconExt Kind=FolderArrowDownOutline}"
-										Click="BankItem_ExportSelectedToFolder"
-										IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankMultiple}" />
-									<Separator IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).CanExportAllSounds}"/>
-									<MenuItem Header="Export All Sounds (via soundset)"
-										Icon="{micons:MaterialIconExt Kind=MusicBoxMultiple}"
-										Click="BankItem_ExportAllSounds"
-										IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).CanExportAllSounds}" />
+										Click="BankItem_ExportTo" />
+									<MenuItem Header="Copy file path"
+										Icon="{micons:MaterialIconExt Kind=ContentCopy}"
+										Click="BankItem_CopyFilePath"
+										IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankSingle}" />
 									<Separator IsVisible="{Binding #mainWindow.((ce:MainWindow)DataContext).SelectedBankIsEventSingle}" />
 									<MenuItem Header="{Binding #mainWindow.((ce:MainWindow)DataContext).FmodQuickAccessToggleText}"
 										Icon="{micons:MaterialIconExt Kind=Star}"

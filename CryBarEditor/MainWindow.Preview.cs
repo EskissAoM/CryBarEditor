@@ -10,6 +10,7 @@ using CryBar;
 using CryBar.Bar;
 using CryBar.Export;
 using CryBar.Scenario;
+using CryBar.Sound;
 using CryBar.TMM;
 using CryBar.Utilities;
 using CryBarEditor.Classes;
@@ -144,13 +145,15 @@ public partial class MainWindow
     {
         HideTmmPreview();
 
-        // Subsounds have no soundset -> hide the event-only "Export All Sounds" action
-        _lastSoundsetResolution = null;
-        OnPropertyChanged(nameof(CanExportAllSounds));
-
         PreviewedFileName = $"FMOD sound: \"{s.Name}\"";
         PreviewedFileNote = "";
         PreviewedFileData = $"Length: {s.LengthMs}ms";
+
+        // Resolved file path (from soundmanifest / soundsets). When a name maps to several paths,
+        // ResolvedPath is the one picked by matching the audio's duration.
+        var pathLine = string.IsNullOrEmpty(s.FullRelativePath)
+            ? "File path: (no path found)"
+            : $"File path: {s.FullRelativePath}";
 
         _ = SetImagePreview(null);
         _ = SetEditorText(".txt",
@@ -159,7 +162,7 @@ public partial class MainWindow
         Length:  {s.LengthMs}ms
         Type:    FSB5 subsound
 
-        This audio is not exposed as an FMOD event
+        {pathLine}
         """);
     }
 
@@ -173,7 +176,19 @@ public partial class MainWindow
 
         await SetImagePreview(null);
 
-        var soundInfo = await BuildSoundsetPreviewTextAsync(e);
+        // Resolve the event's soundset once, then reuse it for both the text and the subsound count.
+        SoundsetResolution? resolution = null;
+        try { resolution = _fileIndex != null ? await ResolveFmodEventSoundsAsync(e) : null; }
+        catch { /* best-effort preview */ }
+
+        var soundInfo = BuildSoundsetPreviewText(e, resolution);
+
+        // How many of this event's soundset variants are backed by actual subsounds in this bank
+        // (these export deterministically; the rest fall back to rendering).
+        var matchedSubs = resolution != null ? MatchEventSubsounds(resolution) : [];
+        var subsoundNote = matchedSubs.Count > 0
+            ? $"\nResolved subsounds: {matchedSubs.Count} variant(s) found in this bank (exported directly)"
+            : "";
 
         _ = SetEditorText(".txt",
         $"""
@@ -187,7 +202,7 @@ public partial class MainWindow
 
         Parameters:
         - {string.Join("\n- ", e.Parameters)}
-        {soundInfo}
+        {soundInfo}{subsoundNote}
         """);
     }
     #endregion

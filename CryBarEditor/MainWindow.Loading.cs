@@ -466,6 +466,7 @@ public partial class MainWindow
         {
             bank_play_csc?.Cancel();
             _fmodBank?.Dispose();
+            ResetBankItemCaches();
             _fmodBank = FMODBank.LoadBank(fmod_bank_file);
             SelectedBankEntries.Clear();
             SelectedBankEntry = null;
@@ -473,6 +474,9 @@ public partial class MainWindow
             OnPropertyChanged(nameof(IsBankFileSelected));
             OnPropertyChanged(nameof(LoadedBankFilePathOrRelative));
             RefreshBankEntries();
+
+            // Resolve subsound file paths in the background (needs the file index; harmless if absent).
+            _ = ResolveBankItemPathsAsync();
         }
         catch (Exception ex)
         {
@@ -486,6 +490,7 @@ public partial class MainWindow
         if (_fmodBank != null)
         {
             _fmodBank?.Dispose();
+            ResetBankItemCaches();
             _fmodBank = null;
             SelectedBankEntries.Clear();
             SelectedBankEntry = null;

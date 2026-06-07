@@ -139,7 +139,7 @@ public partial class MainWindow
         OnPropertyChanged(nameof(SelectedBankSingle));
         OnPropertyChanged(nameof(SelectedBankMultiple));
         OnPropertyChanged(nameof(SelectedBankIsEventSingle));
-        OnPropertyChanged(nameof(CanExportAllSounds));
+        OnPropertyChanged(nameof(HasExportDirectory));
     }
 
     // Click on the type icon (music note / waveform) of a row plays that entry.

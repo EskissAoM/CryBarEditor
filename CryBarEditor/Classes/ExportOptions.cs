@@ -52,6 +52,12 @@ public class ExportOptions
     /// <summary>Bank export: render every soundset variant of each FMOD event (vs a single WAV per entry)</summary>
     public bool ExportAllEventVariants { get; set; }
 
+    /// <summary>
+    /// Bank export (folder mode): recreate each sound's resolved relative folder path under the
+    /// chosen folder. When false, files are written flat into the folder. Default true.
+    /// </summary>
+    public bool RetainSubfolders { get; set; } = true;
+
     /// <summary>Whether the user confirmed (OK) or cancelled the dialog</summary>
     public bool Confirmed { get; set; }
 }
