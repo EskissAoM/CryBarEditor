@@ -885,7 +885,22 @@ public partial class MainWindow : SimpleWindow
         _glPreview = null;
         _meshCache.Clear();
         _docCache.Clear();
+        _protoEditorWindow?.Close();
         _barFileCache.Clear();
         base.OnClosing(e);
+    }
+
+    ProtoEditorWindow? _protoEditorWindow;
+
+    void MenuItem_OpenProtoEditor(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (_protoEditorWindow != null && _protoEditorWindow.IsVisible)
+        {
+            _protoEditorWindow.Activate();
+            return;
+        }
+        _protoEditorWindow = new ProtoEditorWindow(this);
+        _protoEditorWindow.Closed += (_, _) => _protoEditorWindow = null;
+        _protoEditorWindow.Show();
     }
 }

@@ -1,0 +1,110 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ce="using:CryBarEditor.Windows"
+        mc:Ignorable="d" d:DesignWidth="1280" d:DesignHeight="800"
+        x:Class="CryBarEditor.Windows.ProtoEditorWindow"
+        x:DataType="ce:ProtoEditorWindow"
+        Foreground="#d9d9d9"
+        Background="#141414"
+        Width="1280" Height="800"
+        MinWidth="960" MinHeight="600"
+        WindowStartupLocation="CenterScreen"
+        Title="AoM Proto XML Editor">
+
+    <Window.Styles>
+        <Style Selector="TextBlock.SectionHeader">
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Foreground" Value="#e3bd54" />
+            <Setter Property="Margin" Value="0,15,0,5" />
+        </Style>
+        <Style Selector="Button">
+            <Setter Property="Background" Value="#252526" />
+            <Setter Property="Foreground" Value="#d9d9d9" />
+            <Setter Property="Padding" Value="10,5" />
+        </Style>
+        <Style Selector="Button:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#313132" />
+            <Setter Property="Foreground" Value="#ffffff" />
+        </Style>
+        <Style Selector="TextBox">
+            <Setter Property="Background" Value="#1c1c1c" />
+            <Setter Property="Foreground" Value="#d9d9d9" />
+            <Setter Property="BorderBrush" Value="#3f3f46" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style Selector="AutoCompleteBox">
+            <Setter Property="Background" Value="#1c1c1c" />
+            <Setter Property="Foreground" Value="#d9d9d9" />
+            <Setter Property="BorderBrush" Value="#3f3f46" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style Selector="ListBox">
+            <Setter Property="Background" Value="#1c1c1c" />
+            <Setter Property="BorderBrush" Value="#2d2d30" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+            <Setter Property="Background" Value="#2b3c57" />
+            <Setter Property="Foreground" Value="#ffffff" />
+        </Style>
+        <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#1a2436" />
+            <Setter Property="Foreground" Value="#ffffff" />
+        </Style>
+    </Window.Styles>
+
+    <DockPanel>
+        <!-- Menu bar / Top toolbar -->
+        <Border DockPanel.Dock="Top" Background="#1c1c1c" BorderThickness="0,0,0,1" BorderBrush="#2d2d30" Height="45">
+            <DockPanel Margin="10,0">
+                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <Button Content="🔄 Switch Mod" Click="SwitchMod_Click" />
+                    <Button Content="+ Create Mod" Click="CreateMod_Click" Background="#2b7a0b" />
+                    <Button Content="💾 Save" Click="Save_Click" />
+                    <Button Content="💾 Save As" Click="SaveAs_Click" />
+                    <Button Content="⚙ Settings" Click="Settings_Click" />
+                </StackPanel>
+                <TextBlock x:Name="_fileLabel" Text="No file loaded" Foreground="Gray" VerticalAlignment="Center" HorizontalAlignment="Right" />
+            </DockPanel>
+        </Border>
+
+        <!-- Main content -->
+        <Grid ColumnDefinitions="260,5,*">
+            <!-- Left panel: unit list -->
+            <Border Grid.Column="0" Background="#171717" BorderThickness="0,0,1,0" BorderBrush="#2d2d30" Padding="8">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="Units" FontWeight="Bold" FontSize="14" Margin="0,0,0,6" />
+                    
+                    <TextBox DockPanel.Dock="Top" x:Name="_searchBox" PlaceholderText="Search..." Margin="0,0,0,6" TextChanged="SearchBox_TextChanged" />
+                    
+                    <TabStrip DockPanel.Dock="Top" x:Name="_unitTabs" Margin="0,0,0,6" SelectionChanged="UnitTab_SelectionChanged">
+                        <TabStripItem x:Name="_originalTab">Original</TabStripItem>
+                        <TabStripItem x:Name="_modifiedTab">Modified</TabStripItem>
+                    </TabStrip>
+                    
+                    <Grid DockPanel.Dock="Bottom" ColumnDefinitions="*,*" Margin="0,6,0,0" ColumnSpacing="6">
+                        <Button Grid.Column="0" Content="+ Add Unit" Click="AddUnit_Click" Background="#2b7a0b" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+                        <Button Grid.Column="1" Content="🗑 Delete" Click="DeleteUnit_Click" Background="#8b0000" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+                    </Grid>
+                    
+                    <ListBox x:Name="_unitList" SelectionChanged="UnitList_SelectionChanged" />
+                </DockPanel>
+            </Border>
+
+            <GridSplitter Grid.Column="1" Width="5" Background="#2d2d30" ResizeDirection="Columns" />
+
+            <!-- Right panel: scrollable editor -->
+            <Border Grid.Column="2" Padding="15">
+                <Grid RowDefinitions="*,Auto">
+                    <ScrollViewer Grid.Row="0" x:Name="_editorScroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                        <StackPanel x:Name="_editorPanel" Spacing="10" />
+                    </ScrollViewer>
+                    <TextBlock Grid.Row="1" x:Name="_statusMessage" Text="" Foreground="#e3bd54" FontWeight="Bold" Margin="0,5,0,0" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>

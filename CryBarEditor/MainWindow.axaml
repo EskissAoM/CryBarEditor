@@ -187,6 +187,7 @@
 					<MenuItem Header="Check for Updates" Click="MenuItem_CheckForUpdates" />
 					<MenuItem Header="Blender Export Tips" Click="TipsClick" />
 				</MenuItem>
+				<MenuItem Header="Proto Editor" Click="MenuItem_OpenProtoEditor" />
 			</Menu>
 		</StackPanel>
 		<Border Padding="10">
