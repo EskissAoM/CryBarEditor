@@ -19,6 +19,14 @@ public sealed class ProtoAction
     public List<(string UnitType, string Multiplier)> DamageBonuses { get; } = [];
 }
 
+public sealed class ProtoCommandEntry
+{
+    public string Value { get; set; } = "";
+    public string Row { get; set; } = "";
+    public string Column { get; set; } = "";
+    public string MergeMode { get; set; } = "";
+}
+
 /// <summary>
 /// Static XML CRUD helpers – port of xml_handler.py using LINQ to XML.
 /// </summary>
@@ -166,6 +174,18 @@ public static class ProtoXmlHandler
             unit.Add(new XElement("flag", f));
     }
 
+    public static List<ProtoCommandEntry> GetTrainEntries(XElement unit)
+        => GetCommandEntries(unit, "train");
+
+    public static void SetTrainEntries(XElement unit, IEnumerable<ProtoCommandEntry> entries)
+        => SetCommandEntries(unit, "train", entries);
+
+    public static List<ProtoCommandEntry> GetTechEntries(XElement unit)
+        => GetCommandEntries(unit, "tech");
+
+    public static void SetTechEntries(XElement unit, IEnumerable<ProtoCommandEntry> entries)
+        => SetCommandEntries(unit, "tech", entries);
+
     // ─── ProtoActions ─────────────────────────────────────────────────────────
 
     /// <summary>Parse all protoaction elements for the given unit.</summary>
@@ -262,6 +282,34 @@ public static class ProtoXmlHandler
     /// <summary>Test whether a unit element exists in the root.</summary>
     public static bool UnitExists(XElement root, string name)
         => GetUnitElement(root, name) != null;
+
+    static List<ProtoCommandEntry> GetCommandEntries(XElement unit, string elementName)
+        => unit.Elements(elementName)
+               .Select(e => new ProtoCommandEntry
+               {
+                   Value = e.Value?.Trim() ?? "",
+                   Row = (string?)e.Attribute("row") ?? "",
+                   Column = (string?)e.Attribute("column") ?? "",
+                   MergeMode = (string?)e.Attribute("mergeMode") ?? "",
+               })
+               .Where(e => e.Value.Length > 0)
+               .ToList();
+
+    static void SetCommandEntries(XElement unit, string elementName, IEnumerable<ProtoCommandEntry> entries)
+    {
+        unit.Elements(elementName).Remove();
+        foreach (var entry in entries.Where(x => !string.IsNullOrWhiteSpace(x.Value)))
+        {
+            var element = new XElement(elementName, entry.Value);
+            if (!string.IsNullOrWhiteSpace(entry.Row))
+                element.SetAttributeValue("row", entry.Row);
+            if (!string.IsNullOrWhiteSpace(entry.Column))
+                element.SetAttributeValue("column", entry.Column);
+            if (!string.IsNullOrWhiteSpace(entry.MergeMode))
+                element.SetAttributeValue("mergeMode", entry.MergeMode);
+            unit.Add(element);
+        }
+    }
 
     static void NormalizeProtoDocument(XDocument doc)
     {

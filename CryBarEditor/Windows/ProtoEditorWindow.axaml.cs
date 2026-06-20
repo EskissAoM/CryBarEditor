@@ -55,6 +55,9 @@ public partial class ProtoEditorWindow : SimpleWindow
     private readonly Dictionary<string, TextBox> _armorControls = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<string>? _currentUnitTypes;
     private HashSet<string>? _currentFlags;
+    private List<string>? _cachedTechNames;
+    private readonly List<CommandRowState> _trainCommandRows = [];
+    private readonly List<CommandRowState> _techCommandRows = [];
     private readonly List<ProtoActionWidgetState> _protoActionWidgets = [];
 
     private class ProtoActionWidgetState
@@ -80,6 +83,15 @@ public partial class ProtoEditorWindow : SimpleWindow
         public required Panel RowPanel { get; set; }
         public required AutoCompleteBox TypeAcb { get; set; }
         public required TextBox ValTb { get; set; }
+    }
+
+    private class CommandRowState
+    {
+        public required Panel RowPanel { get; set; }
+        public required ComboBox RowCb { get; set; }
+        public required ComboBox ColumnCb { get; set; }
+        public required AutoCompleteBox ValueAcb { get; set; }
+        public string MergeMode { get; set; } = "";
     }
 
     public ProtoEditorWindow()
@@ -352,6 +364,8 @@ public partial class ProtoEditorWindow : SimpleWindow
 
     private static bool IsSelectionOnlySimpleField(string tag) => SelectionOnlySimpleFields.Contains(tag);
     private static bool IsStringBackedField(string tag) => StringBackedFieldTags.Contains(tag, StringComparer.OrdinalIgnoreCase);
+    private static readonly string[] TrainTechRowOptions = ["0", "1", "2", "3"];
+    private static readonly string[] TrainTechColumnOptions = ["0", "1", "2", "3", "4", "5"];
     private static string GetStringSuffixForField(string tag) => tag.ToLowerInvariant() switch
     {
         "displaynameid" => "NAME",
@@ -361,6 +375,331 @@ public partial class ProtoEditorWindow : SimpleWindow
         _ => tag.ToUpperInvariant(),
     };
 
+    private List<string> GetAvailableTrainUnitNames()
+    {
+        var names = new List<string>();
+        if (_barData != null)
+            names.AddRange(_barData.UnitNames);
+        if (_modXmlRoot != null)
+            names.AddRange(ProtoXmlHandler.GetUnitNames(_modXmlRoot));
+
+        return names
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private List<string> GetAvailableTechNames()
+    {
+        if (_cachedTechNames != null)
+            return _cachedTechNames;
+
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var path in new[] { ResolveBaseGameplayXmlPath("techtree.xml"), GetCurrentModGameplayFilePath("techtree_mods.xml") })
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                continue;
+
+            try
+            {
+                var doc = XDocument.Load(path, LoadOptions.PreserveWhitespace);
+                foreach (var name in doc.Descendants("tech")
+                    .Select(x => (string?)x.Attribute("name"))
+                    .Where(x => !string.IsNullOrWhiteSpace(x)))
+                {
+                    names.Add(name!);
+                }
+            }
+            catch
+            {
+                // Ignore malformed or missing techtree data and fall back to what we could read.
+            }
+        }
+
+        foreach (var name in LoadTechNamesFromBar())
+            names.Add(name);
+
+        _cachedTechNames = names.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+        return _cachedTechNames;
+    }
+
+    private string? ResolveBaseGameplayXmlPath(string fileName)
+    {
+        var rootDirectory = _mainWindow.RootDirectory;
+        if (Directory.Exists(rootDirectory))
+        {
+            var direct = Path.Combine(rootDirectory, "data", "gameplay", fileName);
+            if (File.Exists(direct))
+                return direct;
+
+            var nested = Path.Combine(rootDirectory, "game", "data", "gameplay", fileName);
+            if (File.Exists(nested))
+                return nested;
+        }
+
+        return null;
+    }
+
+    private string? GetCurrentModGameplayFilePath(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(_modFilePath))
+            return null;
+
+        var gameplayDir = Path.GetDirectoryName(_modFilePath);
+        if (string.IsNullOrWhiteSpace(gameplayDir))
+            return null;
+
+        return Path.Combine(gameplayDir, fileName);
+    }
+
+    private List<string> LoadTechNamesFromBar()
+    {
+        try
+        {
+            var barFile = _mainWindow.BarFile;
+            var barStream = _mainWindow.BarFileStream;
+            if (barFile != null && barStream != null && Path.GetFileName(barStream.Name).Equals("Data.bar", StringComparison.OrdinalIgnoreCase))
+            {
+                return ExtractTechNamesFromBar(barFile, barStream.Name);
+            }
+
+            var dataBarPath = ResolveDataBarPath();
+            if (!string.IsNullOrWhiteSpace(dataBarPath) && File.Exists(dataBarPath))
+            {
+                using var stream = File.OpenRead(dataBarPath);
+                var file = new BarFile(stream);
+                if (file.Load(out _))
+                    return ExtractTechNamesFromBar(file, dataBarPath);
+            }
+        }
+        catch
+        {
+            // Fallback to file-based tech lookup if BAR tech extraction fails.
+        }
+
+        return [];
+    }
+
+    private static List<string> ExtractTechNamesFromBar(BarFile barFile, string barPath)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var entries = barFile.Entries;
+        if (entries == null)
+            return [];
+
+        var techtreeEntries = entries
+            .Where(e => e.Name.Contains("techtree", StringComparison.OrdinalIgnoreCase)
+                     && e.Name.EndsWith(".xmb", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        using var tempStream = File.OpenRead(barPath);
+        foreach (var entry in techtreeEntries)
+        {
+            int size = entry.IsCompressed ? entry.SizeUncompressed : entry.SizeInArchive;
+            byte[] decompressed = new byte[size];
+            int readBytes = entry.ReadDataDecompressed(tempStream, decompressed);
+            if (readBytes <= 0)
+                continue;
+
+            var xml = BarFormatConverter.XMBtoFormattedXmlString(decompressed.AsSpan(0, readBytes));
+            if (string.IsNullOrWhiteSpace(xml))
+                continue;
+
+            try
+            {
+                var doc = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
+                foreach (var name in doc.Descendants("tech")
+                    .Select(x => (string?)x.Attribute("name"))
+                    .Where(x => !string.IsNullOrWhiteSpace(x)))
+                {
+                    names.Add(name!);
+                }
+            }
+            catch
+            {
+                // Skip malformed techtree entries and keep what we already found.
+            }
+        }
+
+        return names.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private void AddCommandSection(string title, string itemLabel, IEnumerable<ProtoCommandEntry> entries, List<string> suggestions, List<CommandRowState> stateStore)
+    {
+        AddSectionHeader(title);
+
+        var commandContainer = new StackPanel { Spacing = 4 };
+        _editorPanel.Children.Add(commandContainer);
+        stateStore.Clear();
+
+        void AddCommandRow(ProtoCommandEntry entry)
+        {
+            var rowOptions = TrainTechRowOptions.AsEnumerable();
+            if (!string.IsNullOrWhiteSpace(entry.Row) && !TrainTechRowOptions.Contains(entry.Row, StringComparer.OrdinalIgnoreCase))
+                rowOptions = rowOptions.Concat([entry.Row]);
+
+            var columnOptions = TrainTechColumnOptions.AsEnumerable();
+            if (!string.IsNullOrWhiteSpace(entry.Column) && !TrainTechColumnOptions.Contains(entry.Column, StringComparer.OrdinalIgnoreCase))
+                columnOptions = columnOptions.Concat([entry.Column]);
+
+            var rowPanel = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("70, 70, *, Auto"),
+                Margin = new Thickness(0, 2, 0, 2)
+            };
+
+            var rowCb = new ComboBox
+            {
+                ItemsSource = rowOptions.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                SelectedItem = !string.IsNullOrWhiteSpace(entry.Row) ? entry.Row : null,
+                IsEnabled = !_isReadOnly,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            rowCb.SelectionChanged += async (s, e) =>
+            {
+                if (!_isPopulating)
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed) MarkDirty();
+                }
+            };
+            Grid.SetColumn(rowCb, 0);
+            rowPanel.Children.Add(rowCb);
+
+            var columnCb = new ComboBox
+            {
+                ItemsSource = columnOptions.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                SelectedItem = !string.IsNullOrWhiteSpace(entry.Column) ? entry.Column : null,
+                IsEnabled = !_isReadOnly,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            columnCb.SelectionChanged += async (s, e) =>
+            {
+                if (!_isPopulating)
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed) MarkDirty();
+                }
+            };
+            Grid.SetColumn(columnCb, 1);
+            rowPanel.Children.Add(columnCb);
+
+            var valueAcb = new AutoCompleteBox
+            {
+                Text = entry.Value,
+                PlaceholderText = itemLabel,
+                FilterMode = AutoCompleteFilterMode.Contains,
+                ItemsSource = suggestions,
+                IsEnabled = !_isReadOnly,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            valueAcb.TextChanged += async (s, e) =>
+            {
+                if (!_isPopulating)
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed) MarkDirty();
+                }
+            };
+            Grid.SetColumn(valueAcb, 2);
+            rowPanel.Children.Add(valueAcb);
+
+            var rowState = new CommandRowState
+            {
+                RowPanel = rowPanel,
+                RowCb = rowCb,
+                ColumnCb = columnCb,
+                ValueAcb = valueAcb,
+                MergeMode = entry.MergeMode
+            };
+            stateStore.Add(rowState);
+
+            if (!_isReadOnly)
+            {
+                var btnDel = new Button { Content = "X", Background = Brush.Parse("#8b0000"), VerticalAlignment = VerticalAlignment.Center };
+                btnDel.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        stateStore.Remove(rowState);
+                        commandContainer.Children.Remove(rowPanel);
+                        MarkDirty();
+                    }
+                };
+                Grid.SetColumn(btnDel, 3);
+                rowPanel.Children.Add(btnDel);
+            }
+
+            commandContainer.Children.Add(rowPanel);
+        }
+
+        foreach (var entry in entries)
+            AddCommandRow(entry);
+
+        if (!_isReadOnly)
+        {
+            var btnAdd = new Button
+            {
+                Content = $"+ Add {itemLabel}",
+                Background = Brush.Parse("#2b7a0b"),
+                Margin = new Thickness(0, 4, 0, 4)
+            };
+            btnAdd.Click += async (s, e) =>
+            {
+                var proceed = await CheckStartLocalMod();
+                if (proceed)
+                {
+                    AddCommandRow(new ProtoCommandEntry { Row = "0", Column = "0" });
+                    MarkDirty();
+                }
+            };
+            _editorPanel.Children.Add(btnAdd);
+        }
+    }
+
+    private static List<ProtoCommandEntry> CollectValidCommandEntries(IEnumerable<CommandRowState> rows, IEnumerable<string> validValues)
+    {
+        var validSet = new HashSet<string>(validValues, StringComparer.OrdinalIgnoreCase);
+        var entries = new List<ProtoCommandEntry>();
+
+        foreach (var row in rows)
+        {
+            var value = row.ValueAcb.Text?.Trim() ?? "";
+            var match = validSet.FirstOrDefault(x => x.Equals(value, StringComparison.OrdinalIgnoreCase));
+            if (string.IsNullOrWhiteSpace(match))
+                continue;
+
+            entries.Add(new ProtoCommandEntry
+            {
+                Value = match,
+                Row = row.RowCb.SelectedItem as string ?? row.RowCb.SelectedValue as string ?? "",
+                Column = row.ColumnCb.SelectedItem as string ?? row.ColumnCb.SelectedValue as string ?? "",
+                MergeMode = row.MergeMode
+            });
+        }
+
+        return entries;
+    }
+
+    private bool UnitNameExistsAnywhere(string name, string? excludeName = null)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return false;
+
+        var normalized = name.Trim();
+        if (!string.IsNullOrWhiteSpace(excludeName) &&
+            normalized.Equals(excludeName.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return (_modXmlRoot != null && ProtoXmlHandler.UnitExists(_modXmlRoot, normalized)) ||
+               (_barXmlRoot != null && ProtoXmlHandler.UnitExists(_barXmlRoot, normalized));
+    }
+
     private void BuildEditorPanel(string unitName)
     {
         _isPopulating = true;
@@ -369,6 +708,8 @@ public partial class ProtoEditorWindow : SimpleWindow
         _currentStringFieldIds.Clear();
         _costControls.Clear();
         _armorControls.Clear();
+        _trainCommandRows.Clear();
+        _techCommandRows.Clear();
         _protoActionWidgets.Clear();
 
         XElement? unit = null;
@@ -448,7 +789,8 @@ public partial class ProtoEditorWindow : SimpleWindow
 
         foreach (var field in ProtoConstants.SimpleFields)
         {
-            if (field.Tag.Equals("buildlimit", StringComparison.OrdinalIgnoreCase))
+            if (field.Tag.Equals("buildlimit", StringComparison.OrdinalIgnoreCase) ||
+                field.Tag.Equals("tactics", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             propertiesGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -710,7 +1052,11 @@ public partial class ProtoEditorWindow : SimpleWindow
                     var proceed = await CheckStartLocalMod();
                     if (proceed)
                     {
-                        if (double.TryParse(tb.Text, out double num))
+                        if (string.IsNullOrWhiteSpace(tb.Text))
+                        {
+                            tb.Text = "0";
+                        }
+                        else if (double.TryParse(tb.Text, out double num))
                         {
                             if (num < 0) tb.Text = "0";
                             else if (num > 1) tb.Text = "1";
@@ -821,15 +1167,21 @@ public partial class ProtoEditorWindow : SimpleWindow
             }
         }
         RefreshFlagsDisplay();
+        _currentFlags = selectedFlags;
 
         if (!_isReadOnly)
         {
+            var availableFlags = (_barData != null ? _barData.Flags : Enumerable.Empty<string>())
+                .Concat(ProtoConstants.KnownFlags)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(x => x)
+                .ToList();
+
             var addFlagGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("*, Auto"), Margin = new Thickness(0, 4, 0, 4) };
             var acbAdd = new AutoCompleteBox
             {
                 FilterMode = AutoCompleteFilterMode.Contains,
-                ItemsSource = (_barData != null ? _barData.Flags : Enumerable.Empty<string>())
-                                .Concat(ProtoConstants.KnownFlags).Distinct().OrderBy(x => x).ToList(),
+                ItemsSource = availableFlags,
                 Margin = new Thickness(0, 0, 10, 0)
             };
             Grid.SetColumn(acbAdd, 0);
@@ -838,13 +1190,14 @@ public partial class ProtoEditorWindow : SimpleWindow
             var btnAdd = new Button { Content = "+ Add", Background = Brush.Parse("#2b7a0b") };
             async void PerformAddFlag()
             {
-                string f = acbAdd.Text?.Trim() ?? "";
-                if (!string.IsNullOrEmpty(f) && !selectedFlags.Contains(f))
+                string input = acbAdd.Text?.Trim() ?? "";
+                string? match = availableFlags.FirstOrDefault(x => x.Equals(input, StringComparison.OrdinalIgnoreCase));
+                if (!string.IsNullOrEmpty(match) && !selectedFlags.Contains(match))
                 {
                     var proceed = await CheckStartLocalMod();
                     if (proceed)
                     {
-                        selectedFlags.Add(f);
+                        selectedFlags.Add(match);
                         acbAdd.Text = "";
                         MarkDirty();
                         RefreshFlagsDisplay();
@@ -863,8 +1216,71 @@ public partial class ProtoEditorWindow : SimpleWindow
             Grid.SetColumn(btnAdd, 1);
             addFlagGrid.Children.Add(btnAdd);
             _editorPanel.Children.Add(addFlagGrid);
-            _currentFlags = selectedFlags;
         }
+
+        AddCommandSection("Train Units", "Proto Unit", ProtoXmlHandler.GetTrainEntries(unit), GetAvailableTrainUnitNames(), _trainCommandRows);
+        AddCommandSection("Research Techs", "Tech", ProtoXmlHandler.GetTechEntries(unit), GetAvailableTechNames(), _techCommandRows);
+
+        AddSectionHeader("Tactics");
+        var tacticsGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("180, *") };
+        tacticsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var tacticsLabel = new TextBlock
+        {
+            Text = "Tactics",
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 4, 10, 4)
+        };
+        Grid.SetColumn(tacticsLabel, 0);
+        Grid.SetRow(tacticsLabel, 0);
+        tacticsGrid.Children.Add(tacticsLabel);
+
+        string initialTactics = ProtoXmlHandler.GetSimpleField(unit, "tactics") ?? "";
+        Control tacticsControl;
+        if (ProtoConstants.FieldSuggestions.TryGetValue("tactics", out var tacticSuggestions))
+        {
+            var acb = new AutoCompleteBox
+            {
+                Text = initialTactics,
+                FilterMode = AutoCompleteFilterMode.Contains,
+                IsEnabled = !_isReadOnly,
+                Margin = new Thickness(0, 4, 0, 4),
+                ItemsSource = tacticSuggestions
+            };
+            acb.TextChanged += async (s, e) =>
+            {
+                if (!_isPopulating)
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed) MarkDirty();
+                }
+            };
+            tacticsControl = acb;
+        }
+        else
+        {
+            var tb = new TextBox
+            {
+                Text = initialTactics,
+                IsEnabled = !_isReadOnly,
+                Margin = new Thickness(0, 4, 0, 4)
+            };
+            tb.TextChanged += async (s, e) =>
+            {
+                if (!_isPopulating)
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed) MarkDirty();
+                }
+            };
+            tacticsControl = tb;
+        }
+
+        Grid.SetColumn(tacticsControl, 1);
+        Grid.SetRow(tacticsControl, 0);
+        tacticsGrid.Children.Add(tacticsControl);
+        _fieldControls["tactics"] = tacticsControl;
+        _editorPanel.Children.Add(tacticsGrid);
 
         AddSectionHeader("Proto Actions");
         var actions = ProtoXmlHandler.GetProtoActions(unit);
@@ -1371,7 +1787,15 @@ public partial class ProtoEditorWindow : SimpleWindow
         var armors = new List<(string ArmorType, string Value)>();
         foreach (var kvp in _armorControls)
         {
-            armors.Add((kvp.Key, kvp.Value.Text?.Trim() ?? "0"));
+            var value = kvp.Value.Text?.Trim();
+            if (string.IsNullOrWhiteSpace(value))
+                value = "0";
+            else if (double.TryParse(value, out double num))
+                value = Math.Clamp(num, 0, 1).ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+            else
+                value = "0";
+
+            armors.Add((kvp.Key, value));
         }
         ProtoXmlHandler.SetArmorEntries(unit, armors);
 
@@ -1384,6 +1808,9 @@ public partial class ProtoEditorWindow : SimpleWindow
         {
             ProtoXmlHandler.SetFlagList(unit, _currentFlags.OrderBy(x => x));
         }
+
+        ProtoXmlHandler.SetTrainEntries(unit, CollectValidCommandEntries(_trainCommandRows, GetAvailableTrainUnitNames()));
+        ProtoXmlHandler.SetTechEntries(unit, CollectValidCommandEntries(_techCommandRows, GetAvailableTechNames()));
 
         var actionsList = new List<ProtoAction>();
         foreach (var pw in _protoActionWidgets)
@@ -1976,7 +2403,7 @@ public partial class ProtoEditorWindow : SimpleWindow
 
         var input = new InputPromptWindow(duplicate ? "Enter duplicate unit name:" : "Enter new unit name:");
         await input.ShowDialog(this);
-        string? name = input.InputText;
+        string? name = input.InputText?.Trim();
 
         if (!string.IsNullOrEmpty(name))
         {
@@ -1990,9 +2417,9 @@ public partial class ProtoEditorWindow : SimpleWindow
                 ? shortTb.Text?.Trim() ?? ""
                 : "";
 
-            if (ProtoXmlHandler.UnitExists(_modXmlRoot, name))
+            if (UnitNameExistsAnywhere(name))
             {
-                var pErr = new Prompt(PromptType.Error, "Duplicate", $"Unit '{name}' already exists in this mod.");
+                var pErr = new Prompt(PromptType.Error, "Duplicate", $"Unit '{name}' already exists as a proto unit in the base game or this mod.");
                 await pErr.ShowDialog(this);
                 return;
             }
