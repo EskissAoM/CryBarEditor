@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Xml.Linq;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -56,6 +57,14 @@ public partial class ProtoEditorWindow : SimpleWindow
     private HashSet<string>? _currentUnitTypes;
     private HashSet<string>? _currentFlags;
     private List<string>? _cachedTechNames;
+    private readonly Dictionary<string, string> _protoActionTypeMap = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _globalTacticsActionTypeMap = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _currentUnitProtoActionTypeMap = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _currentUnitTacticsActionTypeMap = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Dictionary<string, string>> _tacticsActionTypeCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _knownProtoActionNames = new(StringComparer.OrdinalIgnoreCase);
+    private List<string> _protoActionNameSuggestions = [];
+    private List<string> _protoActionTypeSuggestions = [];
     private readonly List<CommandRowState> _trainCommandRows = [];
     private readonly List<CommandRowState> _techCommandRows = [];
     private readonly List<ProtoActionWidgetState> _protoActionWidgets = [];
@@ -64,7 +73,7 @@ public partial class ProtoEditorWindow : SimpleWindow
     {
         public required Panel Container { get; set; }
         public required AutoCompleteBox NameAcb { get; set; }
-        public required AutoCompleteBox TypeAcb { get; set; }
+        public required ComboBox TypeCb { get; set; }
         public required TextBox RofTb { get; set; }
         public required TextBox MaxRangeTb { get; set; }
         public List<DamageRowState> DamageRows { get; } = [];
@@ -206,6 +215,7 @@ public partial class ProtoEditorWindow : SimpleWindow
 
         var configLoaded = ProtoEditorSettings.LoadSettings();
         string cachePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache_merged_proto.xml");
+        Dictionary<string, string>? tacticsActionTypes = null;
 
         if (File.Exists(cachePath) && Math.Abs(configLoaded.DataBarMtime - mtime) < 1.0)
         {
@@ -216,6 +226,10 @@ public partial class ProtoEditorWindow : SimpleWindow
                 var (barData, root) = ProtoDataExtractor.ExtractProtoData(xmlContent);
                 _barData = barData;
                 _barXmlRoot = root;
+                tacticsActionTypes = ExtractProtoActionTypesFromTactics(barFile, barPath);
+                foreach (var kvp in LoadProtoActionTypesFromLooseTactics())
+                    tacticsActionTypes[kvp.Key] = kvp.Value;
+                RefreshProtoActionMetadata(tacticsActionTypes);
                 _statusMessage.Text = "";
                 return;
             }
@@ -269,9 +283,13 @@ public partial class ProtoEditorWindow : SimpleWindow
 
             var combinedXml = $"<protos>\n{string.Join("\n", xmlParts)}\n</protos>";
             var (barData, barRoot) = ProtoDataExtractor.ExtractProtoData(combinedXml);
+            tacticsActionTypes = ExtractProtoActionTypesFromTactics(barFile, barPath);
+            foreach (var kvp in LoadProtoActionTypesFromLooseTactics())
+                tacticsActionTypes[kvp.Key] = kvp.Value;
 
             _barData = barData;
             _barXmlRoot = barRoot;
+            RefreshProtoActionMetadata(tacticsActionTypes);
 
             File.WriteAllText(cachePath, combinedXml);
 
@@ -427,16 +445,41 @@ public partial class ProtoEditorWindow : SimpleWindow
 
     private string? ResolveBaseGameplayXmlPath(string fileName)
     {
+        var gameplayDirectory = ResolveBaseGameplayDirectory();
+        if (!string.IsNullOrWhiteSpace(gameplayDirectory))
+        {
+            var path = Path.Combine(gameplayDirectory, fileName);
+            if (File.Exists(path))
+                return path;
+        }
+
+        return null;
+    }
+
+    private string? ResolveBaseGameplayDirectory()
+    {
         var rootDirectory = _mainWindow.RootDirectory;
         if (Directory.Exists(rootDirectory))
         {
-            var direct = Path.Combine(rootDirectory, "data", "gameplay", fileName);
-            if (File.Exists(direct))
+            var direct = Path.Combine(rootDirectory, "data", "gameplay");
+            if (Directory.Exists(direct))
                 return direct;
 
-            var nested = Path.Combine(rootDirectory, "game", "data", "gameplay", fileName);
-            if (File.Exists(nested))
+            var nested = Path.Combine(rootDirectory, "game", "data", "gameplay");
+            if (Directory.Exists(nested))
                 return nested;
+        }
+
+        var dataBarPath = ResolveDataBarPath();
+        if (!string.IsNullOrWhiteSpace(dataBarPath) && File.Exists(dataBarPath))
+        {
+            var dataDirectory = Path.GetDirectoryName(dataBarPath);
+            if (!string.IsNullOrWhiteSpace(dataDirectory))
+            {
+                var gameplayDirectory = Path.Combine(dataDirectory, "gameplay");
+                if (Directory.Exists(gameplayDirectory))
+                    return gameplayDirectory;
+            }
         }
 
         return null;
@@ -534,6 +577,41 @@ public partial class ProtoEditorWindow : SimpleWindow
         _editorPanel.Children.Add(commandContainer);
         stateStore.Clear();
 
+        var headerGrid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("70, 70, *, Auto"),
+            Margin = new Thickness(0, 0, 0, 2)
+        };
+
+        var rowHeader = new TextBlock
+        {
+            Text = "Row",
+            FontWeight = FontWeight.Bold,
+            Margin = new Thickness(0, 0, 8, 0)
+        };
+        Grid.SetColumn(rowHeader, 0);
+        headerGrid.Children.Add(rowHeader);
+
+        var columnHeader = new TextBlock
+        {
+            Text = "Column",
+            FontWeight = FontWeight.Bold,
+            Margin = new Thickness(0, 0, 8, 0)
+        };
+        Grid.SetColumn(columnHeader, 1);
+        headerGrid.Children.Add(columnHeader);
+
+        var valueHeader = new TextBlock
+        {
+            Text = itemLabel,
+            FontWeight = FontWeight.Bold,
+            Margin = new Thickness(0, 0, 8, 0)
+        };
+        Grid.SetColumn(valueHeader, 2);
+        headerGrid.Children.Add(valueHeader);
+
+        commandContainer.Children.Add(headerGrid);
+
         void AddCommandRow(ProtoCommandEntry entry)
         {
             var rowOptions = TrainTechRowOptions.AsEnumerable();
@@ -595,6 +673,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                 IsEnabled = !_isReadOnly,
                 Margin = new Thickness(0, 0, 8, 0)
             };
+            EnableDropdownAutoComplete(valueAcb);
             valueAcb.TextChanged += async (s, e) =>
             {
                 if (!_isPopulating)
@@ -684,6 +763,100 @@ public partial class ProtoEditorWindow : SimpleWindow
         return entries;
     }
 
+    private static Dictionary<string, string> ExtractProtoActionTypesFromTactics(BarFile barFile, string barPath)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var entries = barFile.Entries;
+        if (entries == null)
+            return result;
+
+        var tacticsEntries = entries
+            .Where(e => e.Name.Contains("tactics", StringComparison.OrdinalIgnoreCase)
+                     && e.Name.EndsWith(".xmb", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        using var tempStream = File.OpenRead(barPath);
+        foreach (var entry in tacticsEntries)
+        {
+            int size = entry.IsCompressed ? entry.SizeUncompressed : entry.SizeInArchive;
+            byte[] decompressed = new byte[size];
+            int readBytes = entry.ReadDataDecompressed(tempStream, decompressed);
+            if (readBytes <= 0)
+                continue;
+
+            var xml = BarFormatConverter.XMBtoFormattedXmlString(decompressed.AsSpan(0, readBytes));
+            if (string.IsNullOrWhiteSpace(xml))
+                continue;
+
+            try
+            {
+                var doc = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
+                foreach (var action in doc.Descendants("action"))
+                {
+                    var name = action.Element("name")?.Value?.Trim();
+                    var type = action.Element("type")?.Value?.Trim();
+                    if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(type))
+                        result[name] = type;
+                }
+            }
+            catch
+            {
+                // Ignore malformed tactics entries and keep scanning the rest of the BAR.
+            }
+        }
+
+        return result;
+    }
+
+    private Dictionary<string, string> LoadProtoActionTypesFromLooseTactics()
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var gameplayDirectory = ResolveBaseGameplayDirectory();
+        if (string.IsNullOrWhiteSpace(gameplayDirectory))
+            return result;
+
+        var tacticsDirectory = Path.Combine(gameplayDirectory, "tactics");
+        if (!Directory.Exists(tacticsDirectory))
+            return result;
+
+        foreach (var path in Directory.GetFiles(tacticsDirectory, "*", SearchOption.AllDirectories))
+        {
+            var extension = Path.GetExtension(path);
+            var name = Path.GetFileName(path);
+            if (!(name.EndsWith(".tactics", StringComparison.OrdinalIgnoreCase) ||
+                  name.EndsWith(".tactics.xmb", StringComparison.OrdinalIgnoreCase) ||
+                  extension.Equals(".xmb", StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            try
+            {
+                string? xml = null;
+                if (name.EndsWith(".xmb", StringComparison.OrdinalIgnoreCase))
+                {
+                    var bytes = File.ReadAllBytes(path);
+                    xml = BarFormatConverter.XMBtoFormattedXmlString(bytes);
+                }
+                else
+                {
+                    xml = File.ReadAllText(path);
+                }
+
+                if (string.IsNullOrWhiteSpace(xml))
+                    continue;
+
+                MergeTacticsActionTypes(result, xml);
+            }
+            catch
+            {
+                // Ignore unreadable tactics files and keep scanning.
+            }
+        }
+
+        return result;
+    }
+
     private bool UnitNameExistsAnywhere(string name, string? excludeName = null)
     {
         if (string.IsNullOrWhiteSpace(name))
@@ -698,6 +871,436 @@ public partial class ProtoEditorWindow : SimpleWindow
 
         return (_modXmlRoot != null && ProtoXmlHandler.UnitExists(_modXmlRoot, normalized)) ||
                (_barXmlRoot != null && ProtoXmlHandler.UnitExists(_barXmlRoot, normalized));
+    }
+
+    private void RefreshProtoActionMetadata(Dictionary<string, string>? tacticsTypes = null)
+    {
+        if (tacticsTypes != null)
+        {
+            _globalTacticsActionTypeMap.Clear();
+            foreach (var kvp in tacticsTypes)
+            {
+                if (!string.IsNullOrWhiteSpace(kvp.Key) && !string.IsNullOrWhiteSpace(kvp.Value))
+                    _globalTacticsActionTypeMap[kvp.Key] = kvp.Value;
+            }
+        }
+
+        _protoActionTypeMap.Clear();
+        _knownProtoActionNames.Clear();
+
+        if (_barData != null)
+        {
+            foreach (var kvp in _barData.ProtoActionTypes)
+            {
+                _knownProtoActionNames.Add(kvp.Key);
+                if (!string.IsNullOrWhiteSpace(kvp.Value))
+                    _protoActionTypeMap[kvp.Key] = kvp.Value;
+            }
+        }
+
+        if (_modXmlRoot != null)
+        {
+            foreach (var unitName in ProtoXmlHandler.GetUnitNames(_modXmlRoot))
+            {
+                var unit = ProtoXmlHandler.GetUnitElement(_modXmlRoot, unitName);
+                if (unit == null)
+                    continue;
+
+                foreach (var action in ProtoXmlHandler.GetProtoActions(unit))
+                {
+                    if (!string.IsNullOrWhiteSpace(action.Name))
+                    {
+                        _knownProtoActionNames.Add(action.Name);
+                        if (!string.IsNullOrWhiteSpace(action.Type))
+                            _protoActionTypeMap[action.Name] = action.Type;
+                    }
+                }
+            }
+        }
+
+        foreach (var kvp in _globalTacticsActionTypeMap)
+        {
+            _knownProtoActionNames.Add(kvp.Key);
+            if (!string.IsNullOrWhiteSpace(kvp.Value))
+                _protoActionTypeMap[kvp.Key] = kvp.Value;
+        }
+
+        _protoActionNameSuggestions = _knownProtoActionNames
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        _protoActionTypeSuggestions = _protoActionTypeMap.Values
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private string ResolveProtoActionType(string actionName, string currentType = "")
+    {
+        if (!string.IsNullOrWhiteSpace(currentType))
+            return currentType;
+
+        if (TryResolveProtoActionType(actionName, out var mappedType))
+            return mappedType;
+
+        return currentType;
+    }
+
+    private bool TryResolveProtoActionType(string actionName, out string mappedType)
+    {
+        mappedType = "";
+        if (string.IsNullOrWhiteSpace(actionName))
+            return false;
+
+        var normalizedName = actionName.Trim();
+
+        if (_currentUnitProtoActionTypeMap.TryGetValue(normalizedName, out var unitProtoType) &&
+            !string.IsNullOrWhiteSpace(unitProtoType))
+        {
+            mappedType = unitProtoType;
+            return true;
+        }
+
+        if (_currentUnitTacticsActionTypeMap.TryGetValue(normalizedName, out var unitTacticsType) &&
+            !string.IsNullOrWhiteSpace(unitTacticsType))
+        {
+            mappedType = unitTacticsType;
+            return true;
+        }
+
+        if (_protoActionTypeMap.TryGetValue(normalizedName, out var globalType) &&
+            !string.IsNullOrWhiteSpace(globalType))
+        {
+            mappedType = globalType;
+            return true;
+        }
+
+        mappedType = "";
+        return false;
+    }
+
+    private List<string> GetProtoActionTypeOptions(string? currentType = null)
+    {
+        var options = _protoActionTypeSuggestions;
+
+        var set = new HashSet<string>(options.Where(x => !string.IsNullOrWhiteSpace(x)), StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(currentType))
+            set.Add(currentType);
+
+        return set.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private string GetExactProtoActionTypeMatch(string? value)
+    {
+        var normalized = value?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(normalized))
+            return "";
+
+        return _protoActionTypeSuggestions.FirstOrDefault(x => x.Equals(normalized, StringComparison.OrdinalIgnoreCase)) ?? "";
+    }
+
+    private string GetProtoActionTypeEditorValue(ComboBox typeCb)
+    {
+        var selected = typeCb.SelectedItem as string ?? typeCb.SelectedValue as string;
+        if (!string.IsNullOrWhiteSpace(selected))
+            return selected;
+
+        if (typeCb.IsEditable)
+            return typeCb.Text?.Trim() ?? "";
+
+        return "";
+    }
+
+    private void EnableDropdownAutoComplete(AutoCompleteBox autoCompleteBox)
+    {
+        autoCompleteBox.MinimumPrefixLength = 0;
+        autoCompleteBox.MinimumPopulateDelay = TimeSpan.Zero;
+        bool suppressAutoOpen = false;
+        bool userInteracted = false;
+
+        void OpenDropdownIfEnabled()
+        {
+            if (_isPopulating || !autoCompleteBox.IsEnabled || suppressAutoOpen)
+                return;
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!_isPopulating && autoCompleteBox.IsEnabled && !suppressAutoOpen)
+                    autoCompleteBox.IsDropDownOpen = true;
+            });
+        }
+
+        autoCompleteBox.AddHandler(InputElement.PointerPressedEvent, (sender, e) =>
+        {
+            if (_isPopulating || !autoCompleteBox.IsEnabled)
+                return;
+
+            userInteracted = true;
+            suppressAutoOpen = false;
+            OpenDropdownIfEnabled();
+        }, RoutingStrategies.Tunnel, handledEventsToo: true);
+
+        autoCompleteBox.SelectionChanged += (s, e) =>
+        {
+            suppressAutoOpen = true;
+            autoCompleteBox.IsDropDownOpen = false;
+        };
+
+        autoCompleteBox.TextChanged += (s, e) =>
+        {
+            if (_isPopulating || !autoCompleteBox.IsEnabled)
+                return;
+
+            if (userInteracted && string.IsNullOrWhiteSpace(autoCompleteBox.Text))
+            {
+                suppressAutoOpen = false;
+                OpenDropdownIfEnabled();
+            }
+        };
+
+        autoCompleteBox.LostFocus += (s, e) =>
+        {
+            suppressAutoOpen = false;
+        };
+    }
+
+    private void UpdateProtoActionTypeEditor(ComboBox typeCb, string actionName)
+    {
+        if (TryResolveProtoActionType(actionName, out var mappedType) && !string.IsNullOrWhiteSpace(mappedType))
+        {
+            typeCb.ItemsSource = GetProtoActionTypeOptions(mappedType);
+            typeCb.SelectedItem = mappedType;
+            typeCb.Text = mappedType;
+            typeCb.IsEnabled = false;
+            typeCb.IsDropDownOpen = false;
+            return;
+        }
+
+        var currentValue = GetProtoActionTypeEditorValue(typeCb);
+        var exactType = GetExactProtoActionTypeMatch(currentValue);
+        if (!string.IsNullOrWhiteSpace(exactType))
+        {
+            typeCb.SelectedItem = exactType;
+            typeCb.Text = exactType;
+        }
+
+        typeCb.ItemsSource = GetProtoActionTypeOptions(string.IsNullOrWhiteSpace(exactType) ? currentValue : exactType);
+        typeCb.IsEnabled = !_isReadOnly;
+    }
+
+    private void RefreshCurrentUnitProtoActionMetadata(XElement unit)
+    {
+        _currentUnitProtoActionTypeMap.Clear();
+        _currentUnitTacticsActionTypeMap.Clear();
+
+        foreach (var action in ProtoXmlHandler.GetProtoActions(unit))
+        {
+            if (!string.IsNullOrWhiteSpace(action.Name) && !string.IsNullOrWhiteSpace(action.Type))
+                _currentUnitProtoActionTypeMap[action.Name.Trim()] = action.Type.Trim();
+        }
+
+        var tacticsName = ProtoXmlHandler.GetSimpleField(unit, "tactics")?.Trim() ?? "";
+        foreach (var kvp in LoadProtoActionTypesForTactics(tacticsName))
+        {
+            if (!string.IsNullOrWhiteSpace(kvp.Key) && !string.IsNullOrWhiteSpace(kvp.Value))
+                _currentUnitTacticsActionTypeMap[kvp.Key.Trim()] = kvp.Value.Trim();
+        }
+    }
+
+    private Dictionary<string, string> LoadProtoActionTypesForTactics(string tacticsName)
+    {
+        if (string.IsNullOrWhiteSpace(tacticsName))
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        var cacheKey = tacticsName.Trim();
+        if (_tacticsActionTypeCache.TryGetValue(cacheKey, out var cached))
+            return cached;
+
+        foreach (var path in GetTacticsCandidatePaths(cacheKey))
+        {
+            if (!File.Exists(path))
+                continue;
+
+            try
+            {
+                var xml = path.EndsWith(".xmb", StringComparison.OrdinalIgnoreCase)
+                    ? BarFormatConverter.XMBtoFormattedXmlString(File.ReadAllBytes(path))
+                    : File.ReadAllText(path);
+
+                if (!string.IsNullOrWhiteSpace(xml))
+                {
+                    var parsed = ParseTacticsActionTypes(xml);
+                    if (parsed.Count > 0)
+                    {
+                        _tacticsActionTypeCache[cacheKey] = parsed;
+                        return parsed;
+                    }
+                }
+            }
+            catch
+            {
+                // Try the next candidate path.
+            }
+        }
+
+        var barResolved = LoadProtoActionTypesFromBarTactics(cacheKey);
+        _tacticsActionTypeCache[cacheKey] = barResolved;
+        return barResolved;
+    }
+
+    private IEnumerable<string> GetTacticsCandidatePaths(string tacticsName)
+    {
+        var relatives = BuildTacticsCandidateRelativePaths(tacticsName);
+
+        if (!string.IsNullOrWhiteSpace(_modFilePath))
+        {
+            var gameplayDir = Path.GetDirectoryName(_modFilePath);
+            if (!string.IsNullOrWhiteSpace(gameplayDir))
+            {
+                foreach (var relative in relatives)
+                    yield return Path.Combine(gameplayDir, "tactics", relative);
+            }
+        }
+
+        var baseGameplayDir = ResolveBaseGameplayDirectory();
+        if (!string.IsNullOrWhiteSpace(baseGameplayDir))
+        {
+            foreach (var relative in relatives)
+                yield return Path.Combine(baseGameplayDir, "tactics", relative);
+        }
+    }
+
+    private static List<string> BuildTacticsCandidateRelativePaths(string tacticsName)
+    {
+        var normalized = tacticsName
+            .Trim()
+            .Replace('/', Path.DirectorySeparatorChar)
+            .Replace('\\', Path.DirectorySeparatorChar)
+            .TrimStart(Path.DirectorySeparatorChar);
+
+        var tacticsPrefix = $"tactics{Path.DirectorySeparatorChar}";
+        if (normalized.StartsWith(tacticsPrefix, StringComparison.OrdinalIgnoreCase))
+            normalized = normalized[tacticsPrefix.Length..];
+
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddCandidate(string candidate)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate))
+                candidates.Add(candidate);
+        }
+
+        AddCandidate(normalized);
+
+        if (normalized.EndsWith(".tactics", StringComparison.OrdinalIgnoreCase))
+        {
+            AddCandidate(normalized + ".XMB");
+        }
+        else if (normalized.EndsWith(".tactics.xmb", StringComparison.OrdinalIgnoreCase) ||
+                 normalized.EndsWith(".xmb", StringComparison.OrdinalIgnoreCase))
+        {
+            // Exact path already added.
+        }
+        else
+        {
+            AddCandidate(normalized + ".tactics");
+            AddCandidate(normalized + ".tactics.XMB");
+            AddCandidate(normalized + ".XMB");
+        }
+
+        return candidates.ToList();
+    }
+
+    private Dictionary<string, string> LoadProtoActionTypesFromBarTactics(string tacticsName)
+    {
+        try
+        {
+            var candidateFileNames = BuildTacticsCandidateRelativePaths(tacticsName)
+                .Select(Path.GetFileName)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Cast<string>()
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            if (candidateFileNames.Count == 0)
+                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            var barFile = _mainWindow.BarFile;
+            var barStream = _mainWindow.BarFileStream;
+            if (barFile != null && barStream != null &&
+                Path.GetFileName(barStream.Name).Equals("Data.bar", StringComparison.OrdinalIgnoreCase))
+            {
+                return ExtractTacticsActionTypesFromBar(barFile, barStream.Name, candidateFileNames);
+            }
+
+            var dataBarPath = ResolveDataBarPath();
+            if (!string.IsNullOrWhiteSpace(dataBarPath) && File.Exists(dataBarPath))
+            {
+                using var stream = File.OpenRead(dataBarPath);
+                var file = new BarFile(stream);
+                if (file.Load(out _))
+                    return ExtractTacticsActionTypesFromBar(file, dataBarPath, candidateFileNames);
+            }
+        }
+        catch
+        {
+            // Fall through to an empty result if BAR lookup is unavailable.
+        }
+
+        return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static Dictionary<string, string> ExtractTacticsActionTypesFromBar(BarFile barFile, string barPath, HashSet<string> candidateFileNames)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var entries = barFile.Entries;
+        if (entries == null || candidateFileNames.Count == 0)
+            return result;
+
+        var tacticsEntries = entries
+            .Where(e => e.Name.Contains("tactics", StringComparison.OrdinalIgnoreCase)
+                     && e.Name.EndsWith(".xmb", StringComparison.OrdinalIgnoreCase)
+                     && candidateFileNames.Contains(Path.GetFileName(e.Name.Replace('/', '\\'))))
+            .ToList();
+
+        using var tempStream = File.OpenRead(barPath);
+        foreach (var entry in tacticsEntries)
+        {
+            int size = entry.IsCompressed ? entry.SizeUncompressed : entry.SizeInArchive;
+            byte[] decompressed = new byte[size];
+            int readBytes = entry.ReadDataDecompressed(tempStream, decompressed);
+            if (readBytes <= 0)
+                continue;
+
+            var xml = BarFormatConverter.XMBtoFormattedXmlString(decompressed.AsSpan(0, readBytes));
+            if (string.IsNullOrWhiteSpace(xml))
+                continue;
+
+            MergeTacticsActionTypes(result, xml);
+        }
+
+        return result;
+    }
+
+    private static Dictionary<string, string> ParseTacticsActionTypes(string xml)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        MergeTacticsActionTypes(result, xml);
+        return result;
+    }
+
+    private static void MergeTacticsActionTypes(Dictionary<string, string> result, string xml)
+    {
+        var doc = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
+        foreach (var action in doc.Descendants("action"))
+        {
+            var actionName = action.Element("name")?.Value?.Trim();
+            var actionType = action.Element("type")?.Value?.Trim();
+            if (!string.IsNullOrWhiteSpace(actionName) && !string.IsNullOrWhiteSpace(actionType))
+                result[actionName] = actionType;
+        }
     }
 
     private void BuildEditorPanel(string unitName)
@@ -735,6 +1338,7 @@ public partial class ProtoEditorWindow : SimpleWindow
         }
 
         _currentUnitName = unitName;
+        RefreshCurrentUnitProtoActionMetadata(unit);
 
         var header = new TextBlock
         {
@@ -1109,6 +1713,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                                 .Concat(ProtoConstants.KnownUnitTypes).Distinct().OrderBy(x => x).ToList(),
                 Margin = new Thickness(0, 0, 10, 0)
             };
+            EnableDropdownAutoComplete(acbAdd);
             Grid.SetColumn(acbAdd, 0);
             addTypeGrid.Children.Add(acbAdd);
 
@@ -1125,6 +1730,11 @@ public partial class ProtoEditorWindow : SimpleWindow
                         acbAdd.Text = "";
                         MarkDirty();
                         RefreshTypesDisplay();
+                        Dispatcher.UIThread.Post(() =>
+                        {
+                            if (acbAdd.IsEnabled && string.IsNullOrWhiteSpace(acbAdd.Text))
+                                acbAdd.IsDropDownOpen = true;
+                        });
                     }
                 }
             }
@@ -1184,6 +1794,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                 ItemsSource = availableFlags,
                 Margin = new Thickness(0, 0, 10, 0)
             };
+            EnableDropdownAutoComplete(acbAdd);
             Grid.SetColumn(acbAdd, 0);
             addFlagGrid.Children.Add(acbAdd);
 
@@ -1201,6 +1812,11 @@ public partial class ProtoEditorWindow : SimpleWindow
                         acbAdd.Text = "";
                         MarkDirty();
                         RefreshFlagsDisplay();
+                        Dispatcher.UIThread.Post(() =>
+                        {
+                            if (acbAdd.IsEnabled && string.IsNullOrWhiteSpace(acbAdd.Text))
+                                acbAdd.IsDropDownOpen = true;
+                        });
                     }
                 }
             }
@@ -1247,6 +1863,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                 Margin = new Thickness(0, 4, 0, 4),
                 ItemsSource = tacticSuggestions
             };
+            EnableDropdownAutoComplete(acb);
             acb.TextChanged += async (s, e) =>
             {
                 if (!_isPopulating)
@@ -1382,6 +1999,9 @@ public partial class ProtoEditorWindow : SimpleWindow
 
     private Border CreateProtoActionWidget(ProtoAction pa, Action onRemove)
     {
+        string resolvedType = ResolveProtoActionType(pa.Name, pa.Type);
+        var typeOptions = GetProtoActionTypeOptions(resolvedType);
+
         var border = new Border
         {
             Background = Brush.Parse("#1c1c1c"),
@@ -1406,12 +2026,13 @@ public partial class ProtoEditorWindow : SimpleWindow
         {
             Text = pa.Name,
             FilterMode = AutoCompleteFilterMode.Contains,
-            ItemsSource = ProtoConstants.FieldSuggestions.TryGetValue("protoaction_name", out var namesList) ? namesList : [],
+            ItemsSource = _protoActionNameSuggestions,
             Width = 180,
             IsEnabled = !_isReadOnly,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 10, 0)
         };
+        EnableDropdownAutoComplete(nameAcb);
         DockPanel.SetDock(nameAcb, Dock.Left);
         header.Children.Add(nameAcb);
 
@@ -1419,28 +2040,32 @@ public partial class ProtoEditorWindow : SimpleWindow
         DockPanel.SetDock(typeLabel, Dock.Left);
         header.Children.Add(typeLabel);
 
-        var typeAcb = new AutoCompleteBox
+        var typeCb = new ComboBox
         {
-            Text = pa.Type,
-            FilterMode = AutoCompleteFilterMode.Contains,
-            ItemsSource = ProtoConstants.FieldSuggestions.TryGetValue("protoaction_type", out var typesList) ? typesList : [],
+            ItemsSource = typeOptions,
+            SelectedItem = !string.IsNullOrWhiteSpace(resolvedType)
+                ? typeOptions.FirstOrDefault(x => x.Equals(resolvedType, StringComparison.OrdinalIgnoreCase))
+                : null,
+            Text = resolvedType,
+            IsEditable = true,
             Width = 150,
             IsEnabled = !_isReadOnly,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 10, 0)
         };
-        DockPanel.SetDock(typeAcb, Dock.Left);
-        header.Children.Add(typeAcb);
+        DockPanel.SetDock(typeCb, Dock.Left);
+        header.Children.Add(typeCb);
 
         var state = new ProtoActionWidgetState
         {
             Container = mainStack,
             NameAcb = nameAcb,
-            TypeAcb = typeAcb,
+            TypeCb = typeCb,
             RofTb = null!,
             MaxRangeTb = null!
         };
         _protoActionWidgets.Add(state);
+        UpdateProtoActionTypeEditor(typeCb, pa.Name);
 
         if (!_isReadOnly)
         {
@@ -1475,21 +2100,70 @@ public partial class ProtoEditorWindow : SimpleWindow
                 if (proceed)
                 {
                     string name = nameAcb.Text?.Trim() ?? "";
-                    if (ProtoConstants.ProtoActionTypes.TryGetValue(name, out string? mappedType) && !string.IsNullOrEmpty(mappedType))
+                    if (TryResolveProtoActionType(name, out string? mappedType) && !string.IsNullOrEmpty(mappedType))
                     {
-                        typeAcb.Text = mappedType;
+                        typeCb.ItemsSource = GetProtoActionTypeOptions(mappedType);
                     }
+                    else
+                    {
+                        typeCb.ItemsSource = GetProtoActionTypeOptions(GetProtoActionTypeEditorValue(typeCb));
+                    }
+
+                    UpdateProtoActionTypeEditor(typeCb, name);
                     MarkDirty();
                 }
             }
         };
 
-        typeAcb.TextChanged += async (s, e) =>
+        typeCb.SelectionChanged += (s, e) =>
         {
-            if (!_isPopulating)
+            var selectedType =
+                e.AddedItems.OfType<string>().FirstOrDefault() ??
+                typeCb.SelectedItem as string;
+
+            if (!string.IsNullOrWhiteSpace(selectedType))
+            {
+                typeCb.Text = selectedType;
+            }
+
+            if (_isPopulating)
+                return;
+
+            _ = Dispatcher.UIThread.InvokeAsync(async () =>
             {
                 var proceed = await CheckStartLocalMod();
-                if (proceed) MarkDirty();
+                if (!proceed)
+                    return;
+
+                var matchedType = GetExactProtoActionTypeMatch(GetProtoActionTypeEditorValue(typeCb));
+                if (!string.IsNullOrWhiteSpace(matchedType))
+                {
+                    typeCb.SelectedItem = matchedType;
+                    typeCb.Text = matchedType;
+                }
+
+                MarkDirty();
+            });
+        };
+
+        typeCb.LostFocus += (s, e) =>
+        {
+            if (typeCb.IsEnabled)
+            {
+                var matchedType = GetExactProtoActionTypeMatch(GetProtoActionTypeEditorValue(typeCb));
+                if (!string.IsNullOrWhiteSpace(matchedType))
+                {
+                    typeCb.SelectedItem = matchedType;
+                    typeCb.Text = matchedType;
+                }
+            }
+        };
+        typeCb.GotFocus += (s, e) =>
+        {
+            if (typeCb.IsEnabled)
+            {
+                typeCb.ItemsSource = GetProtoActionTypeOptions(GetProtoActionTypeEditorValue(typeCb));
+                typeCb.IsDropDownOpen = true;
             }
         };
 
@@ -1818,7 +2492,9 @@ public partial class ProtoEditorWindow : SimpleWindow
             var pa = new ProtoAction
             {
                 Name = pw.NameAcb.Text?.Trim() ?? "",
-                Type = pw.TypeAcb.Text?.Trim() ?? "",
+                Type = TryResolveProtoActionType(pw.NameAcb.Text?.Trim() ?? "", out var resolvedType)
+                    ? resolvedType
+                    : GetExactProtoActionTypeMatch(GetProtoActionTypeEditorValue(pw.TypeCb)),
                 Rof = pw.RofTb.Text?.Trim() ?? "",
                 MaxRange = pw.MaxRangeTb.Text?.Trim() ?? ""
             };
@@ -1898,6 +2574,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             _modFilePath = path;
             _fileLabel.Text = path;
             _isDirty = false;
+            RefreshProtoActionMetadata();
 
             var config = ProtoEditorSettings.LoadSettings();
             config.LastModFilePath = path;
@@ -1948,6 +2625,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                 var (doc, root) = ProtoXmlHandler.CreateNewProtoFile(xmlPath);
                 _modXmlDoc = doc;
                 _modXmlRoot = root;
+                RefreshProtoActionMetadata();
             }
             else if (!TryLoadModFile(xmlPath))
             {

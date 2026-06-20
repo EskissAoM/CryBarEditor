@@ -98,7 +98,11 @@ public static class ProtoDataExtractor
                 if (!string.IsNullOrEmpty(paName))
                 {
                     var paType = paTypeEl?.Value?.Trim() ?? "";
-                    if (!protoactionTypes.ContainsKey(paName))
+                    if (!protoactionTypes.TryGetValue(paName, out var existingType))
+                    {
+                        protoactionTypes[paName] = paType;
+                    }
+                    else if (string.IsNullOrWhiteSpace(existingType) && !string.IsNullOrWhiteSpace(paType))
                     {
                         protoactionTypes[paName] = paType;
                     }
