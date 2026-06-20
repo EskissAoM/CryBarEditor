@@ -73,7 +73,7 @@ public partial class ProtoEditorWindow : SimpleWindow
     {
         public required Panel Container { get; set; }
         public required AutoCompleteBox NameAcb { get; set; }
-        public required ComboBox TypeCb { get; set; }
+        public required AutoCompleteBox TypeAcb { get; set; }
         public required TextBox RofTb { get; set; }
         public required TextBox MaxRangeTb { get; set; }
         public List<DamageRowState> DamageRows { get; } = [];
@@ -458,18 +458,6 @@ public partial class ProtoEditorWindow : SimpleWindow
 
     private string? ResolveBaseGameplayDirectory()
     {
-        var rootDirectory = _mainWindow.RootDirectory;
-        if (Directory.Exists(rootDirectory))
-        {
-            var direct = Path.Combine(rootDirectory, "data", "gameplay");
-            if (Directory.Exists(direct))
-                return direct;
-
-            var nested = Path.Combine(rootDirectory, "game", "data", "gameplay");
-            if (Directory.Exists(nested))
-                return nested;
-        }
-
         var dataBarPath = ResolveDataBarPath();
         if (!string.IsNullOrWhiteSpace(dataBarPath) && File.Exists(dataBarPath))
         {
@@ -480,6 +468,18 @@ public partial class ProtoEditorWindow : SimpleWindow
                 if (Directory.Exists(gameplayDirectory))
                     return gameplayDirectory;
             }
+        }
+
+        var rootDirectory = _mainWindow.RootDirectory;
+        if (Directory.Exists(rootDirectory))
+        {
+            var direct = Path.Combine(rootDirectory, "data", "gameplay");
+            if (Directory.Exists(direct))
+                return direct;
+
+            var nested = Path.Combine(rootDirectory, "game", "data", "gameplay");
+            if (Directory.Exists(nested))
+                return nested;
         }
 
         return null;
@@ -1002,18 +1002,6 @@ public partial class ProtoEditorWindow : SimpleWindow
         return _protoActionTypeSuggestions.FirstOrDefault(x => x.Equals(normalized, StringComparison.OrdinalIgnoreCase)) ?? "";
     }
 
-    private string GetProtoActionTypeEditorValue(ComboBox typeCb)
-    {
-        var selected = typeCb.SelectedItem as string ?? typeCb.SelectedValue as string;
-        if (!string.IsNullOrWhiteSpace(selected))
-            return selected;
-
-        if (typeCb.IsEditable)
-            return typeCb.Text?.Trim() ?? "";
-
-        return "";
-    }
-
     private void EnableDropdownAutoComplete(AutoCompleteBox autoCompleteBox)
     {
         autoCompleteBox.MinimumPrefixLength = 0;
@@ -1067,28 +1055,24 @@ public partial class ProtoEditorWindow : SimpleWindow
         };
     }
 
-    private void UpdateProtoActionTypeEditor(ComboBox typeCb, string actionName)
+    private void UpdateProtoActionTypeEditor(AutoCompleteBox typeAcb, string actionName)
     {
         if (TryResolveProtoActionType(actionName, out var mappedType) && !string.IsNullOrWhiteSpace(mappedType))
         {
-            typeCb.ItemsSource = GetProtoActionTypeOptions(mappedType);
-            typeCb.SelectedItem = mappedType;
-            typeCb.Text = mappedType;
-            typeCb.IsEnabled = false;
-            typeCb.IsDropDownOpen = false;
+            typeAcb.ItemsSource = GetProtoActionTypeOptions(mappedType);
+            typeAcb.Text = mappedType;
+            typeAcb.IsEnabled = false;
+            typeAcb.IsDropDownOpen = false;
             return;
         }
 
-        var currentValue = GetProtoActionTypeEditorValue(typeCb);
+        var currentValue = typeAcb.Text?.Trim() ?? "";
         var exactType = GetExactProtoActionTypeMatch(currentValue);
         if (!string.IsNullOrWhiteSpace(exactType))
-        {
-            typeCb.SelectedItem = exactType;
-            typeCb.Text = exactType;
-        }
+            typeAcb.Text = exactType;
 
-        typeCb.ItemsSource = GetProtoActionTypeOptions(string.IsNullOrWhiteSpace(exactType) ? currentValue : exactType);
-        typeCb.IsEnabled = !_isReadOnly;
+        typeAcb.ItemsSource = GetProtoActionTypeOptions(string.IsNullOrWhiteSpace(exactType) ? currentValue : exactType);
+        typeAcb.IsEnabled = !_isReadOnly;
     }
 
     private void RefreshCurrentUnitProtoActionMetadata(XElement unit)
@@ -2040,32 +2024,30 @@ public partial class ProtoEditorWindow : SimpleWindow
         DockPanel.SetDock(typeLabel, Dock.Left);
         header.Children.Add(typeLabel);
 
-        var typeCb = new ComboBox
+        var typeAcb = new AutoCompleteBox
         {
-            ItemsSource = typeOptions,
-            SelectedItem = !string.IsNullOrWhiteSpace(resolvedType)
-                ? typeOptions.FirstOrDefault(x => x.Equals(resolvedType, StringComparison.OrdinalIgnoreCase))
-                : null,
             Text = resolvedType,
-            IsEditable = true,
+            FilterMode = AutoCompleteFilterMode.Contains,
+            ItemsSource = typeOptions,
             Width = 150,
             IsEnabled = !_isReadOnly,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 10, 0)
         };
-        DockPanel.SetDock(typeCb, Dock.Left);
-        header.Children.Add(typeCb);
+        EnableDropdownAutoComplete(typeAcb);
+        DockPanel.SetDock(typeAcb, Dock.Left);
+        header.Children.Add(typeAcb);
 
         var state = new ProtoActionWidgetState
         {
             Container = mainStack,
             NameAcb = nameAcb,
-            TypeCb = typeCb,
+            TypeAcb = typeAcb,
             RofTb = null!,
             MaxRangeTb = null!
         };
         _protoActionWidgets.Add(state);
-        UpdateProtoActionTypeEditor(typeCb, pa.Name);
+        UpdateProtoActionTypeEditor(typeAcb, pa.Name);
 
         if (!_isReadOnly)
         {
@@ -2102,68 +2084,51 @@ public partial class ProtoEditorWindow : SimpleWindow
                     string name = nameAcb.Text?.Trim() ?? "";
                     if (TryResolveProtoActionType(name, out string? mappedType) && !string.IsNullOrEmpty(mappedType))
                     {
-                        typeCb.ItemsSource = GetProtoActionTypeOptions(mappedType);
+                        typeAcb.ItemsSource = GetProtoActionTypeOptions(mappedType);
                     }
                     else
                     {
-                        typeCb.ItemsSource = GetProtoActionTypeOptions(GetProtoActionTypeEditorValue(typeCb));
+                        typeAcb.ItemsSource = GetProtoActionTypeOptions(typeAcb.Text);
                     }
 
-                    UpdateProtoActionTypeEditor(typeCb, name);
+                    UpdateProtoActionTypeEditor(typeAcb, name);
                     MarkDirty();
                 }
             }
         };
 
-        typeCb.SelectionChanged += (s, e) =>
+        typeAcb.SelectionChanged += async (s, e) =>
         {
-            var selectedType =
-                e.AddedItems.OfType<string>().FirstOrDefault() ??
-                typeCb.SelectedItem as string;
-
-            if (!string.IsNullOrWhiteSpace(selectedType))
-            {
-                typeCb.Text = selectedType;
-            }
-
-            if (_isPopulating)
-                return;
-
-            _ = Dispatcher.UIThread.InvokeAsync(async () =>
+            if (!_isPopulating)
             {
                 var proceed = await CheckStartLocalMod();
-                if (!proceed)
-                    return;
-
-                var matchedType = GetExactProtoActionTypeMatch(GetProtoActionTypeEditorValue(typeCb));
-                if (!string.IsNullOrWhiteSpace(matchedType))
+                if (proceed)
                 {
-                    typeCb.SelectedItem = matchedType;
-                    typeCb.Text = matchedType;
-                }
+                    if (typeAcb.SelectedItem is string selectedType && !string.IsNullOrWhiteSpace(selectedType))
+                        typeAcb.Text = selectedType;
 
-                MarkDirty();
-            });
-        };
-
-        typeCb.LostFocus += (s, e) =>
-        {
-            if (typeCb.IsEnabled)
-            {
-                var matchedType = GetExactProtoActionTypeMatch(GetProtoActionTypeEditorValue(typeCb));
-                if (!string.IsNullOrWhiteSpace(matchedType))
-                {
-                    typeCb.SelectedItem = matchedType;
-                    typeCb.Text = matchedType;
+                    MarkDirty();
                 }
             }
         };
-        typeCb.GotFocus += (s, e) =>
+
+        typeAcb.TextChanged += async (s, e) =>
         {
-            if (typeCb.IsEnabled)
+            if (!_isPopulating)
             {
-                typeCb.ItemsSource = GetProtoActionTypeOptions(GetProtoActionTypeEditorValue(typeCb));
-                typeCb.IsDropDownOpen = true;
+                var proceed = await CheckStartLocalMod();
+                if (proceed)
+                    MarkDirty();
+            }
+        };
+
+        typeAcb.LostFocus += (s, e) =>
+        {
+            if (typeAcb.IsEnabled)
+            {
+                var matchedType = GetExactProtoActionTypeMatch(typeAcb.Text);
+                if (!string.IsNullOrWhiteSpace(matchedType))
+                    typeAcb.Text = matchedType;
             }
         };
 
@@ -2494,7 +2459,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                 Name = pw.NameAcb.Text?.Trim() ?? "",
                 Type = TryResolveProtoActionType(pw.NameAcb.Text?.Trim() ?? "", out var resolvedType)
                     ? resolvedType
-                    : GetExactProtoActionTypeMatch(GetProtoActionTypeEditorValue(pw.TypeCb)),
+                    : GetExactProtoActionTypeMatch(pw.TypeAcb.Text),
                 Rof = pw.RofTb.Text?.Trim() ?? "",
                 MaxRange = pw.MaxRangeTb.Text?.Trim() ?? ""
             };
