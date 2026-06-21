@@ -1381,6 +1381,112 @@ public partial class ProtoEditorWindow : SimpleWindow
                 field.Tag.Equals("tactics", StringComparison.OrdinalIgnoreCase))
                 continue;
 
+            if (field.Tag.Equals("maxhitpoints", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (field.Tag.Equals("initialhitpoints", StringComparison.OrdinalIgnoreCase))
+            {
+                propertiesGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+                var hitPointsRowLabel = new TextBlock
+                {
+                    Text = "Hit Points",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                };
+                Grid.SetColumn(hitPointsRowLabel, 0);
+                Grid.SetRow(hitPointsRowLabel, gridRow);
+                propertiesGrid.Children.Add(hitPointsRowLabel);
+
+                string maxHitPointsInitial = ProtoXmlHandler.GetSimpleField(unit, "maxhitpoints") ?? "";
+                string initialHitPointsStored = ProtoXmlHandler.GetSimpleField(unit, "initialhitpoints") ?? "";
+                string initialHitPointsInitial = !string.IsNullOrWhiteSpace(initialHitPointsStored)
+                    ? initialHitPointsStored
+                    : maxHitPointsInitial;
+
+                bool initialHitPointsLinkedToMax =
+                    string.IsNullOrWhiteSpace(initialHitPointsStored) ||
+                    string.Equals(initialHitPointsStored, maxHitPointsInitial, StringComparison.OrdinalIgnoreCase);
+
+                var hitPointsGrid = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("Auto, 140, Auto, 140")
+                };
+
+                var maxHitPointsLabel = new TextBlock
+                {
+                    Text = "Max Hit Points",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                };
+                Grid.SetColumn(maxHitPointsLabel, 0);
+                hitPointsGrid.Children.Add(maxHitPointsLabel);
+
+                var maxHitPointsTb = new TextBox
+                {
+                    Text = maxHitPointsInitial,
+                    IsEnabled = !_isReadOnly,
+                    Margin = new Thickness(0, 4, 16, 4)
+                };
+                Grid.SetColumn(maxHitPointsTb, 1);
+                hitPointsGrid.Children.Add(maxHitPointsTb);
+
+                var initialHitPointsLabel = new TextBlock
+                {
+                    Text = "Initial Hit Points",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                };
+                Grid.SetColumn(initialHitPointsLabel, 2);
+                hitPointsGrid.Children.Add(initialHitPointsLabel);
+
+                var initialHitPointsTb = new TextBox
+                {
+                    Text = initialHitPointsInitial,
+                    IsEnabled = !_isReadOnly,
+                    Margin = new Thickness(0, 4, 0, 4)
+                };
+                Grid.SetColumn(initialHitPointsTb, 3);
+                hitPointsGrid.Children.Add(initialHitPointsTb);
+
+                maxHitPointsTb.TextChanged += async (s, e) =>
+                {
+                    if (!_isPopulating)
+                    {
+                        if (initialHitPointsLinkedToMax)
+                        {
+                            initialHitPointsTb.Text = maxHitPointsTb.Text;
+                        }
+
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed) MarkDirty();
+                    }
+                };
+
+                initialHitPointsTb.TextChanged += async (s, e) =>
+                {
+                    if (!_isPopulating)
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed) MarkDirty();
+                    }
+                };
+                initialHitPointsTb.GotFocus += (s, e) =>
+                {
+                    if (!_isPopulating)
+                        initialHitPointsLinkedToMax = false;
+                };
+
+                Grid.SetColumn(hitPointsGrid, 1);
+                Grid.SetRow(hitPointsGrid, gridRow);
+                propertiesGrid.Children.Add(hitPointsGrid);
+
+                _fieldControls["maxhitpoints"] = maxHitPointsTb;
+                _fieldControls["initialhitpoints"] = initialHitPointsTb;
+                gridRow++;
+                continue;
+            }
+
             propertiesGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             var label = new TextBlock
@@ -1581,19 +1687,29 @@ public partial class ProtoEditorWindow : SimpleWindow
 
         AddSectionHeader("Costs");
         var costs = ProtoXmlHandler.GetCostEntries(unit).ToDictionary(c => c.ResourceType, c => c.Amount, StringComparer.OrdinalIgnoreCase);
-        var costsGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("180, *") };
-        int costRow = 0;
+        var costsGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto, 100, Auto, 100, Auto, 100, Auto, 100") };
         foreach (var rtype in ProtoConstants.KnownResourceTypes)
         {
-            costsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            int costIndex = Array.IndexOf(ProtoConstants.KnownResourceTypes, rtype);
+            int labelColumn = costIndex * 2;
+            int valueColumn = labelColumn + 1;
 
-            var lbl = new TextBlock { Text = rtype, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
-            Grid.SetColumn(lbl, 0);
-            Grid.SetRow(lbl, costRow);
+            var lbl = new TextBlock
+            {
+                Text = rtype,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 4, 10, 4)
+            };
+            Grid.SetColumn(lbl, labelColumn);
             costsGrid.Children.Add(lbl);
 
             string initialCost = costs.TryGetValue(rtype, out var val) ? val : "0";
-            var tb = new TextBox { Text = initialCost, IsEnabled = !_isReadOnly, Margin = new Thickness(0, 4, 0, 4) };
+            var tb = new TextBox
+            {
+                Text = initialCost,
+                IsEnabled = !_isReadOnly,
+                Margin = new Thickness(0, 4, costIndex < ProtoConstants.KnownResourceTypes.Length - 1 ? 16 : 0, 4)
+            };
             tb.TextChanged += async (s, e) =>
             {
                 if (!_isPopulating)
@@ -1609,30 +1725,37 @@ public partial class ProtoEditorWindow : SimpleWindow
                     }
                 }
             };
-            Grid.SetColumn(tb, 1);
-            Grid.SetRow(tb, costRow);
+            Grid.SetColumn(tb, valueColumn);
             costsGrid.Children.Add(tb);
             _costControls[rtype] = tb;
-
-            costRow++;
         }
         _editorPanel.Children.Add(costsGrid);
 
         AddSectionHeader("Armor");
         var armors = ProtoXmlHandler.GetArmorEntries(unit).ToDictionary(a => a.ArmorType, a => a.Value, StringComparer.OrdinalIgnoreCase);
-        var armorGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("180, *") };
-        int armorRow = 0;
+        var armorGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto, 100, Auto, 100, Auto, 100") };
         foreach (var atype in ProtoConstants.KnownArmorTypes)
         {
-            armorGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            int armorIndex = Array.IndexOf(ProtoConstants.KnownArmorTypes, atype);
+            int labelColumn = armorIndex * 2;
+            int valueColumn = labelColumn + 1;
 
-            var lbl = new TextBlock { Text = atype, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
-            Grid.SetColumn(lbl, 0);
-            Grid.SetRow(lbl, armorRow);
+            var lbl = new TextBlock
+            {
+                Text = atype,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 4, 10, 4)
+            };
+            Grid.SetColumn(lbl, labelColumn);
             armorGrid.Children.Add(lbl);
 
             string initialArmor = armors.TryGetValue(atype, out var val) ? val : "0";
-            var tb = new TextBox { Text = initialArmor, IsEnabled = !_isReadOnly, Margin = new Thickness(0, 4, 0, 4) };
+            var tb = new TextBox
+            {
+                Text = initialArmor,
+                IsEnabled = !_isReadOnly,
+                Margin = new Thickness(0, 4, armorIndex < ProtoConstants.KnownArmorTypes.Length - 1 ? 16 : 0, 4)
+            };
             tb.TextChanged += async (s, e) =>
             {
                 if (!_isPopulating)
@@ -1653,12 +1776,9 @@ public partial class ProtoEditorWindow : SimpleWindow
                     }
                 }
             };
-            Grid.SetColumn(tb, 1);
-            Grid.SetRow(tb, armorRow);
+            Grid.SetColumn(tb, valueColumn);
             armorGrid.Children.Add(tb);
             _armorControls[atype] = tb;
-
-            armorRow++;
         }
         _editorPanel.Children.Add(armorGrid);
 
