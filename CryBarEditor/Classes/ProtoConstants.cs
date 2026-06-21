@@ -26,6 +26,7 @@ public static class ProtoConstants
         new("obstructionradiusz",  "Obstruction Radius Z",  FieldInputMode.Number),
         new("turnrate",            "Turn Rate",             FieldInputMode.Number),
         new("maxvelocity",         "Max Velocity",          FieldInputMode.Number),
+        new("maxrunvelocity",      "Max Run Velocity",      FieldInputMode.Number),
         // Combat / Stats
         new("initialhitpoints",    "Initial Hit Points",    FieldInputMode.Number),
         new("maxhitpoints",        "Max Hit Points",        FieldInputMode.Number),

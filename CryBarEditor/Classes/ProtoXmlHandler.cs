@@ -27,6 +27,12 @@ public sealed class ProtoCommandEntry
     public string MergeMode { get; set; } = "";
 }
 
+public sealed class ProtoBuildLimitEntry
+{
+    public string Value { get; set; } = "";
+    public string Weight { get; set; } = "";
+}
+
 /// <summary>
 /// Static XML CRUD helpers – port of xml_handler.py using LINQ to XML.
 /// </summary>
@@ -186,6 +192,82 @@ public static class ProtoXmlHandler
     public static void SetTechEntries(XElement unit, IEnumerable<ProtoCommandEntry> entries)
         => SetCommandEntries(unit, "tech", entries);
 
+    public static List<string> GetDynamicBuildLimitUnitTypes(XElement unit)
+        => unit.Element("dynamicbuildlimitunittypes")?
+               .Elements("unittype")
+               .Select(e => e.Value?.Trim() ?? "")
+               .Where(v => v.Length > 0)
+               .ToList()
+           ?? [];
+
+    public static void SetDynamicBuildLimitUnitTypes(XElement unit, IEnumerable<string> unitTypes)
+    {
+        unit.Element("dynamicbuildlimitunittypes")?.Remove();
+
+        var values = unitTypes
+            .Select(x => x?.Trim() ?? "")
+            .Where(x => x.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (values.Count == 0)
+            return;
+
+        unit.Add(new XElement("dynamicbuildlimitunittypes",
+            values.Select(x => new XElement("unittype", x))));
+    }
+
+    public static List<ProtoBuildLimitEntry> GetSharedBuildLimitEntries(XElement unit)
+        => unit.Element("sharedbuildlimitunittypes")?
+               .Elements("unittype")
+               .Select(e => new ProtoBuildLimitEntry
+               {
+                   Value = e.Value?.Trim() ?? "",
+                   Weight = (string?)e.Attribute("weight") ?? "",
+               })
+               .Where(x => x.Value.Length > 0)
+               .ToList()
+           ?? [];
+
+    public static void SetSharedBuildLimitEntries(XElement unit, IEnumerable<ProtoBuildLimitEntry> entries)
+    {
+        unit.Element("sharedbuildlimitunit")?.Remove();
+        unit.Element("sharedbuildlimitunittypes")?.Remove();
+
+        var values = entries
+            .Where(x => !string.IsNullOrWhiteSpace(x.Value))
+            .GroupBy(x => x.Value.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
+            {
+                var first = g.First();
+                return new ProtoBuildLimitEntry
+                {
+                    Value = first.Value.Trim(),
+                    Weight = first.Weight?.Trim() ?? "",
+                };
+            })
+            .ToList();
+
+        if (values.Count == 0)
+            return;
+
+        unit.Add(new XElement("sharedbuildlimitunittypes",
+            values.Select(x =>
+            {
+                var el = new XElement("unittype", x.Value);
+                if (!string.IsNullOrWhiteSpace(x.Weight))
+                    el.SetAttributeValue("weight", x.Weight.Trim());
+                return el;
+            })));
+    }
+
+    public static void RemoveBuildLimitModeElements(XElement unit)
+    {
+        unit.Element("dynamicbuildlimitunittypes")?.Remove();
+        unit.Element("sharedbuildlimitunit")?.Remove();
+        unit.Element("sharedbuildlimitunittypes")?.Remove();
+    }
+
     // ─── ProtoActions ─────────────────────────────────────────────────────────
 
     /// <summary>Parse all protoaction elements for the given unit.</summary>
@@ -338,6 +420,9 @@ public static class ProtoXmlHandler
         var armors = new List<XElement>();
         var unitTypes = new List<XElement>();
         var flags = new List<XElement>();
+        XElement? dynamicBuildLimitUnitTypes = null;
+        XElement? sharedBuildLimitUnit = null;
+        XElement? sharedBuildLimitUnitTypes = null;
         var protoActions = new List<XElement>();
         var others = new List<XElement>();
 
@@ -354,6 +439,12 @@ public static class ProtoXmlHandler
                 unitTypes.Add(clone);
             else if (name.Equals("flag", StringComparison.OrdinalIgnoreCase))
                 flags.Add(clone);
+            else if (name.Equals("dynamicbuildlimitunittypes", StringComparison.OrdinalIgnoreCase))
+                dynamicBuildLimitUnitTypes = clone;
+            else if (name.Equals("sharedbuildlimitunit", StringComparison.OrdinalIgnoreCase))
+                sharedBuildLimitUnit = clone;
+            else if (name.Equals("sharedbuildlimitunittypes", StringComparison.OrdinalIgnoreCase))
+                sharedBuildLimitUnitTypes = clone;
             else if (name.Equals("protoaction", StringComparison.OrdinalIgnoreCase))
                 protoActions.Add(clone);
             else if (name.Equals("tactics", StringComparison.OrdinalIgnoreCase))
@@ -374,6 +465,16 @@ public static class ProtoXmlHandler
             var el = simpleFields.FirstOrDefault(x => x.Name.LocalName.Equals(field.Tag, StringComparison.OrdinalIgnoreCase));
             if (el != null)
                 ordered.Add(el);
+
+            if (field.Tag.Equals("buildlimit", StringComparison.OrdinalIgnoreCase))
+            {
+                if (sharedBuildLimitUnit != null)
+                    ordered.Add(sharedBuildLimitUnit);
+                if (dynamicBuildLimitUnitTypes != null)
+                    ordered.Add(dynamicBuildLimitUnitTypes);
+                if (sharedBuildLimitUnitTypes != null)
+                    ordered.Add(sharedBuildLimitUnitTypes);
+            }
         }
 
         ordered.AddRange(costs);

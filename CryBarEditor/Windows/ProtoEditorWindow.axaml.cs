@@ -68,6 +68,15 @@ public partial class ProtoEditorWindow : SimpleWindow
     private readonly List<CommandRowState> _trainCommandRows = [];
     private readonly List<CommandRowState> _techCommandRows = [];
     private readonly List<ProtoActionWidgetState> _protoActionWidgets = [];
+    private readonly List<BuildLimitTargetRowState> _buildLimitRows = [];
+    private BuildLimitMode _currentBuildLimitMode = BuildLimitMode.Standard;
+
+    private enum BuildLimitMode
+    {
+        Standard,
+        Dynamic,
+        Shared,
+    }
 
     private class ProtoActionWidgetState
     {
@@ -101,6 +110,13 @@ public partial class ProtoEditorWindow : SimpleWindow
         public required ComboBox ColumnCb { get; set; }
         public required AutoCompleteBox ValueAcb { get; set; }
         public string MergeMode { get; set; } = "";
+    }
+
+    private class BuildLimitTargetRowState
+    {
+        public required Panel RowPanel { get; set; }
+        public required AutoCompleteBox ValueAcb { get; set; }
+        public TextBox? WeightTb { get; set; }
     }
 
     public ProtoEditorWindow()
@@ -442,6 +458,42 @@ public partial class ProtoEditorWindow : SimpleWindow
         _cachedTechNames = names.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
         return _cachedTechNames;
     }
+
+    private List<string> GetAvailableBuildLimitTargets()
+    {
+        var values = new List<string>();
+        if (_barData != null)
+        {
+            values.AddRange(_barData.UnitTypes);
+            values.AddRange(_barData.UnitNames);
+        }
+
+        values.AddRange(ProtoConstants.KnownUnitTypes);
+
+        if (_modXmlRoot != null)
+            values.AddRange(ProtoXmlHandler.GetUnitNames(_modXmlRoot));
+
+        return values
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static string GetBuildLimitModeLabel(BuildLimitMode mode) => mode switch
+    {
+        BuildLimitMode.Standard => "Standard",
+        BuildLimitMode.Dynamic => "Dynamic",
+        BuildLimitMode.Shared => "Shared Build Limit",
+        _ => "Standard",
+    };
+
+    private static BuildLimitMode ParseBuildLimitMode(string? value) => value switch
+    {
+        "Dynamic" => BuildLimitMode.Dynamic,
+        "Shared Build Limit" => BuildLimitMode.Shared,
+        _ => BuildLimitMode.Standard,
+    };
 
     private string? ResolveBaseGameplayXmlPath(string fileName)
     {
@@ -1298,6 +1350,7 @@ public partial class ProtoEditorWindow : SimpleWindow
         _trainCommandRows.Clear();
         _techCommandRows.Clear();
         _protoActionWidgets.Clear();
+        _buildLimitRows.Clear();
 
         XElement? unit = null;
         if (_modXmlRoot != null)
@@ -1381,8 +1434,96 @@ public partial class ProtoEditorWindow : SimpleWindow
                 field.Tag.Equals("tactics", StringComparison.OrdinalIgnoreCase))
                 continue;
 
+            if (field.Tag.Equals("obstructionradiusz", StringComparison.OrdinalIgnoreCase) ||
+                field.Tag.Equals("maxvelocity", StringComparison.OrdinalIgnoreCase) ||
+                field.Tag.Equals("maxrunvelocity", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             if (field.Tag.Equals("maxhitpoints", StringComparison.OrdinalIgnoreCase))
                 continue;
+
+            if (field.Tag.Equals("obstructionradiusx", StringComparison.OrdinalIgnoreCase))
+            {
+                propertiesGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+                var obstructionLabel = new TextBlock
+                {
+                    Text = "Obstruction Radius",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                };
+                Grid.SetColumn(obstructionLabel, 0);
+                Grid.SetRow(obstructionLabel, gridRow);
+                propertiesGrid.Children.Add(obstructionLabel);
+
+                var obstructionGrid = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("Auto, 140, Auto, 140")
+                };
+
+                var obstructionXLabel = new TextBlock
+                {
+                    Text = "X",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                };
+                Grid.SetColumn(obstructionXLabel, 0);
+                obstructionGrid.Children.Add(obstructionXLabel);
+
+                var obstructionXTb = new TextBox
+                {
+                    Text = ProtoXmlHandler.GetSimpleField(unit, "obstructionradiusx") ?? "",
+                    IsEnabled = !_isReadOnly,
+                    Margin = new Thickness(0, 4, 16, 4)
+                };
+                obstructionXTb.TextChanged += async (s, e) =>
+                {
+                    if (!_isPopulating)
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed) MarkDirty();
+                    }
+                };
+                Grid.SetColumn(obstructionXTb, 1);
+                obstructionGrid.Children.Add(obstructionXTb);
+
+                var obstructionZLabel = new TextBlock
+                {
+                    Text = "Z",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                };
+                Grid.SetColumn(obstructionZLabel, 2);
+                obstructionGrid.Children.Add(obstructionZLabel);
+
+                var obstructionZTb = new TextBox
+                {
+                    Text = ProtoXmlHandler.GetSimpleField(unit, "obstructionradiusz") ?? "",
+                    IsEnabled = !_isReadOnly,
+                    Margin = new Thickness(0, 4, 0, 4)
+                };
+                obstructionZTb.TextChanged += async (s, e) =>
+                {
+                    if (!_isPopulating)
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed) MarkDirty();
+                    }
+                };
+                Grid.SetColumn(obstructionZTb, 3);
+                obstructionGrid.Children.Add(obstructionZTb);
+
+                Grid.SetColumn(obstructionGrid, 1);
+                Grid.SetRow(obstructionGrid, gridRow);
+                propertiesGrid.Children.Add(obstructionGrid);
+
+                _fieldControls["obstructionradiusx"] = obstructionXTb;
+                _fieldControls["obstructionradiusz"] = obstructionZTb;
+                gridRow++;
+                continue;
+            }
 
             if (field.Tag.Equals("initialhitpoints", StringComparison.OrdinalIgnoreCase))
             {
@@ -1483,6 +1624,139 @@ public partial class ProtoEditorWindow : SimpleWindow
 
                 _fieldControls["maxhitpoints"] = maxHitPointsTb;
                 _fieldControls["initialhitpoints"] = initialHitPointsTb;
+                gridRow++;
+                continue;
+            }
+
+            if (field.Tag.Equals("movementtype", StringComparison.OrdinalIgnoreCase))
+            {
+                propertiesGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+                var movementLabel = new TextBlock
+                {
+                    Text = "Movement",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                };
+                Grid.SetColumn(movementLabel, 0);
+                Grid.SetRow(movementLabel, gridRow);
+                propertiesGrid.Children.Add(movementLabel);
+
+                var movementGrid = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("Auto, 140, Auto, 120, Auto, 120")
+                };
+
+                var movementTypeLabel = new TextBlock
+                {
+                    Text = "Type",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                };
+                Grid.SetColumn(movementTypeLabel, 0);
+                movementGrid.Children.Add(movementTypeLabel);
+
+                var movementOptions = ProtoConstants.FieldSuggestions.TryGetValue("movementtype", out var movementList)
+                    ? movementList
+                    : [];
+                string maxVelocityInitial = ProtoXmlHandler.GetSimpleField(unit, "maxvelocity") ?? "";
+                string maxRunVelocityStored = ProtoXmlHandler.GetSimpleField(unit, "maxrunvelocity") ?? "";
+                string maxRunVelocityInitial = !string.IsNullOrWhiteSpace(maxRunVelocityStored)
+                    ? maxRunVelocityStored
+                    : maxVelocityInitial;
+
+                bool maxRunVelocityLinkedToMax =
+                    string.IsNullOrWhiteSpace(maxRunVelocityStored) ||
+                    string.Equals(maxRunVelocityStored, maxVelocityInitial, StringComparison.OrdinalIgnoreCase);
+
+                var movementTypeCb = new ComboBox
+                {
+                    ItemsSource = movementOptions,
+                    SelectedItem = movementOptions.FirstOrDefault(x => x.Equals(ProtoXmlHandler.GetSimpleField(unit, "movementtype") ?? "", StringComparison.OrdinalIgnoreCase)),
+                    IsEnabled = !_isReadOnly,
+                    Margin = new Thickness(0, 4, 16, 4)
+                };
+                movementTypeCb.SelectionChanged += async (s, e) =>
+                {
+                    if (!_isPopulating)
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed) MarkDirty();
+                    }
+                };
+                Grid.SetColumn(movementTypeCb, 1);
+                movementGrid.Children.Add(movementTypeCb);
+
+                var maxVelocityLabel = new TextBlock
+                {
+                    Text = "Max Velocity",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                };
+                Grid.SetColumn(maxVelocityLabel, 2);
+                movementGrid.Children.Add(maxVelocityLabel);
+
+                TextBox? maxRunVelocityTb = null;
+                var maxVelocityTb = new TextBox
+                {
+                    Text = maxVelocityInitial,
+                    IsEnabled = !_isReadOnly,
+                    Margin = new Thickness(0, 4, 16, 4)
+                };
+                maxVelocityTb.TextChanged += async (s, e) =>
+                {
+                    if (!_isPopulating)
+                    {
+                        if (maxRunVelocityLinkedToMax && maxRunVelocityTb != null)
+                        {
+                            maxRunVelocityTb.Text = maxVelocityTb.Text;
+                        }
+
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed) MarkDirty();
+                    }
+                };
+                Grid.SetColumn(maxVelocityTb, 3);
+                movementGrid.Children.Add(maxVelocityTb);
+
+                var maxRunVelocityLabel = new TextBlock
+                {
+                    Text = "Max Run Velocity",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                };
+                Grid.SetColumn(maxRunVelocityLabel, 4);
+                movementGrid.Children.Add(maxRunVelocityLabel);
+
+                maxRunVelocityTb = new TextBox
+                {
+                    Text = maxRunVelocityInitial,
+                    IsEnabled = !_isReadOnly,
+                    Margin = new Thickness(0, 4, 0, 4)
+                };
+                maxRunVelocityTb.TextChanged += async (s, e) =>
+                {
+                    if (!_isPopulating)
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed) MarkDirty();
+                    }
+                };
+                maxRunVelocityTb.GotFocus += (s, e) =>
+                {
+                    if (!_isPopulating)
+                        maxRunVelocityLinkedToMax = false;
+                };
+                Grid.SetColumn(maxRunVelocityTb, 5);
+                movementGrid.Children.Add(maxRunVelocityTb);
+
+                Grid.SetColumn(movementGrid, 1);
+                Grid.SetRow(movementGrid, gridRow);
+                propertiesGrid.Children.Add(movementGrid);
+
+                _fieldControls["movementtype"] = movementTypeCb;
+                _fieldControls["maxvelocity"] = maxVelocityTb;
+                _fieldControls["maxrunvelocity"] = maxRunVelocityTb;
                 gridRow++;
                 continue;
             }
@@ -1606,13 +1880,50 @@ public partial class ProtoEditorWindow : SimpleWindow
         _editorPanel.Children.Add(propertiesGrid);
 
         string? blVal = ProtoXmlHandler.GetSimpleField(unit, "buildlimit");
-        var buildLimitContainer = new StackPanel { Margin = new Thickness(0, 4, 0, 4) };
+        var initialDynamicBuildLimitEntries = ProtoXmlHandler.GetDynamicBuildLimitUnitTypes(unit)
+            .Select(x => new ProtoBuildLimitEntry { Value = x })
+            .ToList();
+        var initialSharedBuildLimitEntries = ProtoXmlHandler.GetSharedBuildLimitEntries(unit);
+        var buildLimitSuggestions = GetAvailableBuildLimitTargets();
+        var buildLimitContainer = new StackPanel { Margin = new Thickness(0, 4, 0, 4), Spacing = 4 };
         _editorPanel.Children.Add(buildLimitContainer);
 
-        void ShowBuildLimit(string initialLimit)
+        BuildLimitMode GetInitialBuildLimitMode()
+        {
+            if (initialSharedBuildLimitEntries.Count > 0)
+                return BuildLimitMode.Shared;
+            if (initialDynamicBuildLimitEntries.Count > 0)
+                return BuildLimitMode.Dynamic;
+            return BuildLimitMode.Standard;
+        }
+
+        List<ProtoBuildLimitEntry> GetInitialBuildLimitEntries(BuildLimitMode mode) => mode switch
+        {
+            BuildLimitMode.Dynamic => initialDynamicBuildLimitEntries
+                .Select(x => new ProtoBuildLimitEntry { Value = x.Value })
+                .ToList(),
+            BuildLimitMode.Shared => initialSharedBuildLimitEntries
+                .Select(x => new ProtoBuildLimitEntry { Value = x.Value, Weight = x.Weight })
+                .ToList(),
+            _ => []
+        };
+
+        List<ProtoBuildLimitEntry> ReadCurrentBuildLimitEntries()
+            => _buildLimitRows
+                .Select(row => new ProtoBuildLimitEntry
+                {
+                    Value = row.ValueAcb.Text?.Trim() ?? "",
+                    Weight = row.WeightTb?.Text?.Trim() ?? "",
+                })
+                .Where(x => !string.IsNullOrWhiteSpace(x.Value) || !string.IsNullOrWhiteSpace(x.Weight))
+                .ToList();
+
+        void ShowBuildLimit(string initialLimit, BuildLimitMode initialMode, IEnumerable<ProtoBuildLimitEntry>? initialEntries = null)
         {
             buildLimitContainer.Children.Clear();
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("180, *, Auto") };
+            _buildLimitRows.Clear();
+            _currentBuildLimitMode = initialMode;
+            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("180, 120, 240, Auto") };
 
             var lbl = new TextBlock { Text = "Build Limit", VerticalAlignment = VerticalAlignment.Center };
             Grid.SetColumn(lbl, 0);
@@ -1638,6 +1949,282 @@ public partial class ProtoEditorWindow : SimpleWindow
             grid.Children.Add(tb);
             _fieldControls["buildlimit"] = tb;
 
+            var modePanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            modePanel.Children.Add(new TextBlock
+            {
+                Text = "Type",
+                VerticalAlignment = VerticalAlignment.Center
+            });
+
+            var modeCb = new ComboBox
+            {
+                ItemsSource = new[]
+                {
+                    GetBuildLimitModeLabel(BuildLimitMode.Standard),
+                    GetBuildLimitModeLabel(BuildLimitMode.Dynamic),
+                    GetBuildLimitModeLabel(BuildLimitMode.Shared)
+                },
+                SelectedItem = GetBuildLimitModeLabel(initialMode),
+                IsEnabled = !_isReadOnly,
+                Width = 180
+            };
+            modePanel.Children.Add(modeCb);
+            Grid.SetColumn(modePanel, 2);
+            grid.Children.Add(modePanel);
+
+            var detailsContainer = new StackPanel { Spacing = 4, Margin = new Thickness(180, 0, 0, 0) };
+
+            void AddBuildLimitTargetRow(BuildLimitMode mode, ProtoBuildLimitEntry? entry = null)
+            {
+                var rowPanel = new Grid
+                {
+                    ColumnDefinitions = mode == BuildLimitMode.Shared
+                        ? new ColumnDefinitions("*, 120, Auto")
+                        : new ColumnDefinitions("*, Auto"),
+                    Margin = new Thickness(0, 2, 0, 2)
+                };
+
+                var valueAcb = new AutoCompleteBox
+                {
+                    Text = entry?.Value ?? "",
+                    PlaceholderText = mode == BuildLimitMode.Dynamic ? "Unit Type or Proto Unit" : "Shared Unit Type or Proto Unit",
+                    FilterMode = AutoCompleteFilterMode.Contains,
+                    ItemsSource = buildLimitSuggestions,
+                    IsEnabled = !_isReadOnly,
+                    Margin = new Thickness(0, 0, 8, 0)
+                };
+                string? selectedBuildLimitTarget = entry?.Value;
+                EnableDropdownAutoComplete(valueAcb);
+                valueAcb.TextChanged += async (s, e) =>
+                {
+                    if (!_isPopulating)
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed) MarkDirty();
+                    }
+                };
+                valueAcb.SelectionChanged += (s, e) =>
+                {
+                    if (valueAcb.SelectedItem is string sel)
+                    {
+                        selectedBuildLimitTarget = sel;
+                        valueAcb.Text = sel;
+                    }
+                };
+                valueAcb.LostFocus += (s, e) =>
+                {
+                    if (_isPopulating)
+                        return;
+
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        if (_isPopulating)
+                            return;
+
+                        var input = valueAcb.Text?.Trim() ?? "";
+                        if (string.IsNullOrWhiteSpace(input))
+                            return;
+
+                        var match = buildLimitSuggestions.FirstOrDefault(x => x.Equals(input, StringComparison.OrdinalIgnoreCase));
+                        if (string.IsNullOrWhiteSpace(match) && !string.IsNullOrWhiteSpace(selectedBuildLimitTarget))
+                        {
+                            match = buildLimitSuggestions.FirstOrDefault(x => x.Equals(selectedBuildLimitTarget, StringComparison.OrdinalIgnoreCase));
+                        }
+
+                        valueAcb.Text = match ?? "";
+                        selectedBuildLimitTarget = match;
+                    }, DispatcherPriority.Background);
+                };
+                Grid.SetColumn(valueAcb, 0);
+                rowPanel.Children.Add(valueAcb);
+
+                TextBox? weightTb = null;
+                if (mode == BuildLimitMode.Shared)
+                {
+                    weightTb = new TextBox
+                    {
+                        Text = string.IsNullOrWhiteSpace(entry?.Weight) ? "1" : entry!.Weight,
+                        PlaceholderText = "Weight",
+                        IsEnabled = !_isReadOnly,
+                        Margin = new Thickness(0, 0, 8, 0)
+                    };
+                    weightTb.AddHandler(InputElement.TextInputEvent, (sender, args) =>
+                    {
+                        var currentText = weightTb.Text ?? "";
+                        var proposedText = currentText + args.Text;
+                        if (!double.TryParse(proposedText, out _) &&
+                            !string.Equals(proposedText, ".", StringComparison.Ordinal))
+                        {
+                            args.Handled = true;
+                        }
+                    }, RoutingStrategies.Tunnel);
+                    weightTb.TextChanged += async (s, e) =>
+                    {
+                        if (!_isPopulating)
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                            {
+                                var text = weightTb.Text ?? "";
+                                if (!string.IsNullOrWhiteSpace(text) &&
+                                    (!double.TryParse(text, out double weight) || weight < 0))
+                                {
+                                    var filtered = new string(text
+                                        .Where(ch => char.IsDigit(ch) || ch == '.')
+                                        .ToArray());
+
+                                    var dotIndex = filtered.IndexOf('.');
+                                    if (dotIndex >= 0)
+                                    {
+                                        filtered = filtered[..(dotIndex + 1)] + filtered[(dotIndex + 1)..].Replace(".", "", StringComparison.Ordinal);
+                                    }
+
+                                    if (filtered.Length == 0)
+                                        filtered = "0";
+
+                                    if (double.TryParse(filtered, out var filteredWeight) && filteredWeight < 0)
+                                        filtered = "0";
+
+                                    if (!string.Equals(weightTb.Text, filtered, StringComparison.Ordinal))
+                                        weightTb.Text = filtered;
+                                }
+
+                                MarkDirty();
+                            }
+                        }
+                    };
+                    Grid.SetColumn(weightTb, 1);
+                    rowPanel.Children.Add(weightTb);
+                }
+
+                var rowState = new BuildLimitTargetRowState
+                {
+                    RowPanel = rowPanel,
+                    ValueAcb = valueAcb,
+                    WeightTb = weightTb
+                };
+                _buildLimitRows.Add(rowState);
+
+                if (!_isReadOnly)
+                {
+                    var btnDelRow = new Button
+                    {
+                        Content = "X",
+                        Background = Brush.Parse("#8b0000"),
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+                    btnDelRow.Click += async (s, e) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            _buildLimitRows.Remove(rowState);
+                            detailsContainer.Children.Remove(rowPanel);
+                            MarkDirty();
+                        }
+                    };
+                    Grid.SetColumn(btnDelRow, mode == BuildLimitMode.Shared ? 2 : 1);
+                    rowPanel.Children.Add(btnDelRow);
+                }
+
+                if (!_isReadOnly &&
+                    detailsContainer.Children.Count > 0 &&
+                    detailsContainer.Children[^1] is Button)
+                {
+                    detailsContainer.Children.Insert(detailsContainer.Children.Count - 1, rowPanel);
+                }
+                else
+                {
+                    detailsContainer.Children.Add(rowPanel);
+                }
+            }
+
+            void RenderBuildLimitModeDetails(BuildLimitMode mode, IEnumerable<ProtoBuildLimitEntry>? seedEntries = null)
+            {
+                _currentBuildLimitMode = mode;
+                _buildLimitRows.Clear();
+                detailsContainer.Children.Clear();
+
+                if (mode == BuildLimitMode.Standard)
+                    return;
+
+                var headerGrid = new Grid
+                {
+                    ColumnDefinitions = mode == BuildLimitMode.Shared
+                        ? new ColumnDefinitions("*, 120, Auto")
+                        : new ColumnDefinitions("*, Auto"),
+                    Margin = new Thickness(0, 0, 0, 2)
+                };
+
+                var valueHeader = new TextBlock
+                {
+                    Text = "Unit Type / Proto Unit",
+                    FontWeight = FontWeight.Bold,
+                    Margin = new Thickness(0, 0, 8, 0)
+                };
+                Grid.SetColumn(valueHeader, 0);
+                headerGrid.Children.Add(valueHeader);
+
+                if (mode == BuildLimitMode.Shared)
+                {
+                    var weightHeader = new TextBlock
+                    {
+                        Text = "Weight",
+                        FontWeight = FontWeight.Bold,
+                        Margin = new Thickness(0, 0, 8, 0)
+                    };
+                    Grid.SetColumn(weightHeader, 1);
+                    headerGrid.Children.Add(weightHeader);
+                }
+
+                detailsContainer.Children.Add(headerGrid);
+
+                foreach (var entry in seedEntries ?? [])
+                    AddBuildLimitTargetRow(mode, entry);
+
+                if (!_isReadOnly)
+                {
+                    var btnAddTarget = new Button
+                    {
+                        Content = mode == BuildLimitMode.Dynamic ? "+ Add Dynamic Type" : "+ Add Shared Type",
+                        Background = Brush.Parse("#2b7a0b"),
+                        Margin = new Thickness(0, 4, 0, 4),
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
+                    btnAddTarget.Click += async (s, e) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            AddBuildLimitTargetRow(mode);
+                            MarkDirty();
+                        }
+                    };
+                    detailsContainer.Children.Add(btnAddTarget);
+                }
+            }
+
+            modeCb.SelectionChanged += async (s, e) =>
+            {
+                if (_isPopulating)
+                    return;
+
+                var proceed = await CheckStartLocalMod();
+                if (!proceed)
+                    return;
+
+                var seedEntries = ReadCurrentBuildLimitEntries();
+                var selectedMode = ParseBuildLimitMode(modeCb.SelectedItem as string);
+                RenderBuildLimitModeDetails(selectedMode, seedEntries);
+                MarkDirty();
+            };
+
             if (!_isReadOnly)
             {
                 var btnDel = new Button { Content = "✕", Background = Brush.Parse("#8b0000"), VerticalAlignment = VerticalAlignment.Center };
@@ -1651,15 +2238,20 @@ public partial class ProtoEditorWindow : SimpleWindow
                         ShowAddBuildLimitButton();
                     }
                 };
-                Grid.SetColumn(btnDel, 2);
+                Grid.SetColumn(btnDel, 3);
                 grid.Children.Add(btnDel);
             }
             buildLimitContainer.Children.Add(grid);
+            buildLimitContainer.Children.Add(detailsContainer);
+            RenderBuildLimitModeDetails(initialMode, initialEntries);
         }
 
         void ShowAddBuildLimitButton()
         {
             buildLimitContainer.Children.Clear();
+            _fieldControls.Remove("buildlimit");
+            _buildLimitRows.Clear();
+            _currentBuildLimitMode = BuildLimitMode.Standard;
             if (!_isReadOnly)
             {
                 var btnAdd = new Button { Content = "+ Add a Build Limit", Background = Brush.Parse("#2b7a0b"), Margin = new Thickness(0, 4, 0, 4) };
@@ -1669,16 +2261,21 @@ public partial class ProtoEditorWindow : SimpleWindow
                     if (proceed)
                     {
                         MarkDirty();
-                        ShowBuildLimit("1");
+                        ShowBuildLimit("1", BuildLimitMode.Standard);
                     }
                 };
                 buildLimitContainer.Children.Add(btnAdd);
             }
         }
 
-        if (!string.IsNullOrEmpty(blVal))
+        var initialBuildLimitMode = GetInitialBuildLimitMode();
+        bool hasBuildLimitData = !string.IsNullOrWhiteSpace(blVal)
+            || initialDynamicBuildLimitEntries.Count > 0
+            || initialSharedBuildLimitEntries.Count > 0;
+
+        if (hasBuildLimitData)
         {
-            ShowBuildLimit(blVal);
+            ShowBuildLimit(blVal ?? "1", initialBuildLimitMode, GetInitialBuildLimitEntries(initialBuildLimitMode));
         }
         else
         {
@@ -2527,13 +3124,68 @@ public partial class ProtoEditorWindow : SimpleWindow
         {
             string val = blTb.Text?.Trim() ?? "";
             if (!string.IsNullOrEmpty(val))
+            {
                 ProtoXmlHandler.SetSimpleField(unit, "buildlimit", val);
+                var validBuildLimitTargets = GetAvailableBuildLimitTargets();
+                var normalizedBuildLimitEntries = _buildLimitRows
+                    .Select(row =>
+                    {
+                        var input = row.ValueAcb.Text?.Trim() ?? "";
+                        var value = validBuildLimitTargets.FirstOrDefault(x => x.Equals(input, StringComparison.OrdinalIgnoreCase)) ?? "";
+                        var weight = row.WeightTb?.Text?.Trim() ?? "";
+                        if (row.WeightTb != null)
+                        {
+                            if (string.IsNullOrWhiteSpace(weight))
+                            {
+                                weight = "1";
+                            }
+                            else if (double.TryParse(weight, out double parsedWeight) && parsedWeight < 0)
+                            {
+                                weight = "0";
+                            }
+                        }
+
+                        return new ProtoBuildLimitEntry
+                        {
+                            Value = value,
+                            Weight = weight
+                        };
+                    })
+                    .Where(x => !string.IsNullOrWhiteSpace(x.Value))
+                    .GroupBy(x => x.Value, StringComparer.OrdinalIgnoreCase)
+                    .Select(g => g.First())
+                    .ToList();
+
+                switch (_currentBuildLimitMode)
+                {
+                    case BuildLimitMode.Dynamic:
+                        ProtoXmlHandler.SetDynamicBuildLimitUnitTypes(unit, normalizedBuildLimitEntries.Select(x => x.Value));
+                        ProtoXmlHandler.SetSharedBuildLimitEntries(unit, []);
+                        _currentFlags?.Remove("UseSharedBuildLimit");
+                        break;
+                    case BuildLimitMode.Shared:
+                        ProtoXmlHandler.SetDynamicBuildLimitUnitTypes(unit, []);
+                        ProtoXmlHandler.SetSharedBuildLimitEntries(unit, normalizedBuildLimitEntries);
+                        _currentFlags?.Add("UseSharedBuildLimit");
+                        break;
+                    default:
+                        ProtoXmlHandler.RemoveBuildLimitModeElements(unit);
+                        _currentFlags?.Remove("UseSharedBuildLimit");
+                        break;
+                }
+            }
             else
+            {
                 ProtoXmlHandler.RemoveSimpleField(unit, "buildlimit");
+                ProtoXmlHandler.RemoveBuildLimitModeElements(unit);
+                _currentFlags?.Remove("UseSharedBuildLimit");
+            }
         }
         else
         {
             ProtoXmlHandler.RemoveSimpleField(unit, "buildlimit");
+            ProtoXmlHandler.RemoveBuildLimitModeElements(unit);
+            _currentFlags?.Remove("UseSharedBuildLimit");
         }
 
         var costs = new List<(string ResourceType, string Amount)>();
@@ -3075,6 +3727,8 @@ public partial class ProtoEditorWindow : SimpleWindow
             _isDirty = false;
             _fileLabel.Text = _modFilePath;
             _statusMessage.Text = "Saved successfully.";
+            if (!string.IsNullOrWhiteSpace(_currentUnitName))
+                BuildEditorPanel(_currentUnitName);
             _ = Task.Delay(2000).ContinueWith(_ => Dispatcher.UIThread.Post(() => _statusMessage.Text = ""));
         }
         catch (Exception ex)
@@ -3125,6 +3779,8 @@ public partial class ProtoEditorWindow : SimpleWindow
                 ProtoEditorSettings.SaveSettings(config);
 
                 RefreshUnitList();
+                if (!string.IsNullOrWhiteSpace(_currentUnitName))
+                    BuildEditorPanel(_currentUnitName);
             }
             catch (Exception ex)
             {
