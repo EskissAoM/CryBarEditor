@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
 
@@ -33,19 +36,42 @@ public sealed class ProtoBuildLimitEntry
     public string Weight { get; set; } = "";
 }
 
+public sealed class ProtoCultureFieldEntry
+{
+    public string Culture { get; set; } = "";
+    public string Value { get; set; } = "";
+}
+
 /// <summary>
 /// Static XML CRUD helpers – port of xml_handler.py using LINQ to XML.
 /// </summary>
 public static class ProtoXmlHandler
 {
+    private sealed class Utf8StringWriter : StringWriter
+    {
+        public override Encoding Encoding => new UTF8Encoding(false);
+    }
+
     // ─── Load / Save ──────────────────────────────────────────────────────────
 
     /// <summary>Parse a proto XML file from disk.</summary>
     public static (XDocument Doc, XElement Root) ParseProtoXml(string path)
     {
-        var doc  = XDocument.Load(path, LoadOptions.PreserveWhitespace);
-        var root = doc.Root ?? throw new InvalidOperationException("Empty XML document.");
-        return (doc, root);
+        try
+        {
+            var doc = XDocument.Load(path, LoadOptions.PreserveWhitespace);
+            var root = doc.Root ?? throw new InvalidOperationException("Empty XML document.");
+            return (doc, root);
+        }
+        catch (XmlException)
+        {
+            var xml = File.ReadAllText(path, Encoding.UTF8);
+            var doc = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
+            if (doc.Declaration != null)
+                doc.Declaration.Encoding = "utf-8";
+            var root = doc.Root ?? throw new InvalidOperationException("Empty XML document.");
+            return (doc, root);
+        }
     }
 
     /// <summary>Parse a proto XML string (from BAR / cache).</summary>
@@ -60,6 +86,7 @@ public static class ProtoXmlHandler
     public static void SaveProtoXml(XDocument doc, string path)
     {
         NormalizeProtoDocument(doc);
+        doc.Declaration = null;
 
         var settings = new XmlWriterSettings
         {
@@ -67,17 +94,23 @@ public static class ProtoXmlHandler
             IndentChars = "  ",
             NewLineChars = "\n",
             NewLineHandling = NewLineHandling.Replace,
-            OmitXmlDeclaration = false,
+            OmitXmlDeclaration = true,
+            Encoding = new UTF8Encoding(false),
         };
-        using var writer = XmlWriter.Create(path, settings);
-        doc.Save(writer);
+        using var stringWriter = new Utf8StringWriter();
+        using (var writer = XmlWriter.Create(stringWriter, settings))
+            doc.Save(writer);
+
+        var xml = stringWriter.ToString();
+        xml = Regex.Replace(xml, @"<(armor|directionalarmor)([^>]*)\s*/>", "<$1$2></$1>");
+        File.WriteAllText(path, xml, new UTF8Encoding(false));
     }
 
     /// <summary>Create a new proto_mods XML file with a minimal skeleton.</summary>
     public static (XDocument Doc, XElement Root) CreateNewProtoFile(string path)
     {
         var root = new XElement("protomods");
-        var doc  = new XDocument(new XDeclaration("1.0", "UTF-8", null), root);
+        var doc  = new XDocument(root);
         SaveProtoXml(doc, path);
         return (doc, root);
     }
@@ -116,7 +149,30 @@ public static class ProtoXmlHandler
 
     /// <summary>Remove a direct child element entirely.</summary>
     public static void RemoveSimpleField(XElement unit, string tag)
-        => unit.Element(tag)?.Remove();
+        => unit.Elements(tag).Remove();
+
+    public static List<ProtoCultureFieldEntry> GetCultureAwareSimpleFields(XElement unit, string tag)
+        => unit.Elements(tag)
+               .Select(e => new ProtoCultureFieldEntry
+               {
+                   Culture = (string?)e.Attribute("culture") ?? "",
+                   Value = e.Value?.Trim() ?? "",
+               })
+               .Where(x => !string.IsNullOrWhiteSpace(x.Value))
+               .ToList();
+
+    public static void SetCultureAwareSimpleFields(XElement unit, string tag, IEnumerable<ProtoCultureFieldEntry> entries)
+    {
+        unit.Elements(tag).Remove();
+
+        foreach (var entry in entries.Where(x => !string.IsNullOrWhiteSpace(x.Value)))
+        {
+            var element = new XElement(tag, entry.Value.Trim());
+            if (!string.IsNullOrWhiteSpace(entry.Culture))
+                element.SetAttributeValue("culture", entry.Culture.Trim());
+            unit.Add(element);
+        }
+    }
 
     // ─── Costs ───────────────────────────────────────────────────────────────
 
@@ -191,6 +247,38 @@ public static class ProtoXmlHandler
 
     public static void SetTechEntries(XElement unit, IEnumerable<ProtoCommandEntry> entries)
         => SetCommandEntries(unit, "tech", entries);
+
+    public static List<ProtoCommandEntry> GetCommandEntries(XElement unit)
+        => GetCommandEntries(unit, "command");
+
+    public static void SetCommandEntries(XElement unit, IEnumerable<ProtoCommandEntry> entries)
+        => SetCommandEntries(unit, "command", entries);
+
+    public static List<ProtoCommandEntry> GetOptionalCommandEntries(XElement unit)
+        => GetCommandEntries(unit, "optionalcommand");
+
+    public static void SetOptionalCommandEntries(XElement unit, IEnumerable<ProtoCommandEntry> entries)
+        => SetCommandEntries(unit, "optionalcommand", entries);
+
+    public static List<string> GetContainList(XElement unit)
+        => unit.Elements("contain").Select(e => e.Value?.Trim() ?? "").Where(v => v.Length > 0).ToList();
+
+    public static void SetContainList(XElement unit, IEnumerable<string> values)
+    {
+        unit.Elements("contain").Remove();
+        foreach (var value in values.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase))
+            unit.Add(new XElement("contain", value.Trim()));
+    }
+
+    public static List<string> GetNotContainList(XElement unit)
+        => unit.Elements("notcontain").Select(e => e.Value?.Trim() ?? "").Where(v => v.Length > 0).ToList();
+
+    public static void SetNotContainList(XElement unit, IEnumerable<string> values)
+    {
+        unit.Elements("notcontain").Remove();
+        foreach (var value in values.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase))
+            unit.Add(new XElement("notcontain", value.Trim()));
+    }
 
     public static List<string> GetDynamicBuildLimitUnitTypes(XElement unit)
         => unit.Element("dynamicbuildlimitunittypes")?
@@ -415,14 +503,27 @@ public static class ProtoXmlHandler
             StringComparer.OrdinalIgnoreCase);
 
         var simpleFields = new List<XElement>();
+        XElement? unitRegen = null;
+        XElement? directionalArmor = null;
+        XElement? initialShieldPoints = null;
+        XElement? maxShieldPoints = null;
+        XElement? unitShieldRegen = null;
         XElement? tactics = null;
         var costs = new List<XElement>();
+        var resourceConversions = new List<XElement>();
         var armors = new List<XElement>();
         var unitTypes = new List<XElement>();
         var flags = new List<XElement>();
+        var contains = new List<XElement>();
+        var notContains = new List<XElement>();
         XElement? dynamicBuildLimitUnitTypes = null;
         XElement? sharedBuildLimitUnit = null;
         XElement? sharedBuildLimitUnitTypes = null;
+        var trains = new List<XElement>();
+        var techs = new List<XElement>();
+        var commands = new List<XElement>();
+        var optionalCommands = new List<XElement>();
+        XElement? transformCommand = null;
         var protoActions = new List<XElement>();
         var others = new List<XElement>();
 
@@ -439,16 +540,42 @@ public static class ProtoXmlHandler
                 unitTypes.Add(clone);
             else if (name.Equals("flag", StringComparison.OrdinalIgnoreCase))
                 flags.Add(clone);
+            else if (name.Equals("contain", StringComparison.OrdinalIgnoreCase))
+                contains.Add(clone);
+            else if (name.Equals("notcontain", StringComparison.OrdinalIgnoreCase))
+                notContains.Add(clone);
             else if (name.Equals("dynamicbuildlimitunittypes", StringComparison.OrdinalIgnoreCase))
                 dynamicBuildLimitUnitTypes = clone;
             else if (name.Equals("sharedbuildlimitunit", StringComparison.OrdinalIgnoreCase))
                 sharedBuildLimitUnit = clone;
             else if (name.Equals("sharedbuildlimitunittypes", StringComparison.OrdinalIgnoreCase))
                 sharedBuildLimitUnitTypes = clone;
+            else if (name.Equals("train", StringComparison.OrdinalIgnoreCase))
+                trains.Add(clone);
+            else if (name.Equals("tech", StringComparison.OrdinalIgnoreCase))
+                techs.Add(clone);
+            else if (name.Equals("command", StringComparison.OrdinalIgnoreCase))
+                commands.Add(clone);
+            else if (name.Equals("optionalcommand", StringComparison.OrdinalIgnoreCase))
+                optionalCommands.Add(clone);
+            else if (name.Equals("transformcommand", StringComparison.OrdinalIgnoreCase))
+                transformCommand = clone;
             else if (name.Equals("protoaction", StringComparison.OrdinalIgnoreCase))
                 protoActions.Add(clone);
             else if (name.Equals("tactics", StringComparison.OrdinalIgnoreCase))
                 tactics = clone;
+            else if (name.Equals("unitregen", StringComparison.OrdinalIgnoreCase))
+                unitRegen = clone;
+            else if (name.Equals("directionalarmor", StringComparison.OrdinalIgnoreCase))
+                directionalArmor = clone;
+            else if (name.Equals("resourceconversion", StringComparison.OrdinalIgnoreCase))
+                resourceConversions.Add(clone);
+            else if (name.Equals("initialshieldpoints", StringComparison.OrdinalIgnoreCase))
+                initialShieldPoints = clone;
+            else if (name.Equals("maxshieldpoints", StringComparison.OrdinalIgnoreCase))
+                maxShieldPoints = clone;
+            else if (name.Equals("unitshieldregen", StringComparison.OrdinalIgnoreCase))
+                unitShieldRegen = clone;
             else if (knownSimpleTags.Contains(name))
                 simpleFields.Add(clone);
             else
@@ -462,9 +589,19 @@ public static class ProtoXmlHandler
             if (field.Tag.Equals("tactics", StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            var el = simpleFields.FirstOrDefault(x => x.Name.LocalName.Equals(field.Tag, StringComparison.OrdinalIgnoreCase));
-            if (el != null)
-                ordered.Add(el);
+            ordered.AddRange(simpleFields.Where(x => x.Name.LocalName.Equals(field.Tag, StringComparison.OrdinalIgnoreCase)));
+
+            if (field.Tag.Equals("maxhitpoints", StringComparison.OrdinalIgnoreCase))
+            {
+                if (unitRegen != null)
+                    ordered.Add(unitRegen);
+                if (maxShieldPoints != null)
+                    ordered.Add(maxShieldPoints);
+                if (initialShieldPoints != null)
+                    ordered.Add(initialShieldPoints);
+                if (unitShieldRegen != null)
+                    ordered.Add(unitShieldRegen);
+            }
 
             if (field.Tag.Equals("buildlimit", StringComparison.OrdinalIgnoreCase))
             {
@@ -478,9 +615,20 @@ public static class ProtoXmlHandler
         }
 
         ordered.AddRange(costs);
+        ordered.AddRange(resourceConversions);
+        if (directionalArmor != null)
+            ordered.Add(directionalArmor);
         ordered.AddRange(armors);
         ordered.AddRange(unitTypes);
         ordered.AddRange(flags);
+        ordered.AddRange(contains);
+        ordered.AddRange(notContains);
+        ordered.AddRange(trains);
+        ordered.AddRange(techs);
+        ordered.AddRange(commands);
+        ordered.AddRange(optionalCommands);
+        if (transformCommand != null)
+            ordered.Add(transformCommand);
         ordered.AddRange(others);
 
         if (tactics != null)

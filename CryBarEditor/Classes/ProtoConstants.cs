@@ -32,6 +32,7 @@ public static class ProtoConstants
         new("maxhitpoints",        "Max Hit Points",        FieldInputMode.Number),
         new("trainpoints",         "Train Points",          FieldInputMode.Number),
         new("weightclass",         "Weight Class",          FieldInputMode.Number),
+        new("maxcontained",        "Max Contained",         FieldInputMode.Number),
         new("populationcount",     "Population Count",      FieldInputMode.Number),
         new("buildlimit",          "Build Limit",           FieldInputMode.Number),
         new("los",                 "Line of Sight",         FieldInputMode.Number),
