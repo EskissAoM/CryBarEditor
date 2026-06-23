@@ -46,6 +46,10 @@ public partial class ProtoEditorWindow : SimpleWindow
         ("aztec", "Aztec"),
     ];
     private static readonly string[] KnownInitialUnitAiStances = ["Aggressive", "Defensive", "StandGround", "Passive"];
+    private static readonly string[] KnownInitialShadingTypes = ["bronze", "stone", "frost", "burning", "gold", "clay", "sand", "cocoon", "undead", "blood"];
+    private static readonly string[] KnownReplacementTypes = ["dead", "killed", "birth", "build", "hit", "hitGround", "revertToSocket", "hitWater", "selfDestruct"];
+    private static readonly string[] KnownSpawnTypes = ["dead", "killed", "birth", "build", "mutate", "hit", "hitGround", "revertToSocket", "hitWater", "selfDestruct"];
+    private static readonly string[] KnownVeterancyRankTypes = ["NumKills", "NumAttacks", "TotalDamage", "DamageAndResourcesEaten"];
     private const string ProtoUnitNameFieldKey = "__proto_unit_name";
 
     private readonly MainWindow _mainWindow;
@@ -75,12 +79,18 @@ public partial class ProtoEditorWindow : SimpleWindow
     private HashSet<string>? _currentSharedSelectionUnitTypes;
     private HashSet<string>? _currentRechargeIncludeTypes;
     private HashSet<string>? _currentRechargeExcludeTypes;
+    private HashSet<string>? _currentVeterancyIncludeTypes;
+    private HashSet<string>? _currentVeterancyExcludeTypes;
+    private HashSet<string>? _currentRespawnTrainTypes;
+    private HashSet<string>? _currentRespawnTrainExcludeTypes;
     private List<string>? _cachedTechNames;
     private List<string>? _cachedCommandNames;
     private List<string>? _cachedResourceSubtypeNames;
     private List<string>? _cachedPlacementFileNames;
     private List<string>? _cachedPathabilityFlags;
     private List<string>? _cachedHotkeyContexts;
+    private List<string>? _cachedBloodGroupNames;
+    private List<string>? _cachedMinimapIcons;
     private readonly Dictionary<string, string> _protoActionTypeMap = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _globalTacticsActionTypeMap = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _currentUnitProtoActionTypeMap = new(StringComparer.OrdinalIgnoreCase);
@@ -96,6 +106,10 @@ public partial class ProtoEditorWindow : SimpleWindow
     private readonly List<ProtoActionWidgetState> _protoActionWidgets = [];
     private readonly List<BuildLimitTargetRowState> _buildLimitRows = [];
     private readonly List<ResourceConversionRowState> _resourceConversionRows = [];
+    private readonly List<DependentUnitRowState> _dependentUnitRows = [];
+    private readonly List<SpawnRowState> _spawnRows = [];
+    private readonly List<VeterancyRankRowState> _veterancyRankRows = [];
+    private readonly List<VeterancyBonusRowState> _veterancyBonusRows = [];
     private BuildLimitMode _currentBuildLimitMode = BuildLimitMode.Standard;
 
     private enum BuildLimitMode
@@ -158,6 +172,46 @@ public partial class ProtoEditorWindow : SimpleWindow
         public required Panel RowPanel { get; set; }
         public required ComboBox FromResourceCb { get; set; }
         public required ComboBox ToResourceCb { get; set; }
+        public required TextBox ValueTb { get; set; }
+    }
+
+    private class DependentUnitRowState
+    {
+        public required Panel RowPanel { get; set; }
+        public required AutoCompleteBox ValueAcb { get; set; }
+        public required TextBox XTb { get; set; }
+        public required TextBox ZTb { get; set; }
+        public required TextBox AttachBoneTb { get; set; }
+    }
+
+    private class SpawnRowState
+    {
+        public required Panel RowPanel { get; set; }
+        public required AutoCompleteBox ValueAcb { get; set; }
+        public required AutoCompleteBox TypeAcb { get; set; }
+        public required TextBox CountTb { get; set; }
+        public required TextBox LifespanTb { get; set; }
+        public required TextBox ChanceTb { get; set; }
+        public required TextBox DelayTb { get; set; }
+        public required CheckBox SkipPlacementCheckCb { get; set; }
+        public required CheckBox ControlGroupCb { get; set; }
+        public required CheckBox SetOwnerCb { get; set; }
+        public required AutoCompleteBox WaterProtoUnitAcb { get; set; }
+        public required AutoCompleteBox ShadingTypeAcb { get; set; }
+    }
+
+    private class VeterancyRankRowState
+    {
+        public required Panel RowPanel { get; set; }
+        public required ComboBox TypeCb { get; set; }
+        public required TextBox ValueTb { get; set; }
+    }
+
+    private class VeterancyBonusRowState
+    {
+        public required Panel RowPanel { get; set; }
+        public required TextBox RankIdTb { get; set; }
+        public required TextBox ModifyTypeTb { get; set; }
         public required TextBox ValueTb { get; set; }
     }
 
@@ -454,7 +508,7 @@ public partial class ProtoEditorWindow : SimpleWindow
         "rechargetime",
         "auxrechargetime",
         "resourcesubtype",
-        "minimapicon",
+        "minimapvisuals",
         "resourcepriority",
         "hotkeycontext",
         "allyhotkeycontext",
@@ -469,10 +523,11 @@ public partial class ProtoEditorWindow : SimpleWindow
         "aistancebasedistance",
         "heighthitpointbaroffset",
         "allowedheightvariance",
+        "creationfade",
         "stealth",
         "selfdestructprotoaction",
         "pathabilityflags",
-        "heightbob",
+        "heightbobdata",
         "birthprotoaction",
         "placementfile",
         "ondiscoverlos",
@@ -484,10 +539,11 @@ public partial class ProtoEditorWindow : SimpleWindow
         "trainingrate",
         "gatherratemultiplier",
         "partisans",
+        "bloodandbones",
         "decaytime",
         "decaydelaytime",
         "researchrate",
-        "killreward",
+        "killrewarddata",
         "autobuildrate",
         "godpowerblockradius",
         "godpowercostfactor",
@@ -496,13 +552,15 @@ public partial class ProtoEditorWindow : SimpleWindow
         "costescalation",
         "damageshading",
         "initialshading",
-        "minimapsize",
         "deadreplacement",
         "deadtransform",
+        "dependentunitdata",
         "eidolonprotoid",
         "enemyshortrollovertextid",
         "socketunittype",
         "disguiseprotoid",
+        "spawndata",
+        "veterancydata",
         "stackprotoaction",
         "dodgechance",
         "directionalarmor",
@@ -511,12 +569,12 @@ public partial class ProtoEditorWindow : SimpleWindow
         "carrycapacity",
         "initialresource",
         "resourceconversion",
+        "respawntraindata",
         "sharedselectionunittypes",
         "rechargeincludetypes",
         "rechargeexcludetypes",
         "decay",
         "recharge",
-        "minimapcolor",
         "replacement",
     ];
     private static string GetStringSuffixForField(string tag) => tag.ToLowerInvariant() switch
@@ -555,7 +613,7 @@ public partial class ProtoEditorWindow : SimpleWindow
         ["rechargetime"] = "Recharge Time",
         ["auxrechargetime"] = "Aux Recharge Time",
         ["resourcesubtype"] = "Resource Subtype",
-        ["minimapicon"] = "Minimap Icon",
+        ["minimapvisuals"] = "Minimap Visuals",
         ["resourcepriority"] = "Resource Priority",
         ["hotkeycontext"] = "Hotkey Context",
         ["allyhotkeycontext"] = "Ally Hotkey Context",
@@ -573,22 +631,23 @@ public partial class ProtoEditorWindow : SimpleWindow
         ["allowedheightvariance"] = "Allowed Height Variance",
         ["selfdestructprotoaction"] = "Self Destruct Proto Action",
         ["pathabilityflags"] = "Pathability Flags",
-        ["heightbob"] = "Height Bob",
+        ["heightbobdata"] = "Height Bob",
         ["birthprotoaction"] = "Birth Proto Action",
         ["placementfile"] = "Placement File",
         ["ondiscoverlos"] = "On Discover LOS",
         ["populationcapaddition"] = "Population Cap Addition",
         ["gathererlimit"] = "Gatherer Limit",
-        ["creationfadetime"] = "Creation Fade Time",
+        ["creationfade"] = "Creation Fade Time",
         ["prioritybonusfactor"] = "Priority Bonus Factor",
         ["buildingworkrate"] = "Building Work Rate",
         ["trainingrate"] = "Training Rate",
         ["gatherratemultiplier"] = "Gather Rate Multiplier",
         ["partisans"] = "Partisans",
+        ["bloodandbones"] = "Blood and bones data",
         ["decaytime"] = "Decay Time",
         ["decaydelaytime"] = "Decay Delay Time",
         ["researchrate"] = "Research Rate",
-        ["killreward"] = "Kill Reward",
+        ["killrewarddata"] = "Kill Reward",
         ["autobuildrate"] = "Auto Build Rate",
         ["godpowerblockradius"] = "God Power Block Radius",
         ["godpowercostfactor"] = "God Power Cost Factor",
@@ -597,13 +656,15 @@ public partial class ProtoEditorWindow : SimpleWindow
         ["costescalation"] = "Cost Escalation",
         ["damageshading"] = "Damage Shading",
         ["initialshading"] = "Initial Shading",
-        ["minimapsize"] = "Minimap Size",
         ["deadreplacement"] = "Dead Replacement",
         ["deadtransform"] = "Dead Transform",
+        ["dependentunitdata"] = "Dependent Unit",
         ["eidolonprotoid"] = "Eidolon Proto ID",
         ["enemyshortrollovertextid"] = "Enemy Short Rollover Text ID",
         ["socketunittype"] = "Socket Unit Type",
         ["disguiseprotoid"] = "Disguise Proto ID",
+        ["spawndata"] = "Spawn",
+        ["veterancydata"] = "Veterancy",
         ["stackprotoaction"] = "Stack Proto Action",
         ["dodgechance"] = "Dodge Chance",
         ["directionalarmor"] = "Directional Armor",
@@ -612,12 +673,12 @@ public partial class ProtoEditorWindow : SimpleWindow
         ["carrycapacity"] = "Carry Capacity",
         ["initialresource"] = "Initial Resource",
         ["resourceconversion"] = "Resource Conversion",
+        ["respawntraindata"] = "Respawn Train Data",
         ["sharedselectionunittypes"] = "Shared Selection Unit Types",
         ["rechargeincludetypes"] = "Recharge Include Types",
         ["rechargeexcludetypes"] = "Recharge Exclude Types",
         ["decay"] = "Decay",
         ["recharge"] = "Recharge",
-        ["minimapcolor"] = "Minimap Color",
         ["replacement"] = "Replacement",
     };
 
@@ -626,23 +687,22 @@ public partial class ProtoEditorWindow : SimpleWindow
         "autoattackrange", "lifespan", "rechargetime", "auxrechargetime", "resourcepriority", "resourcedecay",
         "wanderdistance", "workersoftlimit", "formationorder", "screenshakeondestruction", "stealthdetectionradius", "displayedrange",
         "aistancebasedistance", "heighthitpointbaroffset", "allowedheightvariance", "stealthrevealselfradius",
-        "stealthshowsilhouetteradius", "heightbob", "populationcapaddition", "gathererlimit", "creationfadetime",
+        "stealthshowsilhouetteradius", "populationcapaddition", "gathererlimit",
         "prioritybonusfactor", "buildingworkrate", "trainingrate", "gatherratemultiplier", "partisancount", "decaytime",
-        "decaydelaytime", "researchrate", "projectilespinperiod", "killreward", "autobuildrate",
-        "godpowerblockradius", "godpowercostfactor", "builderlimit", "corpsedecaydelay", "costescalation",
-        "damageshading", "initialshading", "minimapsize", "dodgechance"
+        "decaydelaytime", "researchrate", "projectilespinperiod", "autobuildrate",
+        "godpowerblockradius", "godpowercostfactor", "builderlimit", "corpsedecaydelay", "costescalation", "bloodscalemodify", "bonescalemodify",
+        "dodgechance"
     };
 
     private static readonly HashSet<string> OtherSpecificSimpleSuggestionTags = new(StringComparer.OrdinalIgnoreCase)
     {
         "culture", "resourcesubtype", "socketunittype", "disguiseprotoid", "deadreplacement", "deadtransform",
-        "initialunitaistance", "pathabilityflags", "placementfile", "hotkeycontext", "allyhotkeycontext", "partisantype",
+        "initialunitaistance", "pathabilityflags", "placementfile", "hotkeycontext", "allyhotkeycontext", "partisantype", "bloodgroupoverride",
         "eidolonprotoid", "selfdestructprotoaction", "birthprotoaction", "stackprotoaction"
     };
 
     private static readonly HashSet<string> OtherSpecificSimpleTextTags = new(StringComparer.OrdinalIgnoreCase)
     {
-        "minimapicon",
         "ondiscoverlos", "enemyshortrollovertextid", "dodgesoundset",
         "dodgemessageid"
     };
@@ -822,6 +882,96 @@ public partial class ProtoEditorWindow : SimpleWindow
 
         _cachedHotkeyContexts = GetDistinctBarSimpleFieldValues("hotkeycontext");
         return _cachedHotkeyContexts;
+    }
+
+    private List<string> GetKnownMinimapIcons()
+    {
+        if (_cachedMinimapIcons != null)
+            return _cachedMinimapIcons;
+
+        _cachedMinimapIcons = GetDistinctBarSimpleFieldValues("minimapicon");
+        return _cachedMinimapIcons;
+    }
+
+    private List<string> GetKnownBloodGroupNames()
+    {
+        if (_cachedBloodGroupNames != null)
+            return _cachedBloodGroupNames;
+
+        _cachedBloodGroupNames = LoadBloodGroupNamesFromBar();
+        return _cachedBloodGroupNames;
+    }
+
+    private List<string> LoadBloodGroupNamesFromBar()
+    {
+        try
+        {
+            var barFile = _mainWindow.BarFile;
+            var barStream = _mainWindow.BarFileStream;
+            if (barFile != null && barStream != null && Path.GetFileName(barStream.Name).Equals("Data.bar", StringComparison.OrdinalIgnoreCase))
+            {
+                return ExtractBloodGroupNamesFromBar(barFile, barStream.Name);
+            }
+
+            var dataBarPath = ResolveDataBarPath();
+            if (!string.IsNullOrWhiteSpace(dataBarPath) && File.Exists(dataBarPath))
+            {
+                using var stream = File.OpenRead(dataBarPath);
+                var file = new BarFile(stream);
+                if (file.Load(out _))
+                    return ExtractBloodGroupNamesFromBar(file, dataBarPath);
+            }
+        }
+        catch
+        {
+            // Fall back to an empty list if BAR blood extraction fails.
+        }
+
+        return [];
+    }
+
+    private static List<string> ExtractBloodGroupNamesFromBar(BarFile barFile, string barPath)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var entries = barFile.Entries;
+        if (entries == null)
+            return [];
+
+        var bloodEntries = entries
+            .Where(e => e.Name.Contains("blood", StringComparison.OrdinalIgnoreCase)
+                     && e.Name.EndsWith(".xmb", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        using var tempStream = File.OpenRead(barPath);
+        foreach (var entry in bloodEntries)
+        {
+            int size = entry.IsCompressed ? entry.SizeUncompressed : entry.SizeInArchive;
+            byte[] decompressed = new byte[size];
+            int readBytes = entry.ReadDataDecompressed(tempStream, decompressed);
+            if (readBytes <= 0)
+                continue;
+
+            var xml = BarFormatConverter.XMBtoFormattedXmlString(decompressed.AsSpan(0, readBytes));
+            if (string.IsNullOrWhiteSpace(xml))
+                continue;
+
+            try
+            {
+                var doc = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
+                foreach (var name in doc.Descendants("bloodgroup")
+                    .Select(x => (string?)x.Attribute("name"))
+                    .Where(x => !string.IsNullOrWhiteSpace(x)))
+                {
+                    names.Add(name!);
+                }
+            }
+            catch
+            {
+                // Skip malformed blood entries and keep what we already found.
+            }
+        }
+
+        return names.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     private static string GetBuildLimitModeLabel(BuildLimitMode mode) => mode switch
@@ -1700,6 +1850,10 @@ public partial class ProtoEditorWindow : SimpleWindow
         _protoActionWidgets.Clear();
         _buildLimitRows.Clear();
         _resourceConversionRows.Clear();
+        _dependentUnitRows.Clear();
+        _spawnRows.Clear();
+        _veterancyRankRows.Clear();
+        _veterancyBonusRows.Clear();
 
         XElement? unit = null;
         if (_modXmlRoot != null)
@@ -3641,6 +3795,10 @@ public partial class ProtoEditorWindow : SimpleWindow
         _currentSharedSelectionUnitTypes = null;
         _currentRechargeIncludeTypes = null;
         _currentRechargeExcludeTypes = null;
+        _currentVeterancyIncludeTypes = null;
+        _currentVeterancyExcludeTypes = null;
+        _currentRespawnTrainTypes = null;
+        _currentRespawnTrainExcludeTypes = null;
 
         var otherAttributeSuggestions = GetAvailableBuildLimitTargets();
         var otherProtoUnitSuggestions = GetAvailableTrainUnitNames();
@@ -4179,6 +4337,1322 @@ public partial class ProtoEditorWindow : SimpleWindow
             otherSpecificContainer.Children.Add(rowGrid);
         }
 
+        void AddBloodAndBonesEditor()
+        {
+            const string key = "bloodandbones";
+            if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
+                return;
+
+            var stack = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 2) };
+
+            var row1 = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, 280, Auto"), Margin = new Thickness(0, 2, 0, 2) };
+            row1.Children.Add(new TextBlock { Text = "Blood and bones data", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+
+            var groupLabel = new TextBlock { Text = "Blood Group", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
+            Grid.SetColumn(groupLabel, 1);
+            row1.Children.Add(groupLabel);
+
+            var bloodGroupInitial = ProtoXmlHandler.GetSimpleField(unit, "bloodgroupoverride") ?? "";
+            var bloodGroupAcb = CreateValidatedOtherSuggestionBox(bloodGroupInitial, GetKnownBloodGroupNames(), "Blood Group");
+            Grid.SetColumn(bloodGroupAcb, 2);
+            row1.Children.Add(bloodGroupAcb);
+            _fieldControls["bloodgroupoverride"] = bloodGroupAcb;
+
+            if (!_isReadOnly)
+            {
+                var deleteButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), VerticalAlignment = VerticalAlignment.Center };
+                deleteButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        RemoveOtherSpecificContainer(key, "bloodgroupoverride", "bloodscalemodify", "bonescalemodify");
+                        MarkDirty();
+                        RenderOtherSpecificAddControls();
+                    }
+                };
+                Grid.SetColumn(deleteButton, 3);
+                row1.Children.Add(deleteButton);
+            }
+
+            stack.Children.Add(row1);
+
+            var row2 = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, 100, Auto, 100"), Margin = new Thickness(0, 2, 0, 2) };
+            row2.Children.Add(new TextBlock { Text = "", VerticalAlignment = VerticalAlignment.Center });
+
+            var bloodScaleLabel = new TextBlock { Text = "Blood Scale", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
+            Grid.SetColumn(bloodScaleLabel, 1);
+            row2.Children.Add(bloodScaleLabel);
+
+            var bloodScaleTb = CreateOtherTextBox(ProtoXmlHandler.GetSimpleField(unit, "bloodscalemodify") ?? "1", true);
+            Grid.SetColumn(bloodScaleTb, 2);
+            row2.Children.Add(bloodScaleTb);
+            _fieldControls["bloodscalemodify"] = bloodScaleTb;
+
+            var boneScaleLabel = new TextBlock { Text = "Bone Scale", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+            Grid.SetColumn(boneScaleLabel, 3);
+            row2.Children.Add(boneScaleLabel);
+
+            var boneScaleTb = CreateOtherTextBox(ProtoXmlHandler.GetSimpleField(unit, "bonescalemodify") ?? "1", true);
+            Grid.SetColumn(boneScaleTb, 4);
+            row2.Children.Add(boneScaleTb);
+            _fieldControls["bonescalemodify"] = boneScaleTb;
+
+            stack.Children.Add(row2);
+
+            RegisterOtherSpecificContainer(key, stack);
+            otherSpecificContainer.Children.Add(stack);
+        }
+
+        void AddCreationFadeEditor()
+        {
+            const string key = "creationfade";
+            if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
+                return;
+
+            var element = unit.Element("creationfadetime");
+            var rowGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, 100, Auto, 100, Auto"), Margin = new Thickness(0, 2, 0, 2) };
+            rowGrid.Children.Add(new TextBlock { Text = "Creation Fade Time", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+
+            var valueLabel = new TextBlock { Text = "Value", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
+            Grid.SetColumn(valueLabel, 1);
+            rowGrid.Children.Add(valueLabel);
+
+            var valueTb = CreateOtherTextBox(element?.Value?.Trim() ?? "0", true);
+            Grid.SetColumn(valueTb, 2);
+            rowGrid.Children.Add(valueTb);
+            _fieldControls["creationfadetime.value"] = valueTb;
+
+            var initAlphaLabel = new TextBlock { Text = "Init Alpha", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+            Grid.SetColumn(initAlphaLabel, 3);
+            rowGrid.Children.Add(initAlphaLabel);
+
+            var initAlphaTb = CreateOtherTextBox((string?)element?.Attribute("initalpha") ?? "0", true);
+            Grid.SetColumn(initAlphaTb, 4);
+            rowGrid.Children.Add(initAlphaTb);
+            _fieldControls["creationfadetime.initalpha"] = initAlphaTb;
+
+            if (!_isReadOnly)
+            {
+                var deleteButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), VerticalAlignment = VerticalAlignment.Center };
+                deleteButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        RemoveOtherSpecificContainer(key, "creationfadetime.value", "creationfadetime.initalpha");
+                        MarkDirty();
+                        RenderOtherSpecificAddControls();
+                    }
+                };
+                Grid.SetColumn(deleteButton, 5);
+                rowGrid.Children.Add(deleteButton);
+            }
+
+            RegisterOtherSpecificContainer(key, rowGrid);
+            otherSpecificContainer.Children.Add(rowGrid);
+        }
+
+        void AddHeightBobEditor()
+        {
+            const string key = "heightbobdata";
+            if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
+                return;
+
+            var element = unit.Element("heightbob");
+            var rowGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, 100, Auto, 100, Auto"), Margin = new Thickness(0, 2, 0, 2) };
+            rowGrid.Children.Add(new TextBlock { Text = "Height Bob", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+
+            var periodLabel = new TextBlock { Text = "Period", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+            Grid.SetColumn(periodLabel, 1);
+            rowGrid.Children.Add(periodLabel);
+
+            var periodTb = CreateOtherTextBox((string?)element?.Attribute("period") ?? "0", true);
+            Grid.SetColumn(periodTb, 2);
+            rowGrid.Children.Add(periodTb);
+            _fieldControls["heightbob.period"] = periodTb;
+
+            var magnitudeLabel = new TextBlock { Text = "Magnitude", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+            Grid.SetColumn(magnitudeLabel, 3);
+            rowGrid.Children.Add(magnitudeLabel);
+
+            var magnitudeTb = CreateOtherTextBox((string?)element?.Attribute("magnitude") ?? "0", true);
+            Grid.SetColumn(magnitudeTb, 4);
+            rowGrid.Children.Add(magnitudeTb);
+            _fieldControls["heightbob.magnitude"] = magnitudeTb;
+
+            if (!_isReadOnly)
+            {
+                var deleteButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), VerticalAlignment = VerticalAlignment.Center };
+                deleteButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        RemoveOtherSpecificContainer(key, "heightbob.period", "heightbob.magnitude");
+                        MarkDirty();
+                        RenderOtherSpecificAddControls();
+                    }
+                };
+                Grid.SetColumn(deleteButton, 5);
+                rowGrid.Children.Add(deleteButton);
+            }
+
+            RegisterOtherSpecificContainer(key, rowGrid);
+            otherSpecificContainer.Children.Add(rowGrid);
+        }
+
+        void AddInitialShadingEditor()
+        {
+            const string key = "initialshading";
+            if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
+                return;
+
+            var element = unit.Element("initialshading");
+            var rowGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, 160, Auto, 100, Auto"), Margin = new Thickness(0, 2, 0, 2) };
+            rowGrid.Children.Add(new TextBlock { Text = "Initial Shading", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+
+            var typeLabel = new TextBlock { Text = "Type", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
+            Grid.SetColumn(typeLabel, 1);
+            rowGrid.Children.Add(typeLabel);
+
+            var typeAcb = CreateValidatedOtherSuggestionBox((string?)element?.Attribute("type") ?? "", KnownInitialShadingTypes, "Type");
+            Grid.SetColumn(typeAcb, 2);
+            rowGrid.Children.Add(typeAcb);
+            _fieldControls["initialshading.type"] = typeAcb;
+
+            var factorLabel = new TextBlock { Text = "Factor", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+            Grid.SetColumn(factorLabel, 3);
+            rowGrid.Children.Add(factorLabel);
+
+            var factorTb = CreateOtherTextBox((string?)element?.Attribute("factor") ?? "1", true);
+            Grid.SetColumn(factorTb, 4);
+            rowGrid.Children.Add(factorTb);
+            _fieldControls["initialshading.factor"] = factorTb;
+
+            if (!_isReadOnly)
+            {
+                var deleteButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), VerticalAlignment = VerticalAlignment.Center };
+                deleteButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        RemoveOtherSpecificContainer(key, "initialshading.type", "initialshading.factor");
+                        MarkDirty();
+                        RenderOtherSpecificAddControls();
+                    }
+                };
+                Grid.SetColumn(deleteButton, 5);
+                rowGrid.Children.Add(deleteButton);
+            }
+
+            RegisterOtherSpecificContainer(key, rowGrid);
+            otherSpecificContainer.Children.Add(rowGrid);
+        }
+
+        void AddDamageShadingEditor()
+        {
+            const string key = "damageshading";
+            if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
+                return;
+
+            var element = unit.Element("damageshading");
+            var stack = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 2) };
+
+            var row1 = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, 160, Auto"), Margin = new Thickness(0, 2, 0, 2) };
+            row1.Children.Add(new TextBlock { Text = "Damage Shading", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+
+            var typeLabel = new TextBlock { Text = "Type", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
+            Grid.SetColumn(typeLabel, 1);
+            row1.Children.Add(typeLabel);
+
+            var typeAcb = CreateValidatedOtherSuggestionBox((string?)element?.Attribute("type") ?? "", KnownInitialShadingTypes, "Type");
+            Grid.SetColumn(typeAcb, 2);
+            row1.Children.Add(typeAcb);
+            _fieldControls["damageshading.type"] = typeAcb;
+
+            if (!_isReadOnly)
+            {
+                var deleteButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), VerticalAlignment = VerticalAlignment.Center };
+                deleteButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        RemoveOtherSpecificContainer(key, "damageshading.type", "damageshading.threshold", "damageshading.rate", "damageshading.time");
+                        MarkDirty();
+                        RenderOtherSpecificAddControls();
+                    }
+                };
+                Grid.SetColumn(deleteButton, 3);
+                row1.Children.Add(deleteButton);
+            }
+
+            stack.Children.Add(row1);
+
+            var row2 = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, 100, Auto, 100, Auto, 100"), Margin = new Thickness(0, 2, 0, 2) };
+            row2.Children.Add(new TextBlock { Text = "", VerticalAlignment = VerticalAlignment.Center });
+
+            var thresholdLabel = new TextBlock { Text = "Threshold", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
+            Grid.SetColumn(thresholdLabel, 1);
+            row2.Children.Add(thresholdLabel);
+
+            var thresholdTb = CreateOtherTextBox((string?)element?.Attribute("threshold") ?? "1", true);
+            Grid.SetColumn(thresholdTb, 2);
+            row2.Children.Add(thresholdTb);
+            _fieldControls["damageshading.threshold"] = thresholdTb;
+
+            var rateLabel = new TextBlock { Text = "Rate", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+            Grid.SetColumn(rateLabel, 3);
+            row2.Children.Add(rateLabel);
+
+            var rateTb = CreateOtherTextBox((string?)element?.Attribute("rate") ?? "1", true);
+            Grid.SetColumn(rateTb, 4);
+            row2.Children.Add(rateTb);
+            _fieldControls["damageshading.rate"] = rateTb;
+
+            var timeLabel = new TextBlock { Text = "Time (ms)", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+            Grid.SetColumn(timeLabel, 5);
+            row2.Children.Add(timeLabel);
+
+            var timeTb = CreateOtherTextBox((string?)element?.Attribute("time") ?? "1000", true);
+            Grid.SetColumn(timeTb, 6);
+            row2.Children.Add(timeTb);
+            _fieldControls["damageshading.time"] = timeTb;
+
+            stack.Children.Add(row2);
+
+            RegisterOtherSpecificContainer(key, stack);
+            otherSpecificContainer.Children.Add(stack);
+        }
+
+        void AddKillRewardEditor()
+        {
+            const string key = "killrewarddata";
+            if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
+                return;
+
+            var existingValues = unit.Elements("killreward")
+                .Where(x => !string.IsNullOrWhiteSpace((string?)x.Attribute("resourcetype")))
+                .ToDictionary(
+                    x => (string?)x.Attribute("resourcetype") ?? "",
+                    x => x.Value?.Trim() ?? "",
+                    StringComparer.OrdinalIgnoreCase);
+
+            var rowGrid = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("180, Auto, 100, Auto, 100, Auto, 100, Auto, 100, Auto"),
+                Margin = new Thickness(0, 2, 0, 2)
+            };
+            rowGrid.Children.Add(new TextBlock { Text = "Kill Reward", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+
+            foreach (var rtype in ProtoConstants.KnownResourceTypes)
+            {
+                int index = Array.IndexOf(ProtoConstants.KnownResourceTypes, rtype);
+                int labelColumn = 1 + (index * 2);
+                int valueColumn = labelColumn + 1;
+
+                var label = new TextBlock
+                {
+                    Text = rtype,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(index == 0 ? 0 : 12, 4, 10, 4)
+                };
+                Grid.SetColumn(label, labelColumn);
+                rowGrid.Children.Add(label);
+
+                var tb = CreateOtherTextBox(existingValues.TryGetValue(rtype, out var value) ? value : "", true);
+                Grid.SetColumn(tb, valueColumn);
+                rowGrid.Children.Add(tb);
+                _fieldControls[$"killreward:{rtype}"] = tb;
+            }
+
+            if (!_isReadOnly)
+            {
+                var deleteButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), VerticalAlignment = VerticalAlignment.Center };
+                deleteButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        RemoveOtherSpecificContainer(key, ProtoConstants.KnownResourceTypes.Select(x => $"killreward:{x}").ToArray());
+                        MarkDirty();
+                        RenderOtherSpecificAddControls();
+                    }
+                };
+                Grid.SetColumn(deleteButton, 9);
+                rowGrid.Children.Add(deleteButton);
+            }
+
+            RegisterOtherSpecificContainer(key, rowGrid);
+            otherSpecificContainer.Children.Add(rowGrid);
+        }
+
+        void AddDependentUnitEditor()
+        {
+            const string key = "dependentunitdata";
+            if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
+                return;
+
+            _dependentUnitRows.Clear();
+            var stack = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 2) };
+            stack.Children.Add(new TextBlock
+            {
+                Text = GetOtherSpecificAttributeLabel(key),
+                FontWeight = FontWeight.Bold,
+                Margin = new Thickness(0, 4, 0, 2)
+            });
+
+            var rowsHost = new StackPanel { Spacing = 4 };
+            stack.Children.Add(rowsHost);
+
+            void AddDependentUnitRow(XElement? existing = null)
+            {
+                var rowGrid = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("*, Auto, 90, Auto, 90, Auto, 150, Auto"),
+                    Margin = new Thickness(0, 2, 0, 2)
+                };
+
+                var valueAcb = CreateValidatedOtherSuggestionBox(existing?.Value?.Trim() ?? "", otherProtoUnitSuggestions, "Proto Unit");
+                valueAcb.Margin = new Thickness(0, 0, 8, 0);
+                Grid.SetColumn(valueAcb, 0);
+                rowGrid.Children.Add(valueAcb);
+
+                var xLabel = new TextBlock { Text = "X", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 8, 4) };
+                Grid.SetColumn(xLabel, 1);
+                rowGrid.Children.Add(xLabel);
+
+                var xTb = CreateOtherTextBox((string?)existing?.Attribute("x") ?? "0", true);
+                Grid.SetColumn(xTb, 2);
+                rowGrid.Children.Add(xTb);
+
+                var zLabel = new TextBlock { Text = "Z", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 8, 4) };
+                Grid.SetColumn(zLabel, 3);
+                rowGrid.Children.Add(zLabel);
+
+                var zTb = CreateOtherTextBox((string?)existing?.Attribute("z") ?? "0", true);
+                Grid.SetColumn(zTb, 4);
+                rowGrid.Children.Add(zTb);
+
+                var attachBoneLabel = new TextBlock { Text = "Attach Bone", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 8, 4) };
+                Grid.SetColumn(attachBoneLabel, 5);
+                rowGrid.Children.Add(attachBoneLabel);
+
+                var attachBoneTb = CreateOtherTextBox((string?)existing?.Attribute("attachbone") ?? "");
+                Grid.SetColumn(attachBoneTb, 6);
+                rowGrid.Children.Add(attachBoneTb);
+
+                var rowState = new DependentUnitRowState
+                {
+                    RowPanel = rowGrid,
+                    ValueAcb = valueAcb,
+                    XTb = xTb,
+                    ZTb = zTb,
+                    AttachBoneTb = attachBoneTb
+                };
+                _dependentUnitRows.Add(rowState);
+
+                if (!_isReadOnly)
+                {
+                    var deleteButton = new Button
+                    {
+                        Content = "X",
+                        Background = Brush.Parse("#8b0000"),
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+                    deleteButton.Click += async (s, e) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            _dependentUnitRows.Remove(rowState);
+                            rowsHost.Children.Remove(rowGrid);
+                            MarkDirty();
+                        }
+                    };
+                    Grid.SetColumn(deleteButton, 7);
+                    rowGrid.Children.Add(deleteButton);
+                }
+
+                if (!_isReadOnly && rowsHost.Children.Count > 0 && rowsHost.Children[^1] is Button)
+                    rowsHost.Children.Insert(rowsHost.Children.Count - 1, rowGrid);
+                else
+                    rowsHost.Children.Add(rowGrid);
+            }
+
+            foreach (var existing in unit.Elements("dependentunit"))
+                AddDependentUnitRow(existing);
+
+            if (!_isReadOnly)
+            {
+                var addButton = new Button
+                {
+                    Content = "+ Add Dependent Unit",
+                    Background = Brush.Parse("#2b7a0b"),
+                    Margin = new Thickness(0, 4, 0, 4),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                addButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        AddDependentUnitRow();
+                        MarkDirty();
+                    }
+                };
+                rowsHost.Children.Add(addButton);
+
+                var deleteButton = new Button
+                {
+                    Content = "X",
+                    Background = Brush.Parse("#8b0000"),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                deleteButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        _dependentUnitRows.Clear();
+                        rowsHost.Children.Clear();
+                        RemoveOtherSpecificContainer(key);
+                        MarkDirty();
+                        RenderOtherSpecificAddControls();
+                    }
+                };
+                stack.Children.Add(deleteButton);
+            }
+
+            RegisterOtherSpecificContainer(key, stack);
+            otherSpecificContainer.Children.Add(stack);
+        }
+
+        void AddSpawnEditor()
+        {
+            const string key = "spawndata";
+            if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
+                return;
+
+            _spawnRows.Clear();
+            var stack = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 2) };
+            stack.Children.Add(new TextBlock
+            {
+                Text = GetOtherSpecificAttributeLabel(key),
+                FontWeight = FontWeight.Bold,
+                Margin = new Thickness(0, 4, 0, 2)
+            });
+
+            var rowsHost = new StackPanel { Spacing = 6 };
+            stack.Children.Add(rowsHost);
+
+            CheckBox CreateFlagCheckBox(string text, bool isChecked)
+            {
+                var cb = new CheckBox { Content = text, IsChecked = isChecked, IsEnabled = !_isReadOnly, VerticalAlignment = VerticalAlignment.Center };
+                cb.Click += async (s, e) => await HandleOtherFieldChangedAsync();
+                return cb;
+            }
+
+            void AddSpawnRow(XElement? existing = null)
+            {
+                var rowStack = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 2) };
+
+                var row1 = new Grid { ColumnDefinitions = new ColumnDefinitions("*, Auto, 160, Auto, 100, Auto"), Margin = new Thickness(0, 2, 0, 2) };
+                var valueAcb = CreateValidatedOtherSuggestionBox(existing?.Value?.Trim() ?? "", otherProtoUnitSuggestions, "Proto Unit");
+                Grid.SetColumn(valueAcb, 0);
+                row1.Children.Add(valueAcb);
+
+                var typeLabel = new TextBlock { Text = "Type", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 8, 4) };
+                Grid.SetColumn(typeLabel, 1);
+                row1.Children.Add(typeLabel);
+
+                var typeAcb = CreateValidatedOtherSuggestionBox((string?)existing?.Attribute("type") ?? "", KnownSpawnTypes, "Type");
+                Grid.SetColumn(typeAcb, 2);
+                row1.Children.Add(typeAcb);
+
+                var countLabel = new TextBlock { Text = "Count", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 8, 4) };
+                Grid.SetColumn(countLabel, 3);
+                row1.Children.Add(countLabel);
+
+                var countTb = CreateOtherTextBox((string?)existing?.Attribute("count") ?? "1", true);
+                Grid.SetColumn(countTb, 4);
+                row1.Children.Add(countTb);
+
+                if (!_isReadOnly)
+                {
+                    var deleteButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), VerticalAlignment = VerticalAlignment.Center };
+                    deleteButton.Click += async (s, e) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            _spawnRows.RemoveAll(x => ReferenceEquals(x.RowPanel, rowStack));
+                            rowsHost.Children.Remove(rowStack);
+                            MarkDirty();
+                        }
+                    };
+                    Grid.SetColumn(deleteButton, 5);
+                    row1.Children.Add(deleteButton);
+                }
+
+                rowStack.Children.Add(row1);
+
+                var row2 = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto, 100, Auto, 100, Auto, 100, Auto, 180"), Margin = new Thickness(180, 0, 0, 0) };
+
+                var lifespanLabel = new TextBlock { Text = "Lifespan", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 8, 4) };
+                Grid.SetColumn(lifespanLabel, 0);
+                row2.Children.Add(lifespanLabel);
+                var lifespanTb = CreateOtherTextBox((string?)existing?.Attribute("lifespan") ?? "", true);
+                Grid.SetColumn(lifespanTb, 1);
+                row2.Children.Add(lifespanTb);
+
+                var chanceLabel = new TextBlock { Text = "Chance", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 8, 4) };
+                Grid.SetColumn(chanceLabel, 2);
+                row2.Children.Add(chanceLabel);
+                var chanceTb = CreateOtherTextBox((string?)existing?.Attribute("chance") ?? "", true);
+                Grid.SetColumn(chanceTb, 3);
+                row2.Children.Add(chanceTb);
+
+                var delayLabel = new TextBlock { Text = "Delay (ms)", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 8, 4) };
+                Grid.SetColumn(delayLabel, 4);
+                row2.Children.Add(delayLabel);
+                var delayTb = CreateOtherTextBox((string?)existing?.Attribute("delay") ?? "", true);
+                Grid.SetColumn(delayTb, 5);
+                row2.Children.Add(delayTb);
+
+                var shadingLabel = new TextBlock { Text = "Shading", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 8, 4) };
+                Grid.SetColumn(shadingLabel, 6);
+                row2.Children.Add(shadingLabel);
+                var shadingTypeAcb = CreateValidatedOtherSuggestionBox((string?)existing?.Attribute("shadingtype") ?? "", KnownInitialShadingTypes, "Shading Type");
+                Grid.SetColumn(shadingTypeAcb, 7);
+                row2.Children.Add(shadingTypeAcb);
+
+                rowStack.Children.Add(row2);
+
+                var row3 = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto, 180, Auto, 180, Auto, Auto, Auto"), Margin = new Thickness(180, 0, 0, 0) };
+
+                var waterLabel = new TextBlock { Text = "Water Proto Unit", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 8, 4) };
+                Grid.SetColumn(waterLabel, 0);
+                row3.Children.Add(waterLabel);
+                var waterProtoUnitAcb = CreateValidatedOtherSuggestionBox((string?)existing?.Attribute("waterProtoUnit") ?? "", otherProtoUnitSuggestions, "Water Proto Unit");
+                Grid.SetColumn(waterProtoUnitAcb, 1);
+                row3.Children.Add(waterProtoUnitAcb);
+
+                var skipPlacementCheckCb = CreateFlagCheckBox("Skip Placement Check", existing?.Attribute("skipPlacementCheck") != null || existing?.Attribute("skipplacementcheck") != null);
+                Grid.SetColumn(skipPlacementCheckCb, 2);
+                row3.Children.Add(skipPlacementCheckCb);
+
+                var controlGroupCb = CreateFlagCheckBox("Control Group", existing?.Attribute("controlGroup") != null || existing?.Attribute("controlgroup") != null);
+                controlGroupCb.Margin = new Thickness(16, 0, 0, 0);
+                Grid.SetColumn(controlGroupCb, 3);
+                row3.Children.Add(controlGroupCb);
+
+                var setOwnerCb = CreateFlagCheckBox("Set Owner", existing?.Attribute("setowner") != null);
+                Grid.SetColumn(setOwnerCb, 4);
+                row3.Children.Add(setOwnerCb);
+
+                rowStack.Children.Add(row3);
+
+                var rowState = new SpawnRowState
+                {
+                    RowPanel = rowStack,
+                    ValueAcb = valueAcb,
+                    TypeAcb = typeAcb,
+                    CountTb = countTb,
+                    LifespanTb = lifespanTb,
+                    ChanceTb = chanceTb,
+                    DelayTb = delayTb,
+                    SkipPlacementCheckCb = skipPlacementCheckCb,
+                    ControlGroupCb = controlGroupCb,
+                    SetOwnerCb = setOwnerCb,
+                    WaterProtoUnitAcb = waterProtoUnitAcb,
+                    ShadingTypeAcb = shadingTypeAcb
+                };
+                _spawnRows.Add(rowState);
+
+                if (!_isReadOnly && rowsHost.Children.Count > 0 && rowsHost.Children[^1] is Button)
+                    rowsHost.Children.Insert(rowsHost.Children.Count - 1, rowStack);
+                else
+                    rowsHost.Children.Add(rowStack);
+            }
+
+            foreach (var existing in unit.Elements("spawn"))
+                AddSpawnRow(existing);
+
+            if (!_isReadOnly)
+            {
+                var addButton = new Button
+                {
+                    Content = "+ Add Spawn",
+                    Background = Brush.Parse("#2b7a0b"),
+                    Margin = new Thickness(0, 4, 0, 4),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                addButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        AddSpawnRow();
+                        MarkDirty();
+                    }
+                };
+                rowsHost.Children.Add(addButton);
+
+                var deleteButton = new Button
+                {
+                    Content = "X",
+                    Background = Brush.Parse("#8b0000"),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                deleteButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        _spawnRows.Clear();
+                        rowsHost.Children.Clear();
+                        RemoveOtherSpecificContainer(key);
+                        MarkDirty();
+                        RenderOtherSpecificAddControls();
+                    }
+                };
+                stack.Children.Add(deleteButton);
+            }
+
+            RegisterOtherSpecificContainer(key, stack);
+            otherSpecificContainer.Children.Add(stack);
+        }
+
+        void AddRespawnTrainDataEditor()
+        {
+            const string key = "respawntraindata";
+            if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
+                return;
+
+            var respawnTrainData = unit.Element("respawntraindata");
+            var targetSuggestions = GetAvailableBuildLimitTargets();
+            var protoSuggestions = GetAvailableTrainUnitNames();
+            var existingRespawnTypes = new HashSet<string>(
+                respawnTrainData?.Element("respawntypes")?.Elements("unittype")
+                    .Select(x => x.Value?.Trim() ?? "")
+                    .Where(x => x.Length > 0) ?? [],
+                StringComparer.OrdinalIgnoreCase);
+            var existingExcludeTypes = new HashSet<string>(
+                respawnTrainData?.Element("excludetypes")?.Elements("unittype")
+                    .Select(x => x.Value?.Trim() ?? "")
+                    .Where(x => x.Length > 0) ?? [],
+                StringComparer.OrdinalIgnoreCase);
+
+            _currentRespawnTrainTypes = existingRespawnTypes;
+            _currentRespawnTrainExcludeTypes = existingExcludeTypes;
+
+            var hasSelfModeData =
+                !string.IsNullOrWhiteSpace(respawnTrainData?.Element("targettype")?.Value) ||
+                !string.IsNullOrWhiteSpace(respawnTrainData?.Element("trainproto")?.Value) ||
+                !string.IsNullOrWhiteSpace(respawnTrainData?.Element("respawntime")?.Value);
+            var initialMode = hasSelfModeData ? "Self Respawn" : "Respawn Point";
+
+            var stack = new StackPanel { Spacing = 6, Margin = new Thickness(0, 2, 0, 2) };
+            var headerGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, 180, Auto") };
+            headerGrid.Children.Add(new TextBlock
+            {
+                Text = GetOtherSpecificAttributeLabel(key),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 4, 10, 4)
+            });
+
+            var modeLabel = new TextBlock
+            {
+                Text = "Mode",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 4, 10, 4)
+            };
+            Grid.SetColumn(modeLabel, 1);
+            headerGrid.Children.Add(modeLabel);
+
+            var modeCb = new ComboBox
+            {
+                ItemsSource = new[] { "Self Respawn", "Respawn Point" },
+                SelectedItem = initialMode,
+                IsEnabled = !_isReadOnly,
+                MinWidth = 180
+            };
+            Grid.SetColumn(modeCb, 2);
+            headerGrid.Children.Add(modeCb);
+            _fieldControls["respawntraindata.mode"] = modeCb;
+
+            if (!_isReadOnly)
+            {
+                var deleteButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), Margin = new Thickness(8, 0, 0, 0) };
+                deleteButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        _currentRespawnTrainTypes = null;
+                        _currentRespawnTrainExcludeTypes = null;
+                        RemoveOtherSpecificContainer(key,
+                            "respawntraindata.mode",
+                            "respawntraindata.targettype",
+                            "respawntraindata.trainproto",
+                            "respawntraindata.respawntime",
+                            "respawntraindata.respawnvfx",
+                            "respawntraindata.respawnlimit",
+                            "respawntraindata.food",
+                            "respawntraindata.wood",
+                            "respawntraindata.gold",
+                            "respawntraindata.favor");
+                        MarkDirty();
+                        RenderOtherSpecificAddControls();
+                    }
+                };
+                Grid.SetColumn(deleteButton, 3);
+                headerGrid.Children.Add(deleteButton);
+            }
+
+            stack.Children.Add(headerGrid);
+
+            var bodyStack = new StackPanel { Spacing = 6 };
+            stack.Children.Add(bodyStack);
+
+            void AddRespawnChipEditor(string title, HashSet<string> values, Action<HashSet<string>> assignTarget)
+            {
+                assignTarget(values);
+                var editorStack = new StackPanel { Spacing = 4 };
+                editorStack.Children.Add(new TextBlock { Text = title, FontWeight = FontWeight.Bold, Margin = new Thickness(0, 4, 0, 2) });
+                var wrap = new WrapPanel { Orientation = Orientation.Horizontal };
+                editorStack.Children.Add(wrap);
+
+                void RefreshDisplay()
+                {
+                    wrap.Children.Clear();
+                    foreach (var value in values.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                    {
+                        wrap.Children.Add(CreateChip(value, async () =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                            {
+                                values.Remove(value);
+                                MarkDirty();
+                                RefreshDisplay();
+                            }
+                        }));
+                    }
+                }
+
+                RefreshDisplay();
+
+                if (!_isReadOnly)
+                {
+                    var acb = CreateOtherSuggestionBox("", targetSuggestions, title);
+                    string? selectedValue = null;
+
+                    async Task PerformAdd()
+                    {
+                        var input = acb.Text?.Trim() ?? "";
+                        var match = targetSuggestions.FirstOrDefault(x => x.Equals(input, StringComparison.OrdinalIgnoreCase));
+                        if (!string.IsNullOrWhiteSpace(match) && values.Add(match))
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                            {
+                                acb.Text = "";
+                                MarkDirty();
+                                RefreshDisplay();
+                            }
+                            else
+                            {
+                                values.Remove(match);
+                            }
+                        }
+                    }
+
+                    acb.SelectionChanged += (s, e) =>
+                    {
+                        if (acb.SelectedItem is string selected)
+                        {
+                            selectedValue = selected;
+                            acb.Text = selected;
+                            Dispatcher.UIThread.Post(() =>
+                            {
+                                var input = acb.Text?.Trim() ?? "";
+                                var match = targetSuggestions.FirstOrDefault(x => x.Equals(input, StringComparison.OrdinalIgnoreCase));
+                                if (string.IsNullOrWhiteSpace(match) && !string.IsNullOrWhiteSpace(selectedValue))
+                                    match = targetSuggestions.FirstOrDefault(x => x.Equals(selectedValue, StringComparison.OrdinalIgnoreCase));
+
+                                if (!string.IsNullOrWhiteSpace(match))
+                                    _ = PerformAdd();
+                            }, DispatcherPriority.Background);
+                        }
+                    };
+
+                    editorStack.Children.Add(acb);
+                }
+
+                bodyStack.Children.Add(editorStack);
+            }
+
+            void RenderModeBody()
+            {
+                bodyStack.Children.Clear();
+                foreach (var fieldKey in new[]
+                         {
+                             "respawntraindata.targettype",
+                             "respawntraindata.trainproto",
+                             "respawntraindata.respawntime",
+                             "respawntraindata.respawnvfx",
+                             "respawntraindata.respawnlimit",
+                             "respawntraindata.food",
+                             "respawntraindata.wood",
+                             "respawntraindata.gold",
+                             "respawntraindata.favor"
+                         })
+                {
+                    _fieldControls.Remove(fieldKey);
+                }
+
+                var selectedMode = modeCb.SelectedItem as string ?? "Self Respawn";
+                if (selectedMode.Equals("Self Respawn", StringComparison.OrdinalIgnoreCase))
+                {
+                    var selfGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto, *, Auto, *, Auto, 120"), RowDefinitions = new RowDefinitions("Auto, Auto"), Margin = new Thickness(0, 2, 0, 2) };
+
+                    var targetTypeLabel = new TextBlock { Text = "Target Type", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
+                    selfGrid.Children.Add(targetTypeLabel);
+                    var targetTypeAcb = CreateValidatedOtherSuggestionBox(respawnTrainData?.Element("targettype")?.Value?.Trim() ?? "", targetSuggestions, "Target Type");
+                    Grid.SetColumn(targetTypeAcb, 1);
+                    selfGrid.Children.Add(targetTypeAcb);
+                    _fieldControls["respawntraindata.targettype"] = targetTypeAcb;
+
+                    var trainProtoLabel = new TextBlock { Text = "Train Proto", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+                    Grid.SetColumn(trainProtoLabel, 2);
+                    selfGrid.Children.Add(trainProtoLabel);
+                    var trainProtoAcb = CreateValidatedOtherSuggestionBox(respawnTrainData?.Element("trainproto")?.Value?.Trim() ?? "", protoSuggestions, "Train Proto");
+                    Grid.SetColumn(trainProtoAcb, 3);
+                    selfGrid.Children.Add(trainProtoAcb);
+                    _fieldControls["respawntraindata.trainproto"] = trainProtoAcb;
+
+                    var respawnTimeLabel = new TextBlock { Text = "Respawn Time", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+                    Grid.SetColumn(respawnTimeLabel, 4);
+                    selfGrid.Children.Add(respawnTimeLabel);
+                    var respawnTimeTb = CreateOtherTextBox(respawnTrainData?.Element("respawntime")?.Value?.Trim() ?? "", true);
+                    Grid.SetColumn(respawnTimeTb, 5);
+                    selfGrid.Children.Add(respawnTimeTb);
+                    _fieldControls["respawntraindata.respawntime"] = respawnTimeTb;
+
+                    var vfxLabel = new TextBlock { Text = "Respawn VFX", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
+                    Grid.SetRow(vfxLabel, 1);
+                    selfGrid.Children.Add(vfxLabel);
+                    var vfxTb = CreateOtherTextBox(respawnTrainData?.Element("respawnvfx")?.Value?.Trim() ?? "");
+                    Grid.SetColumn(vfxTb, 1);
+                    Grid.SetColumnSpan(vfxTb, 5);
+                    Grid.SetRow(vfxTb, 1);
+                    selfGrid.Children.Add(vfxTb);
+                    _fieldControls["respawntraindata.respawnvfx"] = vfxTb;
+
+                    bodyStack.Children.Add(selfGrid);
+                    return;
+                }
+
+                AddRespawnChipEditor("Respawn Types", _currentRespawnTrainTypes ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase), values => _currentRespawnTrainTypes = values);
+                AddRespawnChipEditor("Exclude Types", _currentRespawnTrainExcludeTypes ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase), values => _currentRespawnTrainExcludeTypes = values);
+
+                var ratesGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto, 100, Auto, 100, Auto, 100, Auto, 100"), Margin = new Thickness(0, 2, 0, 2) };
+                var respawnRates = respawnTrainData?.Element("respawnrates");
+                foreach (var resourceType in ProtoConstants.KnownResourceTypes)
+                {
+                    int index = Array.IndexOf(ProtoConstants.KnownResourceTypes, resourceType);
+                    int labelColumn = index * 2;
+                    int valueColumn = labelColumn + 1;
+
+                    var label = new TextBlock
+                    {
+                        Text = resourceType,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin = new Thickness(0, 4, 10, 4)
+                    };
+                    Grid.SetColumn(label, labelColumn);
+                    ratesGrid.Children.Add(label);
+
+                    var tb = CreateOtherTextBox(respawnRates?.Element(resourceType.ToLowerInvariant())?.Value?.Trim() ?? "0", true);
+                    Grid.SetColumn(tb, valueColumn);
+                    ratesGrid.Children.Add(tb);
+                    _fieldControls[$"respawntraindata.{resourceType.ToLowerInvariant()}"] = tb;
+                }
+
+                var ratesHost = new StackPanel { Spacing = 4 };
+                ratesHost.Children.Add(new TextBlock { Text = "Respawn Rates", FontWeight = FontWeight.Bold, Margin = new Thickness(0, 4, 0, 2) });
+                ratesHost.Children.Add(ratesGrid);
+                bodyStack.Children.Add(ratesHost);
+
+                var miscGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto, 120, Auto, *"), Margin = new Thickness(0, 2, 0, 2) };
+                miscGrid.Children.Add(new TextBlock { Text = "Respawn Limit", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+                var limitTb = CreateOtherTextBox(respawnTrainData?.Element("respawnlimit")?.Value?.Trim() ?? "0", true);
+                Grid.SetColumn(limitTb, 1);
+                miscGrid.Children.Add(limitTb);
+                _fieldControls["respawntraindata.respawnlimit"] = limitTb;
+
+                var vfxLabel2 = new TextBlock { Text = "Respawn VFX", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+                Grid.SetColumn(vfxLabel2, 2);
+                miscGrid.Children.Add(vfxLabel2);
+                var vfxTb2 = CreateOtherTextBox(respawnTrainData?.Element("respawnvfx")?.Value?.Trim() ?? "");
+                Grid.SetColumn(vfxTb2, 3);
+                miscGrid.Children.Add(vfxTb2);
+                _fieldControls["respawntraindata.respawnvfx"] = vfxTb2;
+                bodyStack.Children.Add(miscGrid);
+            }
+
+            modeCb.SelectionChanged += async (s, e) =>
+            {
+                if (_isPopulating)
+                    return;
+
+                var proceed = await CheckStartLocalMod();
+                if (proceed)
+                {
+                    MarkDirty();
+                    RenderModeBody();
+                }
+            };
+
+            RenderModeBody();
+            RegisterOtherSpecificContainer(key, stack);
+            otherSpecificContainer.Children.Add(stack);
+        }
+
+        void AddVeterancyEditor()
+        {
+            const string key = "veterancydata";
+            if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
+                return;
+
+            _veterancyRankRows.Clear();
+            _veterancyBonusRows.Clear();
+
+            var stack = new StackPanel { Spacing = 6, Margin = new Thickness(0, 2, 0, 2) };
+            stack.Children.Add(new TextBlock
+            {
+                Text = GetOtherSpecificAttributeLabel(key),
+                FontWeight = FontWeight.Bold,
+                Margin = new Thickness(0, 4, 0, 2)
+            });
+
+            var ranksHost = new StackPanel { Spacing = 4 };
+            var bonusHost = new StackPanel { Spacing = 4 };
+            var typeSuggestions = GetAvailableBuildLimitTargets();
+            var veterancyBonus = unit.Element("veterancybonus");
+            _currentVeterancyIncludeTypes = new HashSet<string>(veterancyBonus?.Element("includetypes")?.Elements("unittype").Select(x => x.Value?.Trim() ?? "").Where(x => x.Length > 0) ?? [], StringComparer.OrdinalIgnoreCase);
+            _currentVeterancyExcludeTypes = new HashSet<string>(veterancyBonus?.Element("excludetypes")?.Elements("unittype").Select(x => x.Value?.Trim() ?? "").Where(x => x.Length > 0) ?? [], StringComparer.OrdinalIgnoreCase);
+
+            stack.Children.Add(new TextBlock { Text = "Ranks", FontWeight = FontWeight.Bold, Margin = new Thickness(180, 0, 0, 0) });
+            stack.Children.Add(ranksHost);
+            stack.Children.Add(new TextBlock { Text = "Bonuses", FontWeight = FontWeight.Bold, Margin = new Thickness(180, 4, 0, 0) });
+            stack.Children.Add(bonusHost);
+
+            void AddVeterancyRankRow(string? type = null, string? value = null)
+            {
+                var rowGrid = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("180, 180, 120, Auto"),
+                    Margin = new Thickness(0, 2, 0, 2)
+                };
+
+                rowGrid.Children.Add(new TextBlock { Text = "", VerticalAlignment = VerticalAlignment.Center });
+
+                var typeCb = new ComboBox
+                {
+                    ItemsSource = KnownVeterancyRankTypes,
+                    SelectedItem = KnownVeterancyRankTypes.FirstOrDefault(x => x.Equals(type ?? "", StringComparison.OrdinalIgnoreCase)) ?? KnownVeterancyRankTypes[0],
+                    IsEnabled = !_isReadOnly
+                };
+                typeCb.SelectionChanged += async (s, e) => await HandleOtherFieldChangedAsync();
+                Grid.SetColumn(typeCb, 1);
+                rowGrid.Children.Add(typeCb);
+
+                var valueTb = CreateOtherTextBox(value ?? "0", true);
+                Grid.SetColumn(valueTb, 2);
+                rowGrid.Children.Add(valueTb);
+
+                var rowState = new VeterancyRankRowState
+                {
+                    RowPanel = rowGrid,
+                    TypeCb = typeCb,
+                    ValueTb = valueTb
+                };
+                _veterancyRankRows.Add(rowState);
+
+                if (!_isReadOnly)
+                {
+                    var deleteButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), VerticalAlignment = VerticalAlignment.Center };
+                    deleteButton.Click += async (s, e) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            _veterancyRankRows.Remove(rowState);
+                            ranksHost.Children.Remove(rowGrid);
+                            MarkDirty();
+                        }
+                    };
+                    Grid.SetColumn(deleteButton, 3);
+                    rowGrid.Children.Add(deleteButton);
+                }
+
+                if (!_isReadOnly && ranksHost.Children.Count > 0 && ranksHost.Children[^1] is Button)
+                    ranksHost.Children.Insert(ranksHost.Children.Count - 1, rowGrid);
+                else
+                    ranksHost.Children.Add(rowGrid);
+            }
+
+            void AddVeterancyBonusRow(string? rankId = null, string? modifyType = null, string? value = null)
+            {
+                var rowGrid = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("180, Auto, 70, Auto, 180, Auto, 120, Auto"),
+                    Margin = new Thickness(0, 2, 0, 2)
+                };
+
+                rowGrid.Children.Add(new TextBlock { Text = "", VerticalAlignment = VerticalAlignment.Center });
+
+                var rankLabel = new TextBlock { Text = "Rank Id", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 8, 4) };
+                Grid.SetColumn(rankLabel, 1);
+                rowGrid.Children.Add(rankLabel);
+
+                var rankIdTb = CreateOtherTextBox(rankId ?? "0", true);
+                Grid.SetColumn(rankIdTb, 2);
+                rowGrid.Children.Add(rankIdTb);
+
+                var modifyTypeLabel = new TextBlock { Text = "Modify Type", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 8, 4) };
+                Grid.SetColumn(modifyTypeLabel, 3);
+                rowGrid.Children.Add(modifyTypeLabel);
+
+                var modifyTypeTb = CreateOtherTextBox(modifyType ?? "");
+                Grid.SetColumn(modifyTypeTb, 4);
+                rowGrid.Children.Add(modifyTypeTb);
+
+                var valueLabel = new TextBlock { Text = "Value", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 8, 4) };
+                Grid.SetColumn(valueLabel, 5);
+                rowGrid.Children.Add(valueLabel);
+
+                var valueTb = CreateOtherTextBox(value ?? "0", true);
+                Grid.SetColumn(valueTb, 6);
+                rowGrid.Children.Add(valueTb);
+
+                var rowState = new VeterancyBonusRowState
+                {
+                    RowPanel = rowGrid,
+                    RankIdTb = rankIdTb,
+                    ModifyTypeTb = modifyTypeTb,
+                    ValueTb = valueTb
+                };
+                _veterancyBonusRows.Add(rowState);
+
+                if (!_isReadOnly)
+                {
+                    var deleteButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), VerticalAlignment = VerticalAlignment.Center };
+                    deleteButton.Click += async (s, e) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            _veterancyBonusRows.Remove(rowState);
+                            bonusHost.Children.Remove(rowGrid);
+                            MarkDirty();
+                        }
+                    };
+                    Grid.SetColumn(deleteButton, 7);
+                    rowGrid.Children.Add(deleteButton);
+                }
+
+                if (!_isReadOnly && bonusHost.Children.Count > 0 && bonusHost.Children[^1] is Button)
+                    bonusHost.Children.Insert(bonusHost.Children.Count - 1, rowGrid);
+                else
+                    bonusHost.Children.Add(rowGrid);
+            }
+
+            var veterancyRanks = unit.Element("veterancyranks");
+            foreach (var rank in veterancyRanks?.Elements("rank") ?? [])
+            {
+                var child = rank.Elements().FirstOrDefault();
+                if (child != null)
+                    AddVeterancyRankRow(child.Name.LocalName switch
+                    {
+                        "numkills" => "NumKills",
+                        "numattacks" => "NumAttacks",
+                        "totaldamage" => "TotalDamage",
+                        "damageandresourceseaten" => "DamageAndResourcesEaten",
+                        _ => child.Name.LocalName
+                    }, child.Value?.Trim() ?? "0");
+            }
+
+            foreach (var rank in veterancyBonus?.Elements("rank") ?? [])
+            {
+                var rankId = (string?)rank.Attribute("id") ?? "0";
+                foreach (var modify in rank.Elements("veterancymodify"))
+                {
+                    AddVeterancyBonusRow(rankId, (string?)modify.Attribute("modifytype") ?? "", modify.Value?.Trim() ?? "0");
+                }
+            }
+
+            StackPanel CreateVeterancyTypeEditor(string title, HashSet<string> values, bool optional)
+            {
+                var typeStack = new StackPanel { Spacing = 4, Margin = new Thickness(180, 0, 0, 0) };
+                typeStack.Children.Add(new TextBlock { Text = title, FontWeight = FontWeight.Bold });
+
+                var wrap = new WrapPanel { Orientation = Orientation.Horizontal };
+                typeStack.Children.Add(wrap);
+
+                void Refresh()
+                {
+                    wrap.Children.Clear();
+                    foreach (var value in values.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                    {
+                        wrap.Children.Add(CreateChip(value, async () =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                            {
+                                values.Remove(value);
+                                MarkDirty();
+                                Refresh();
+                            }
+                        }));
+                    }
+                }
+
+                Refresh();
+
+                if (!_isReadOnly)
+                {
+                    var addGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("*, Auto") };
+                    var acb = CreateValidatedOtherSuggestionBox("", typeSuggestions, title);
+                    Grid.SetColumn(acb, 0);
+                    addGrid.Children.Add(acb);
+                    string? selectedTypeValue = null;
+
+                    async Task PerformAdd()
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (!proceed)
+                            return;
+
+                        var value = acb.Text?.Trim() ?? "";
+                        var match = typeSuggestions.FirstOrDefault(x => x.Equals(value, StringComparison.OrdinalIgnoreCase));
+                        if (!string.IsNullOrWhiteSpace(match) && values.Add(match))
+                        {
+                            acb.Text = "";
+                            selectedTypeValue = null;
+                            MarkDirty();
+                            Refresh();
+                        }
+                    }
+
+                    acb.SelectionChanged += (s, e) =>
+                    {
+                        if (acb.SelectedItem is string selected)
+                        {
+                            selectedTypeValue = selected;
+                            acb.Text = selected;
+                            Dispatcher.UIThread.Post(async () =>
+                            {
+                                var input = acb.Text?.Trim() ?? "";
+                                var match = typeSuggestions.FirstOrDefault(x => x.Equals(input, StringComparison.OrdinalIgnoreCase));
+                                if (string.IsNullOrWhiteSpace(match) && !string.IsNullOrWhiteSpace(selectedTypeValue))
+                                    match = typeSuggestions.FirstOrDefault(x => x.Equals(selectedTypeValue, StringComparison.OrdinalIgnoreCase));
+
+                                if (!string.IsNullOrWhiteSpace(match))
+                                    await PerformAdd();
+                            }, DispatcherPriority.Background);
+                        }
+                    };
+
+                    var addButton = new Button { Content = "+ Add", Background = Brush.Parse("#2b7a0b"), Margin = new Thickness(8, 0, 0, 0) };
+                    addButton.Click += async (s, e) => await PerformAdd();
+                    Grid.SetColumn(addButton, 1);
+                    addGrid.Children.Add(addButton);
+                    typeStack.Children.Add(addGrid);
+                }
+
+                if (!optional || values.Count > 0 || !_isReadOnly)
+                    return typeStack;
+
+                return typeStack;
+            }
+
+            stack.Children.Add(CreateVeterancyTypeEditor("Include Types", _currentVeterancyIncludeTypes, optional: false));
+            stack.Children.Add(CreateVeterancyTypeEditor("Exclude Types", _currentVeterancyExcludeTypes, optional: true));
+
+            if (!_isReadOnly)
+            {
+                var addRankButton = new Button
+                {
+                    Content = "+ Add Rank",
+                    Background = Brush.Parse("#2b7a0b"),
+                    Margin = new Thickness(180, 2, 0, 2),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                addRankButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        AddVeterancyRankRow();
+                        MarkDirty();
+                    }
+                };
+                ranksHost.Children.Add(addRankButton);
+
+                var addBonusButton = new Button
+                {
+                    Content = "+ Add Bonus",
+                    Background = Brush.Parse("#2b7a0b"),
+                    Margin = new Thickness(180, 2, 0, 2),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                addBonusButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        AddVeterancyBonusRow(rankId: _veterancyBonusRows.Count.ToString());
+                        MarkDirty();
+                    }
+                };
+                bonusHost.Children.Add(addBonusButton);
+
+                var deleteButton = new Button
+                {
+                    Content = "X",
+                    Background = Brush.Parse("#8b0000"),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                deleteButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        _veterancyRankRows.Clear();
+                        _veterancyBonusRows.Clear();
+                        ranksHost.Children.Clear();
+                        bonusHost.Children.Clear();
+                        RemoveOtherSpecificContainer(key);
+                        MarkDirty();
+                        RenderOtherSpecificAddControls();
+                    }
+                };
+                stack.Children.Add(deleteButton);
+            }
+
+            RegisterOtherSpecificContainer(key, stack);
+            otherSpecificContainer.Children.Add(stack);
+        }
+
         void AddResourceMapEditor(string key, string elementName)
         {
             if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
@@ -4604,8 +6078,9 @@ public partial class ProtoEditorWindow : SimpleWindow
                 var acb = CreateOtherSuggestionBox("", otherAttributeSuggestions, title);
                 Grid.SetColumn(acb, 0);
                 addGrid.Children.Add(acb);
+                string? selectedValue = null;
 
-                async void PerformAdd()
+                async Task PerformAdd()
                 {
                     var input = acb.Text?.Trim() ?? "";
                     var match = otherAttributeSuggestions.FirstOrDefault(x => x.Equals(input, StringComparison.OrdinalIgnoreCase));
@@ -4621,8 +6096,27 @@ public partial class ProtoEditorWindow : SimpleWindow
                     }
                 }
 
+                acb.SelectionChanged += (s, e) =>
+                {
+                    if (acb.SelectedItem is string selected)
+                    {
+                        selectedValue = selected;
+                        acb.Text = selected;
+                        Dispatcher.UIThread.Post(() =>
+                        {
+                            var input = acb.Text?.Trim() ?? "";
+                            var match = otherAttributeSuggestions.FirstOrDefault(x => x.Equals(input, StringComparison.OrdinalIgnoreCase));
+                            if (string.IsNullOrWhiteSpace(match) && !string.IsNullOrWhiteSpace(selectedValue))
+                                match = otherAttributeSuggestions.FirstOrDefault(x => x.Equals(selectedValue, StringComparison.OrdinalIgnoreCase));
+
+                            if (!string.IsNullOrWhiteSpace(match))
+                                _ = PerformAdd();
+                        }, DispatcherPriority.Background);
+                    }
+                };
+
                 var addButton = new Button { Content = "+ Add", Background = Brush.Parse("#2b7a0b"), Margin = new Thickness(8, 0, 8, 0) };
-                addButton.Click += (s, e) => PerformAdd();
+                addButton.Click += async (s, e) => await PerformAdd();
                 Grid.SetColumn(addButton, 1);
                 addGrid.Children.Add(addButton);
 
@@ -4790,29 +6284,33 @@ public partial class ProtoEditorWindow : SimpleWindow
             otherSpecificContainer.Children.Add(rowGrid);
         }
 
-        void AddReplacementEditor()
+        void AddMinimapVisualsEditor()
         {
-            const string key = "replacement";
+            const string key = "minimapvisuals";
             if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
                 return;
 
-            var replacement = unit.Element("replacement");
-            var rowGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, 120, Auto, *, Auto"), Margin = new Thickness(0, 2, 0, 2) };
-            rowGrid.Children.Add(new TextBlock { Text = "Replacement", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
-            var typeLabel = new TextBlock { Text = "Type", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
-            Grid.SetColumn(typeLabel, 1);
-            rowGrid.Children.Add(typeLabel);
-            var typeTb = CreateOtherTextBox((string?)replacement?.Attribute("type") ?? "dead");
-            Grid.SetColumn(typeTb, 2);
-            rowGrid.Children.Add(typeTb);
-            _fieldControls["replacement.type"] = typeTb;
-            var valueLabel = new TextBlock { Text = "Value", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
-            Grid.SetColumn(valueLabel, 3);
-            rowGrid.Children.Add(valueLabel);
-            var valueAcb = CreateOtherSuggestionBox(replacement?.Value?.Trim() ?? "", otherProtoUnitSuggestions, "Proto Unit");
-            Grid.SetColumn(valueAcb, 4);
-            rowGrid.Children.Add(valueAcb);
-            _fieldControls["replacement.value"] = valueAcb;
+            var minimapColor = unit.Element("minimapcolor");
+            var row1 = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, *, Auto, 100, Auto"), Margin = new Thickness(0, 2, 0, 2) };
+            row1.Children.Add(new TextBlock { Text = "Minimap Visuals", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+
+            var iconLabel = new TextBlock { Text = "Icon", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
+            Grid.SetColumn(iconLabel, 1);
+            row1.Children.Add(iconLabel);
+
+            var iconAcb = CreateValidatedOtherSuggestionBox(ProtoXmlHandler.GetSimpleField(unit, "minimapicon") ?? "", GetKnownMinimapIcons(), "Minimap Icon");
+            Grid.SetColumn(iconAcb, 2);
+            row1.Children.Add(iconAcb);
+            _fieldControls["minimapicon"] = iconAcb;
+
+            var sizeLabel = new TextBlock { Text = "Size", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+            Grid.SetColumn(sizeLabel, 3);
+            row1.Children.Add(sizeLabel);
+
+            var sizeTb = CreateOtherTextBox(ProtoXmlHandler.GetSimpleField(unit, "minimapsize") ?? "", true);
+            Grid.SetColumn(sizeTb, 4);
+            row1.Children.Add(sizeTb);
+            _fieldControls["minimapsize"] = sizeTb;
 
             if (!_isReadOnly)
             {
@@ -4822,17 +6320,174 @@ public partial class ProtoEditorWindow : SimpleWindow
                     var proceed = await CheckStartLocalMod();
                     if (proceed)
                     {
-                        RemoveOtherSpecificContainer(key, "replacement.type", "replacement.value");
+                        RemoveOtherSpecificContainer(key, "minimapicon", "minimapsize", "minimapcolor.red", "minimapcolor.green", "minimapcolor.blue");
                         MarkDirty();
                         RenderOtherSpecificAddControls();
                     }
                 };
                 Grid.SetColumn(deleteButton, 5);
-                rowGrid.Children.Add(deleteButton);
+                row1.Children.Add(deleteButton);
             }
 
-            RegisterOtherSpecificContainer(key, rowGrid);
-            otherSpecificContainer.Children.Add(rowGrid);
+            var row2 = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, 90, Auto, 90, Auto, 90"), Margin = new Thickness(0, 2, 0, 2) };
+            row2.Children.Add(new TextBlock { Text = "", VerticalAlignment = VerticalAlignment.Center });
+
+            void AddColorField(string labelText, string keyName, string attrName, int labelColumn, int valueColumn)
+            {
+                var label = new TextBlock { Text = labelText, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
+                Grid.SetColumn(label, labelColumn);
+                row2.Children.Add(label);
+                var tb = CreateOtherTextBox((string?)minimapColor?.Attribute(attrName) ?? "", true);
+                Grid.SetColumn(tb, valueColumn);
+                row2.Children.Add(tb);
+                _fieldControls[keyName] = tb;
+            }
+
+            AddColorField("Red", "minimapcolor.red", "red", 1, 2);
+            AddColorField("Green", "minimapcolor.green", "green", 3, 4);
+            AddColorField("Blue", "minimapcolor.blue", "blue", 5, 6);
+
+            var stack = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 2) };
+            stack.Children.Add(row1);
+            stack.Children.Add(row2);
+
+            RegisterOtherSpecificContainer(key, stack);
+            otherSpecificContainer.Children.Add(stack);
+        }
+
+        void AddReplacementEditor()
+        {
+            const string key = "replacement";
+            if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
+                return;
+
+            var replacement = unit.Element("replacement");
+            var stack = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 2) };
+
+            var row1 = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, 160, Auto, *, Auto"), Margin = new Thickness(0, 2, 0, 2) };
+            row1.Children.Add(new TextBlock { Text = "Replacement", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+
+            var typeLabel = new TextBlock { Text = "Type", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
+            Grid.SetColumn(typeLabel, 1);
+            row1.Children.Add(typeLabel);
+
+            var typeAcb = CreateValidatedOtherSuggestionBox((string?)replacement?.Attribute("type") ?? "dead", KnownReplacementTypes, "Type");
+            Grid.SetColumn(typeAcb, 2);
+            row1.Children.Add(typeAcb);
+            _fieldControls["replacement.type"] = typeAcb;
+
+            var valueLabel = new TextBlock { Text = "Value", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+            Grid.SetColumn(valueLabel, 3);
+            row1.Children.Add(valueLabel);
+
+            var valueAcb = CreateValidatedOtherSuggestionBox(replacement?.Value?.Trim() ?? "", otherProtoUnitSuggestions, "Proto Unit");
+            Grid.SetColumn(valueAcb, 4);
+            row1.Children.Add(valueAcb);
+            _fieldControls["replacement.value"] = valueAcb;
+
+            if (!_isReadOnly)
+            {
+                var lifespan = (string?)replacement?.Attribute("lifespan") ?? "";
+                StackPanel? row2 = null;
+                TextBox? lifespanTb = null;
+                Button? addLifespanButton = null;
+
+                void ShowLifespanEditor(string initialValue)
+                {
+                    if (row2 != null)
+                        return;
+
+                    row2 = new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 8,
+                        Margin = new Thickness(180, 0, 0, 0)
+                    };
+                    row2.Children.Add(new TextBlock { Text = "Lifespan", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+                    lifespanTb = CreateOtherTextBox(string.IsNullOrWhiteSpace(initialValue) ? "" : initialValue, true);
+                    lifespanTb.Width = 120;
+                    row2.Children.Add(lifespanTb);
+                    _fieldControls["replacement.lifespan"] = lifespanTb;
+
+                    var removeLifespanButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), VerticalAlignment = VerticalAlignment.Center };
+                    removeLifespanButton.Click += async (s, e) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed && row2 != null)
+                        {
+                            stack.Children.Remove(row2);
+                            row2 = null;
+                            lifespanTb = null;
+                            _fieldControls.Remove("replacement.lifespan");
+                            addLifespanButton.IsVisible = true;
+                            MarkDirty();
+                        }
+                    };
+                    row2.Children.Add(removeLifespanButton);
+                    stack.Children.Add(row2);
+                    addLifespanButton.IsVisible = false;
+                }
+
+                addLifespanButton = new Button
+                {
+                    Content = "Add lifespan",
+                    Background = Brush.Parse("#2b7a0b"),
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Margin = new Thickness(180, 0, 0, 0),
+                    IsVisible = string.IsNullOrWhiteSpace(lifespan)
+                };
+                addLifespanButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        ShowLifespanEditor(lifespan);
+                        MarkDirty();
+                    }
+                };
+
+                var deleteButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), VerticalAlignment = VerticalAlignment.Center };
+                deleteButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        RemoveOtherSpecificContainer(key, "replacement.type", "replacement.value", "replacement.lifespan");
+                        MarkDirty();
+                        RenderOtherSpecificAddControls();
+                    }
+                };
+                Grid.SetColumn(deleteButton, 5);
+                row1.Children.Add(deleteButton);
+
+                stack.Children.Add(row1);
+                if (!string.IsNullOrWhiteSpace(lifespan))
+                    ShowLifespanEditor(lifespan);
+                stack.Children.Add(addLifespanButton);
+            }
+            else
+            {
+                stack.Children.Add(row1);
+                var lifespan = (string?)replacement?.Attribute("lifespan") ?? "";
+                if (!string.IsNullOrWhiteSpace(lifespan))
+                {
+                    var row2 = new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 8,
+                        Margin = new Thickness(180, 0, 0, 0)
+                    };
+                    row2.Children.Add(new TextBlock { Text = "Lifespan", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+                    var lifespanTb = CreateOtherTextBox(lifespan, true);
+                    lifespanTb.Width = 120;
+                    row2.Children.Add(lifespanTb);
+                    _fieldControls["replacement.lifespan"] = lifespanTb;
+                    stack.Children.Add(row2);
+                }
+            }
+
+            RegisterOtherSpecificContainer(key, stack);
+            otherSpecificContainer.Children.Add(stack);
         }
 
         void AddOtherSpecificAttributeByKey(string key)
@@ -4848,11 +6503,41 @@ public partial class ProtoEditorWindow : SimpleWindow
                 case "farming":
                     AddFarmingEditor();
                     break;
+                case "creationfade":
+                    AddCreationFadeEditor();
+                    break;
                 case "stealth":
                     AddStealthEditor();
                     break;
+                case "heightbobdata":
+                    AddHeightBobEditor();
+                    break;
+                case "initialshading":
+                    AddInitialShadingEditor();
+                    break;
+                case "damageshading":
+                    AddDamageShadingEditor();
+                    break;
+                case "killrewarddata":
+                    AddKillRewardEditor();
+                    break;
+                case "dependentunitdata":
+                    AddDependentUnitEditor();
+                    break;
+                case "spawndata":
+                    AddSpawnEditor();
+                    break;
+                case "veterancydata":
+                    AddVeterancyEditor();
+                    break;
+                case "minimapvisuals":
+                    AddMinimapVisualsEditor();
+                    break;
                 case "partisans":
                     AddPartisansEditor();
+                    break;
+                case "bloodandbones":
+                    AddBloodAndBonesEditor();
                     break;
                 case "dodgechance":
                     AddSimpleOtherSpecificAttribute("dodgechance", "dodgechance");
@@ -4868,6 +6553,9 @@ public partial class ProtoEditorWindow : SimpleWindow
                     break;
                 case "resourceconversion":
                     AddResourceConversionEditor();
+                    break;
+                case "respawntraindata":
+                    AddRespawnTrainDataEditor();
                     break;
                 case "sharedselectionunittypes":
                     AddChipListEditor(key, "Shared Selection Unit Types",
@@ -5061,12 +6749,22 @@ public partial class ProtoEditorWindow : SimpleWindow
             "selectionradius" => !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "selectionradiusx")) || !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "selectionradiusz")),
             "placementobstruction" => !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "placementobstructionradiusx")) || !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "placementobstructionradiusz")),
             "farming" => !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "farmingradiusx")) || !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "farmingradiusz")) || !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "farmingobstructionradiusx")) || !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "farmingobstructionradiusz")) || !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "farmingnumstops")),
+            "creationfade" => unit.Element("creationfadetime") != null,
             "stealth" => !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "stealthdetectionradius")) || !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "stealthrevealselfradius")) || !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "stealthshowsilhouetteradius")),
+            "heightbobdata" => unit.Element("heightbob") != null,
+            "damageshading" => unit.Element("damageshading") != null,
+            "killrewarddata" => unit.Elements("killreward").Any(),
+            "dependentunitdata" => unit.Elements("dependentunit").Any(),
+            "spawndata" => unit.Elements("spawn").Any(),
+            "veterancydata" => unit.Element("veterancyranks") != null || unit.Element("veterancybonus") != null,
+            "minimapvisuals" => !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "minimapicon")) || !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "minimapsize")) || unit.Element("minimapcolor") != null,
+            "initialshading" => unit.Element("initialshading") != null,
             "partisans" => !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "partisantype")) || !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "partisancount")),
+            "bloodandbones" => !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "bloodgroupoverride")) || !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "bloodscalemodify")) || !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "bonescalemodify")),
             "dodgechance" => !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "dodgechance")),
             "directionalarmor" => unit.Element("directionalarmor") != null,
             "carrycapacity" or "initialresource" or "resourceconversion" => unit.Elements(key).Any(),
-            "sharedselectionunittypes" or "rechargeincludetypes" or "rechargeexcludetypes" or "decay" or "recharge" or "minimapcolor" or "replacement" => unit.Element(key) != null,
+            "sharedselectionunittypes" or "rechargeincludetypes" or "rechargeexcludetypes" or "decay" or "recharge" or "replacement" or "respawntraindata" => unit.Element(key) != null,
             _ => !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, key)),
         };
 
@@ -6064,6 +7762,14 @@ public partial class ProtoEditorWindow : SimpleWindow
                         val = "0";
                     }
                 }
+                else if (tag.Equals("bloodscalemodify", StringComparison.OrdinalIgnoreCase) ||
+                         tag.Equals("bonescalemodify", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (string.IsNullOrWhiteSpace(val))
+                    {
+                        val = "1";
+                    }
+                }
                 else if (tag.Equals("resourcesubtype", StringComparison.OrdinalIgnoreCase))
                 {
                     val = GetKnownResourceSubtypeNames().FirstOrDefault(x => x.Equals(val, StringComparison.OrdinalIgnoreCase)) ?? "";
@@ -6093,6 +7799,14 @@ public partial class ProtoEditorWindow : SimpleWindow
                 else if (tag.Equals("partisantype", StringComparison.OrdinalIgnoreCase))
                 {
                     val = GetAvailableTrainUnitNames().FirstOrDefault(x => x.Equals(val, StringComparison.OrdinalIgnoreCase)) ?? "";
+                }
+                else if (tag.Equals("bloodgroupoverride", StringComparison.OrdinalIgnoreCase))
+                {
+                    val = GetKnownBloodGroupNames().FirstOrDefault(x => x.Equals(val, StringComparison.OrdinalIgnoreCase)) ?? "";
+                }
+                else if (tag.Equals("minimapicon", StringComparison.OrdinalIgnoreCase))
+                {
+                    val = GetKnownMinimapIcons().FirstOrDefault(x => x.Equals(val, StringComparison.OrdinalIgnoreCase)) ?? "";
                 }
 
                 if (!string.IsNullOrWhiteSpace(val))
@@ -6147,6 +7861,346 @@ public partial class ProtoEditorWindow : SimpleWindow
                     directionalArmorElement.SetAttributeValue("value", directionalArmorValue);
                 unit.Add(directionalArmorElement);
             }
+        }
+
+        unit.Elements("creationfadetime").Remove();
+        var creationFadeValue = _fieldControls.TryGetValue("creationfadetime.value", out var creationFadeValueCtrl) && creationFadeValueCtrl is TextBox creationFadeValueTb
+            ? creationFadeValueTb.Text?.Trim() ?? ""
+            : "";
+        var creationFadeInitAlpha = _fieldControls.TryGetValue("creationfadetime.initalpha", out var creationFadeInitAlphaCtrl) && creationFadeInitAlphaCtrl is TextBox creationFadeInitAlphaTb
+            ? creationFadeInitAlphaTb.Text?.Trim() ?? ""
+            : "";
+        if (string.IsNullOrWhiteSpace(creationFadeValue) && !string.IsNullOrWhiteSpace(creationFadeInitAlpha))
+            creationFadeValue = "0";
+        if (!string.IsNullOrWhiteSpace(creationFadeValue))
+        {
+            var creationFadeElement = new XElement("creationfadetime", creationFadeValue);
+            if (!string.IsNullOrWhiteSpace(creationFadeInitAlpha))
+                creationFadeElement.SetAttributeValue("initalpha", creationFadeInitAlpha);
+            unit.Add(creationFadeElement);
+        }
+
+        unit.Elements("heightbob").Remove();
+        var heightBobPeriod = _fieldControls.TryGetValue("heightbob.period", out var heightBobPeriodCtrl) && heightBobPeriodCtrl is TextBox heightBobPeriodTb
+            ? heightBobPeriodTb.Text?.Trim() ?? ""
+            : "";
+        var heightBobMagnitude = _fieldControls.TryGetValue("heightbob.magnitude", out var heightBobMagnitudeCtrl) && heightBobMagnitudeCtrl is TextBox heightBobMagnitudeTb
+            ? heightBobMagnitudeTb.Text?.Trim() ?? ""
+            : "";
+        if (!string.IsNullOrWhiteSpace(heightBobPeriod) ||
+            !string.IsNullOrWhiteSpace(heightBobMagnitude))
+        {
+            var heightBobElement = new XElement("heightbob");
+            if (!string.IsNullOrWhiteSpace(heightBobPeriod))
+                heightBobElement.SetAttributeValue("period", heightBobPeriod);
+            if (!string.IsNullOrWhiteSpace(heightBobMagnitude))
+                heightBobElement.SetAttributeValue("magnitude", heightBobMagnitude);
+            unit.Add(heightBobElement);
+        }
+
+        unit.Elements("initialshading").Remove();
+        var initialShadingType = _fieldControls.TryGetValue("initialshading.type", out var initialShadingTypeCtrl) && initialShadingTypeCtrl is AutoCompleteBox initialShadingTypeAcb
+            ? initialShadingTypeAcb.Text?.Trim() ?? ""
+            : "";
+        var initialShadingFactor = _fieldControls.TryGetValue("initialshading.factor", out var initialShadingFactorCtrl) && initialShadingFactorCtrl is TextBox initialShadingFactorTb
+            ? initialShadingFactorTb.Text?.Trim() ?? ""
+            : "";
+        initialShadingType = KnownInitialShadingTypes.FirstOrDefault(x => x.Equals(initialShadingType, StringComparison.OrdinalIgnoreCase)) ?? "";
+        if (string.IsNullOrWhiteSpace(initialShadingFactor))
+            initialShadingFactor = "1";
+        if (!string.IsNullOrWhiteSpace(initialShadingType))
+        {
+            var initialShadingElement = new XElement("initialshading");
+            initialShadingElement.SetAttributeValue("type", initialShadingType);
+            initialShadingElement.SetAttributeValue("factor", initialShadingFactor);
+            unit.Add(initialShadingElement);
+        }
+
+        unit.Elements("damageshading").Remove();
+        var damageShadingType = _fieldControls.TryGetValue("damageshading.type", out var damageShadingTypeCtrl) && damageShadingTypeCtrl is AutoCompleteBox damageShadingTypeAcb
+            ? damageShadingTypeAcb.Text?.Trim() ?? ""
+            : "";
+        var damageShadingThreshold = _fieldControls.TryGetValue("damageshading.threshold", out var damageShadingThresholdCtrl) && damageShadingThresholdCtrl is TextBox damageShadingThresholdTb
+            ? damageShadingThresholdTb.Text?.Trim() ?? ""
+            : "";
+        var damageShadingRate = _fieldControls.TryGetValue("damageshading.rate", out var damageShadingRateCtrl) && damageShadingRateCtrl is TextBox damageShadingRateTb
+            ? damageShadingRateTb.Text?.Trim() ?? ""
+            : "";
+        var damageShadingTime = _fieldControls.TryGetValue("damageshading.time", out var damageShadingTimeCtrl) && damageShadingTimeCtrl is TextBox damageShadingTimeTb
+            ? damageShadingTimeTb.Text?.Trim() ?? ""
+            : "";
+        damageShadingType = KnownInitialShadingTypes.FirstOrDefault(x => x.Equals(damageShadingType, StringComparison.OrdinalIgnoreCase)) ?? "";
+        if (string.IsNullOrWhiteSpace(damageShadingThreshold))
+            damageShadingThreshold = "1";
+        else if (double.TryParse(damageShadingThreshold, out var parsedDamageShadingThreshold))
+        {
+            if (parsedDamageShadingThreshold < 0) parsedDamageShadingThreshold = 0;
+            if (parsedDamageShadingThreshold > 1) parsedDamageShadingThreshold = 1;
+            damageShadingThreshold = parsedDamageShadingThreshold.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+        }
+        else
+        {
+            damageShadingThreshold = "1";
+        }
+        if (string.IsNullOrWhiteSpace(damageShadingRate))
+            damageShadingRate = "1";
+        if (string.IsNullOrWhiteSpace(damageShadingTime))
+            damageShadingTime = "1000";
+        if (!string.IsNullOrWhiteSpace(damageShadingType))
+        {
+            var damageShadingElement = new XElement("damageshading");
+            damageShadingElement.SetAttributeValue("type", damageShadingType);
+            damageShadingElement.SetAttributeValue("threshold", damageShadingThreshold);
+            damageShadingElement.SetAttributeValue("rate", damageShadingRate);
+            damageShadingElement.SetAttributeValue("time", damageShadingTime);
+            unit.Add(damageShadingElement);
+        }
+
+        unit.Elements("killreward").Remove();
+        foreach (var resourceType in ProtoConstants.KnownResourceTypes)
+        {
+            if (_fieldControls.TryGetValue($"killreward:{resourceType}", out var killRewardCtrl) && killRewardCtrl is TextBox killRewardTb)
+            {
+                var killRewardValue = killRewardTb.Text?.Trim() ?? "";
+                if (!string.IsNullOrWhiteSpace(killRewardValue))
+                {
+                    unit.Add(new XElement("killreward",
+                        new XAttribute("resourcetype", resourceType),
+                        killRewardValue));
+                }
+            }
+        }
+
+        unit.Elements("dependentunit").Remove();
+        var validDependentUnitNames = GetAvailableTrainUnitNames();
+        foreach (var row in _dependentUnitRows)
+        {
+            var dependentUnitValue = row.ValueAcb.Text?.Trim() ?? "";
+            var dependentUnitName = validDependentUnitNames.FirstOrDefault(x => x.Equals(dependentUnitValue, StringComparison.OrdinalIgnoreCase)) ?? "";
+            if (string.IsNullOrWhiteSpace(dependentUnitName))
+                continue;
+
+            var dependentUnit = new XElement("dependentunit", dependentUnitName);
+            var x = row.XTb.Text?.Trim() ?? "";
+            var z = row.ZTb.Text?.Trim() ?? "";
+            var attachBone = row.AttachBoneTb.Text?.Trim() ?? "";
+
+            dependentUnit.SetAttributeValue("x", string.IsNullOrWhiteSpace(x) ? "0" : x);
+            dependentUnit.SetAttributeValue("z", string.IsNullOrWhiteSpace(z) ? "0" : z);
+            if (!string.IsNullOrWhiteSpace(attachBone))
+                dependentUnit.SetAttributeValue("attachbone", attachBone);
+
+            unit.Add(dependentUnit);
+        }
+
+        unit.Elements("veterancyranks").Remove();
+        if (_veterancyRankRows.Count > 0)
+        {
+            var veterancyRanks = new XElement("veterancyranks");
+            foreach (var row in _veterancyRankRows)
+            {
+                var type = row.TypeCb.SelectedItem as string ?? row.TypeCb.SelectedValue as string ?? "";
+                var value = row.ValueTb.Text?.Trim() ?? "";
+                if (string.IsNullOrWhiteSpace(type) || string.IsNullOrWhiteSpace(value))
+                    continue;
+
+                var tagName = type switch
+                {
+                    "NumKills" => "numkills",
+                    "NumAttacks" => "numattacks",
+                    "TotalDamage" => "totaldamage",
+                    "DamageAndResourcesEaten" => "damageandresourceseaten",
+                    _ => type.ToLowerInvariant()
+                };
+
+                veterancyRanks.Add(new XElement("rank", new XElement(tagName, value)));
+            }
+
+            if (veterancyRanks.HasElements)
+                unit.Add(veterancyRanks);
+        }
+
+        unit.Elements("veterancybonus").Remove();
+        if (_veterancyBonusRows.Count > 0 && _currentVeterancyIncludeTypes != null && _currentVeterancyIncludeTypes.Count > 0)
+        {
+            var groupedBonusRows = _veterancyBonusRows
+                .Select(row => new
+                {
+                    RankId = row.RankIdTb.Text?.Trim() ?? "0",
+                    ModifyType = row.ModifyTypeTb.Text?.Trim() ?? "",
+                    Value = row.ValueTb.Text?.Trim() ?? ""
+                })
+                .Where(x => !string.IsNullOrWhiteSpace(x.ModifyType) && !string.IsNullOrWhiteSpace(x.Value))
+                .GroupBy(x => string.IsNullOrWhiteSpace(x.RankId) ? "0" : x.RankId);
+
+            var veterancyBonus = new XElement("veterancybonus");
+            foreach (var group in groupedBonusRows)
+            {
+                var rank = new XElement("rank");
+                rank.SetAttributeValue("id", group.Key);
+                foreach (var bonus in group)
+                {
+                    var modify = new XElement("veterancymodify", bonus.Value);
+                    modify.SetAttributeValue("modifytype", bonus.ModifyType);
+                    rank.Add(modify);
+                }
+                veterancyBonus.Add(rank);
+            }
+
+            veterancyBonus.Add(new XElement("includetypes",
+                _currentVeterancyIncludeTypes
+                    .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                    .Select(x => new XElement("unittype", x))));
+
+            if (_currentVeterancyExcludeTypes != null && _currentVeterancyExcludeTypes.Count > 0)
+            {
+                veterancyBonus.Add(new XElement("excludetypes",
+                    _currentVeterancyExcludeTypes
+                        .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                        .Select(x => new XElement("unittype", x))));
+            }
+
+            if (veterancyBonus.HasElements)
+                unit.Add(veterancyBonus);
+        }
+
+        unit.Elements("spawn").Remove();
+        var validSpawnProtoUnits = GetAvailableTrainUnitNames();
+        foreach (var row in _spawnRows)
+        {
+            var spawnValue = row.ValueAcb.Text?.Trim() ?? "";
+            var spawnProtoUnit = validSpawnProtoUnits.FirstOrDefault(x => x.Equals(spawnValue, StringComparison.OrdinalIgnoreCase)) ?? "";
+            if (string.IsNullOrWhiteSpace(spawnProtoUnit))
+                continue;
+
+            var spawnType = row.TypeAcb.Text?.Trim() ?? "";
+            spawnType = KnownSpawnTypes.FirstOrDefault(x => x.Equals(spawnType, StringComparison.OrdinalIgnoreCase)) ?? "";
+            if (string.IsNullOrWhiteSpace(spawnType))
+                continue;
+
+            var count = row.CountTb.Text?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(count))
+                count = "1";
+
+            var lifespan = row.LifespanTb.Text?.Trim() ?? "";
+            var chance = row.ChanceTb.Text?.Trim() ?? "";
+            if (!string.IsNullOrWhiteSpace(chance) && double.TryParse(chance, out var parsedSpawnChance))
+            {
+                if (parsedSpawnChance < 0) parsedSpawnChance = 0;
+                if (parsedSpawnChance > 1) parsedSpawnChance = 1;
+                chance = parsedSpawnChance.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+            }
+            else if (!string.IsNullOrWhiteSpace(chance))
+            {
+                chance = "1";
+            }
+
+            var delay = row.DelayTb.Text?.Trim() ?? "";
+            var waterProtoUnit = row.WaterProtoUnitAcb.Text?.Trim() ?? "";
+            waterProtoUnit = validSpawnProtoUnits.FirstOrDefault(x => x.Equals(waterProtoUnit, StringComparison.OrdinalIgnoreCase)) ?? "";
+            var shadingType = row.ShadingTypeAcb.Text?.Trim() ?? "";
+            shadingType = KnownInitialShadingTypes.FirstOrDefault(x => x.Equals(shadingType, StringComparison.OrdinalIgnoreCase)) ?? "";
+
+            var spawn = new XElement("spawn", spawnProtoUnit);
+            spawn.SetAttributeValue("type", spawnType);
+            spawn.SetAttributeValue("count", count);
+            if (!string.IsNullOrWhiteSpace(lifespan))
+                spawn.SetAttributeValue("lifespan", lifespan);
+            if (!string.IsNullOrWhiteSpace(chance))
+                spawn.SetAttributeValue("chance", chance);
+            if (!string.IsNullOrWhiteSpace(delay))
+                spawn.SetAttributeValue("delay", delay);
+            if (row.SkipPlacementCheckCb.IsChecked == true)
+                spawn.SetAttributeValue("skipPlacementCheck", "");
+            if (row.ControlGroupCb.IsChecked == true)
+                spawn.SetAttributeValue("controlGroup", "");
+            if (!string.IsNullOrWhiteSpace(waterProtoUnit))
+                spawn.SetAttributeValue("waterProtoUnit", waterProtoUnit);
+            if (row.SetOwnerCb.IsChecked == true)
+                spawn.SetAttributeValue("setowner", "");
+            if (!string.IsNullOrWhiteSpace(shadingType))
+                spawn.SetAttributeValue("shadingtype", shadingType);
+
+            unit.Add(spawn);
+        }
+
+        unit.Elements("respawntraindata").Remove();
+        var respawnMode = _fieldControls.TryGetValue("respawntraindata.mode", out var respawnModeCtrl) && respawnModeCtrl is ComboBox respawnModeCb
+            ? (respawnModeCb.SelectedItem as string ?? "Self Respawn")
+            : "";
+        if (!string.IsNullOrWhiteSpace(respawnMode))
+        {
+            var respawnTrainData = new XElement("respawntraindata");
+            if (respawnMode.Equals("Self Respawn", StringComparison.OrdinalIgnoreCase))
+            {
+                var targetType = _fieldControls.TryGetValue("respawntraindata.targettype", out var targetTypeCtrl) && targetTypeCtrl is AutoCompleteBox targetTypeAcb
+                    ? targetTypeAcb.Text?.Trim() ?? ""
+                    : "";
+                var trainProto = _fieldControls.TryGetValue("respawntraindata.trainproto", out var trainProtoCtrl) && trainProtoCtrl is AutoCompleteBox trainProtoAcb
+                    ? trainProtoAcb.Text?.Trim() ?? ""
+                    : "";
+                var respawnTime = _fieldControls.TryGetValue("respawntraindata.respawntime", out var respawnTimeCtrl) && respawnTimeCtrl is TextBox respawnTimeTb
+                    ? respawnTimeTb.Text?.Trim() ?? ""
+                    : "";
+                var respawnVfx = _fieldControls.TryGetValue("respawntraindata.respawnvfx", out var respawnVfxCtrl) && respawnVfxCtrl is TextBox respawnVfxTb
+                    ? respawnVfxTb.Text?.Trim() ?? ""
+                    : "";
+
+                targetType = GetAvailableBuildLimitTargets().FirstOrDefault(x => x.Equals(targetType, StringComparison.OrdinalIgnoreCase)) ?? "";
+                trainProto = validSpawnProtoUnits.FirstOrDefault(x => x.Equals(trainProto, StringComparison.OrdinalIgnoreCase)) ?? "";
+
+                if (!string.IsNullOrWhiteSpace(targetType) && !string.IsNullOrWhiteSpace(trainProto))
+                {
+                    respawnTrainData.Add(new XElement("targettype", targetType));
+                    respawnTrainData.Add(new XElement("trainproto", trainProto));
+                    if (!string.IsNullOrWhiteSpace(respawnTime))
+                        respawnTrainData.Add(new XElement("respawntime", respawnTime));
+                    if (!string.IsNullOrWhiteSpace(respawnVfx))
+                        respawnTrainData.Add(new XElement("respawnvfx", respawnVfx));
+                }
+            }
+            else if (respawnMode.Equals("Respawn Point", StringComparison.OrdinalIgnoreCase) &&
+                     _currentRespawnTrainTypes != null &&
+                     _currentRespawnTrainTypes.Count > 0)
+            {
+                respawnTrainData.Add(new XElement("respawntypes",
+                    _currentRespawnTrainTypes
+                        .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                        .Select(x => new XElement("unittype", x))));
+
+                if (_currentRespawnTrainExcludeTypes != null && _currentRespawnTrainExcludeTypes.Count > 0)
+                {
+                    respawnTrainData.Add(new XElement("excludetypes",
+                        _currentRespawnTrainExcludeTypes
+                            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                            .Select(x => new XElement("unittype", x))));
+                }
+
+                var respawnRates = new XElement("respawnrates");
+                foreach (var resourceType in ProtoConstants.KnownResourceTypes)
+                {
+                    var resourceKey = resourceType.ToLowerInvariant();
+                    var value = _fieldControls.TryGetValue($"respawntraindata.{resourceKey}", out var rateCtrl) && rateCtrl is TextBox rateTb
+                        ? rateTb.Text?.Trim() ?? "0"
+                        : "0";
+                    respawnRates.Add(new XElement(resourceKey, string.IsNullOrWhiteSpace(value) ? "0" : value));
+                }
+                respawnTrainData.Add(respawnRates);
+
+                var respawnLimit = _fieldControls.TryGetValue("respawntraindata.respawnlimit", out var respawnLimitCtrl) && respawnLimitCtrl is TextBox respawnLimitTb
+                    ? respawnLimitTb.Text?.Trim() ?? "0"
+                    : "0";
+                respawnTrainData.Add(new XElement("respawnlimit", string.IsNullOrWhiteSpace(respawnLimit) ? "0" : respawnLimit));
+
+                var respawnVfx = _fieldControls.TryGetValue("respawntraindata.respawnvfx", out var respawnPointVfxCtrl) && respawnPointVfxCtrl is TextBox respawnPointVfxTb
+                    ? respawnPointVfxTb.Text?.Trim() ?? ""
+                    : "";
+                if (!string.IsNullOrWhiteSpace(respawnVfx))
+                    respawnTrainData.Add(new XElement("respawnvfx", respawnVfx));
+            }
+
+            if (respawnTrainData.HasElements)
+                unit.Add(respawnTrainData);
         }
 
         void SaveOptionalSimpleField(string tag)
@@ -6416,18 +8470,52 @@ public partial class ProtoEditorWindow : SimpleWindow
             unit.Element("minimapcolor")?.Remove();
         }
 
+        if (_fieldControls.TryGetValue("minimapicon", out var minimapIconCtrl) && minimapIconCtrl is AutoCompleteBox minimapIconAcb)
+        {
+            var minimapIcon = minimapIconAcb.Text?.Trim() ?? "";
+            minimapIcon = GetKnownMinimapIcons().FirstOrDefault(x => x.Equals(minimapIcon, StringComparison.OrdinalIgnoreCase)) ?? "";
+            if (!string.IsNullOrWhiteSpace(minimapIcon))
+                ProtoXmlHandler.SetSimpleField(unit, "minimapicon", minimapIcon);
+            else
+                ProtoXmlHandler.RemoveSimpleField(unit, "minimapicon");
+        }
+        else
+        {
+            ProtoXmlHandler.RemoveSimpleField(unit, "minimapicon");
+        }
+
+        if (_fieldControls.TryGetValue("minimapsize", out var minimapSizeCtrl) && minimapSizeCtrl is TextBox minimapSizeTb)
+        {
+            var minimapSize = minimapSizeTb.Text?.Trim() ?? "";
+            if (!string.IsNullOrWhiteSpace(minimapSize))
+                ProtoXmlHandler.SetSimpleField(unit, "minimapsize", minimapSize);
+            else
+                ProtoXmlHandler.RemoveSimpleField(unit, "minimapsize");
+        }
+        else
+        {
+            ProtoXmlHandler.RemoveSimpleField(unit, "minimapsize");
+        }
+
         if (_fieldControls.TryGetValue("replacement.value", out var replacementValueCtrl) && replacementValueCtrl is AutoCompleteBox replacementValueAcb)
         {
             unit.Element("replacement")?.Remove();
             var value = replacementValueAcb.Text?.Trim() ?? "";
-            var type = _fieldControls.TryGetValue("replacement.type", out var replacementTypeCtrl) && replacementTypeCtrl is TextBox replacementTypeTb
-                ? replacementTypeTb.Text?.Trim() ?? ""
+            var type = _fieldControls.TryGetValue("replacement.type", out var replacementTypeCtrl) && replacementTypeCtrl is AutoCompleteBox replacementTypeAcb
+                ? replacementTypeAcb.Text?.Trim() ?? ""
+                : "";
+            type = KnownReplacementTypes.FirstOrDefault(x => x.Equals(type, StringComparison.OrdinalIgnoreCase)) ?? "";
+            value = GetAvailableTrainUnitNames().FirstOrDefault(x => x.Equals(value, StringComparison.OrdinalIgnoreCase)) ?? "";
+            var lifespan = _fieldControls.TryGetValue("replacement.lifespan", out var replacementLifespanCtrl) && replacementLifespanCtrl is TextBox replacementLifespanTb
+                ? replacementLifespanTb.Text?.Trim() ?? ""
                 : "";
             if (!string.IsNullOrWhiteSpace(value))
             {
                 var replacement = new XElement("replacement", value);
                 if (!string.IsNullOrWhiteSpace(type))
                     replacement.SetAttributeValue("type", type);
+                if (!string.IsNullOrWhiteSpace(lifespan))
+                    replacement.SetAttributeValue("lifespan", lifespan);
                 unit.Add(replacement);
             }
         }
