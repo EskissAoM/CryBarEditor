@@ -20,6 +20,13 @@ namespace CryBarEditor.Windows;
 
 public partial class ProtoEditorWindow : SimpleWindow
 {
+    private enum NewCustomUnitKind
+    {
+        Unit,
+        Building,
+        Other
+    }
+
     private static readonly HashSet<string> SelectionOnlySimpleFields = new(StringComparer.OrdinalIgnoreCase)
     {
         "impacttype",
@@ -79,6 +86,8 @@ public partial class ProtoEditorWindow : SimpleWindow
     private HashSet<string>? _currentSharedSelectionUnitTypes;
     private HashSet<string>? _currentRechargeIncludeTypes;
     private HashSet<string>? _currentRechargeExcludeTypes;
+    private HashSet<string>? _currentAuxRechargeIncludeTypes;
+    private HashSet<string>? _currentAuxRechargeExcludeTypes;
     private HashSet<string>? _currentVeterancyIncludeTypes;
     private HashSet<string>? _currentVeterancyExcludeTypes;
     private HashSet<string>? _currentRespawnTrainTypes;
@@ -110,6 +119,7 @@ public partial class ProtoEditorWindow : SimpleWindow
     private readonly List<SpawnRowState> _spawnRows = [];
     private readonly List<VeterancyRankRowState> _veterancyRankRows = [];
     private readonly List<VeterancyBonusRowState> _veterancyBonusRows = [];
+    private readonly List<OnDamageModifyRowState> _onDamageModifyRows = [];
     private BuildLimitMode _currentBuildLimitMode = BuildLimitMode.Standard;
 
     private enum BuildLimitMode
@@ -213,6 +223,15 @@ public partial class ProtoEditorWindow : SimpleWindow
         public required TextBox RankIdTb { get; set; }
         public required TextBox ModifyTypeTb { get; set; }
         public required TextBox ValueTb { get; set; }
+    }
+
+    private class OnDamageModifyRowState
+    {
+        public required Panel RowPanel { get; set; }
+        public required TextBox ModifyTypeTb { get; set; }
+        public required TextBox ValueTb { get; set; }
+        public required AutoCompleteBox DamageTypeAcb { get; set; }
+        public required TextBlock DamageTypeLabel { get; set; }
     }
 
     public ProtoEditorWindow()
@@ -499,14 +518,14 @@ public partial class ProtoEditorWindow : SimpleWindow
     private static bool IsCultureAwareSimpleField(string tag) => CultureAwareSimpleFieldTags.Contains(tag, StringComparer.OrdinalIgnoreCase);
     private static readonly string[] TrainTechRowOptions = ["0", "1", "2", "3"];
     private static readonly string[] TrainTechColumnOptions = ["0", "1", "2", "3", "4", "5"];
+    private static readonly string[] KnownRechargeTypes = ["Kills", "Damage", "Attacks", "resourceDropoff"];
     private static readonly string[] SupportedCultureLabels = SupportedCultures.Select(x => x.Label).ToArray();
     private static readonly string[] OtherSpecificAttributeChoiceKeys =
     [
         "selectionradius",
         "autoattackrange",
         "lifespan",
-        "rechargetime",
-        "auxrechargetime",
+        "auxrecharge",
         "resourcesubtype",
         "minimapvisuals",
         "resourcepriority",
@@ -544,6 +563,8 @@ public partial class ProtoEditorWindow : SimpleWindow
         "decaydelaytime",
         "researchrate",
         "killrewarddata",
+        "resourcereturn",
+        "resourcereturnrate",
         "autobuildrate",
         "godpowerblockradius",
         "godpowercostfactor",
@@ -557,7 +578,7 @@ public partial class ProtoEditorWindow : SimpleWindow
         "dependentunitdata",
         "eidolonprotoid",
         "enemyshortrollovertextid",
-        "socketunittype",
+        "socketdata",
         "disguiseprotoid",
         "spawndata",
         "veterancydata",
@@ -569,13 +590,13 @@ public partial class ProtoEditorWindow : SimpleWindow
         "carrycapacity",
         "initialresource",
         "resourceconversion",
+        "conversionresistance",
         "respawntraindata",
         "sharedselectionunittypes",
-        "rechargeincludetypes",
-        "rechargeexcludetypes",
         "decay",
         "recharge",
         "replacement",
+        "ondamagemodifiers",
     ];
     private static string GetStringSuffixForField(string tag) => tag.ToLowerInvariant() switch
     {
@@ -610,8 +631,7 @@ public partial class ProtoEditorWindow : SimpleWindow
         ["selectionradius"] = "Selection Radius",
         ["autoattackrange"] = "Auto Attack Range",
         ["lifespan"] = "Lifespan",
-        ["rechargetime"] = "Recharge Time",
-        ["auxrechargetime"] = "Aux Recharge Time",
+        ["auxrecharge"] = "Aux Ability Recharge",
         ["resourcesubtype"] = "Resource Subtype",
         ["minimapvisuals"] = "Minimap Visuals",
         ["resourcepriority"] = "Resource Priority",
@@ -648,6 +668,8 @@ public partial class ProtoEditorWindow : SimpleWindow
         ["decaydelaytime"] = "Decay Delay Time",
         ["researchrate"] = "Research Rate",
         ["killrewarddata"] = "Kill Reward",
+        ["resourcereturn"] = "Resource Return",
+        ["resourcereturnrate"] = "Resource Return Rate",
         ["autobuildrate"] = "Auto Build Rate",
         ["godpowerblockradius"] = "God Power Block Radius",
         ["godpowercostfactor"] = "God Power Cost Factor",
@@ -661,7 +683,7 @@ public partial class ProtoEditorWindow : SimpleWindow
         ["dependentunitdata"] = "Dependent Unit",
         ["eidolonprotoid"] = "Eidolon Proto ID",
         ["enemyshortrollovertextid"] = "Enemy Short Rollover Text ID",
-        ["socketunittype"] = "Socket Unit Type",
+        ["socketdata"] = "Socket",
         ["disguiseprotoid"] = "Disguise Proto ID",
         ["spawndata"] = "Spawn",
         ["veterancydata"] = "Veterancy",
@@ -673,30 +695,30 @@ public partial class ProtoEditorWindow : SimpleWindow
         ["carrycapacity"] = "Carry Capacity",
         ["initialresource"] = "Initial Resource",
         ["resourceconversion"] = "Resource Conversion",
+        ["conversionresistance"] = "Conversion Resistance",
         ["respawntraindata"] = "Respawn Train Data",
         ["sharedselectionunittypes"] = "Shared Selection Unit Types",
-        ["rechargeincludetypes"] = "Recharge Include Types",
-        ["rechargeexcludetypes"] = "Recharge Exclude Types",
         ["decay"] = "Decay",
-        ["recharge"] = "Recharge",
+        ["recharge"] = "Ability Recharge",
         ["replacement"] = "Replacement",
+        ["ondamagemodifiers"] = "On Damage Modifiers",
     };
 
     private static readonly HashSet<string> OtherSpecificSimpleNumberTags = new(StringComparer.OrdinalIgnoreCase)
     {
-        "autoattackrange", "lifespan", "rechargetime", "auxrechargetime", "resourcepriority", "resourcedecay",
+        "autoattackrange", "lifespan", "resourcepriority", "resourcedecay",
         "wanderdistance", "workersoftlimit", "formationorder", "screenshakeondestruction", "stealthdetectionradius", "displayedrange",
         "aistancebasedistance", "heighthitpointbaroffset", "allowedheightvariance", "stealthrevealselfradius",
         "stealthshowsilhouetteradius", "populationcapaddition", "gathererlimit",
         "prioritybonusfactor", "buildingworkrate", "trainingrate", "gatherratemultiplier", "partisancount", "decaytime",
         "decaydelaytime", "researchrate", "projectilespinperiod", "autobuildrate",
         "godpowerblockradius", "godpowercostfactor", "builderlimit", "corpsedecaydelay", "costescalation", "bloodscalemodify", "bonescalemodify",
-        "dodgechance"
+        "dodgechance", "conversionresistance"
     };
 
     private static readonly HashSet<string> OtherSpecificSimpleSuggestionTags = new(StringComparer.OrdinalIgnoreCase)
     {
-        "culture", "resourcesubtype", "socketunittype", "disguiseprotoid", "deadreplacement", "deadtransform",
+        "culture", "resourcesubtype", "disguiseprotoid", "deadreplacement", "deadtransform",
         "initialunitaistance", "pathabilityflags", "placementfile", "hotkeycontext", "allyhotkeycontext", "partisantype", "bloodgroupoverride",
         "eidolonprotoid", "selfdestructprotoaction", "birthprotoaction", "stackprotoaction"
     };
@@ -714,7 +736,8 @@ public partial class ProtoEditorWindow : SimpleWindow
         "corpsedecaydelay",
         "decaytime",
         "decaydelaytime",
-        "projectilespinperiod"
+        "projectilespinperiod",
+        "enemyshortrollovertextid"
     };
 
     private static string GetOtherSpecificAttributeLabel(string key)
@@ -727,6 +750,7 @@ public partial class ProtoEditorWindow : SimpleWindow
     {
         "displayedrange" => "DisplayRange",
         "dodgechance" => "CanDodgeAttacks",
+        "farming" => "UseFarmingAnims",
         _ => null
     };
 
@@ -1879,6 +1903,14 @@ public partial class ProtoEditorWindow : SimpleWindow
 
         _currentUnitName = unitName;
         RefreshCurrentUnitProtoActionMetadata(unit);
+        var persistedUnitTypes = new HashSet<string>(
+            unit.Elements("unittype")
+                .Select(x => x.Value?.Trim() ?? "")
+                .Where(x => x.Length > 0),
+            StringComparer.OrdinalIgnoreCase);
+        bool useBuildingLayout =
+            persistedUnitTypes.Contains("Building") ||
+            !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "buildpoints"));
 
         var header = new TextBlock
         {
@@ -1936,6 +1968,18 @@ public partial class ProtoEditorWindow : SimpleWindow
             if (field.Tag.Equals("buildlimit", StringComparison.OrdinalIgnoreCase) ||
                 field.Tag.Equals("tactics", StringComparison.OrdinalIgnoreCase) ||
                 field.Tag.Equals("maxcontained", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (field.Tag.Equals("trainpoints", StringComparison.OrdinalIgnoreCase) && useBuildingLayout)
+                continue;
+
+            if (field.Tag.Equals("buildpoints", StringComparison.OrdinalIgnoreCase) && !useBuildingLayout)
+                continue;
+
+            if (field.Tag.Equals("turnrate", StringComparison.OrdinalIgnoreCase) && useBuildingLayout)
+                continue;
+
+            if (field.Tag.Equals("weightclass", StringComparison.OrdinalIgnoreCase) && useBuildingLayout)
                 continue;
 
             if (field.Tag.Equals("obstructionradiusz", StringComparison.OrdinalIgnoreCase) ||
@@ -2550,6 +2594,9 @@ public partial class ProtoEditorWindow : SimpleWindow
 
             if (field.Tag.Equals("movementtype", StringComparison.OrdinalIgnoreCase))
             {
+                if (useBuildingLayout)
+                    continue;
+
                 propertiesGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
                 var movementLabel = new TextBlock
@@ -2957,6 +3004,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                             Margin = new Thickness(0, 4, 0, 4),
                             ItemsSource = list
                         };
+                        EnableDropdownAutoComplete(acb);
 
                         acb.TextChanged += async (s, e) =>
                         {
@@ -2979,6 +3027,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                         IsEnabled = !_isReadOnly,
                         Margin = new Thickness(0, 4, 0, 4)
                     };
+                    EnableDropdownAutoComplete(acb);
 
                     acb.TextChanged += async (s, e) =>
                     {
@@ -3795,10 +3844,13 @@ public partial class ProtoEditorWindow : SimpleWindow
         _currentSharedSelectionUnitTypes = null;
         _currentRechargeIncludeTypes = null;
         _currentRechargeExcludeTypes = null;
+        _currentAuxRechargeIncludeTypes = null;
+        _currentAuxRechargeExcludeTypes = null;
         _currentVeterancyIncludeTypes = null;
         _currentVeterancyExcludeTypes = null;
         _currentRespawnTrainTypes = null;
         _currentRespawnTrainExcludeTypes = null;
+        _onDamageModifyRows.Clear();
 
         var otherAttributeSuggestions = GetAvailableBuildLimitTargets();
         var otherProtoUnitSuggestions = GetAvailableTrainUnitNames();
@@ -3960,6 +4012,8 @@ public partial class ProtoEditorWindow : SimpleWindow
             var initialValue = ProtoXmlHandler.GetSimpleField(unit, tag) ?? "";
             if (tag.Equals("dodgechance", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(initialValue))
                 initialValue = "0";
+            if (tag.Equals("conversionresistance", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(initialValue))
+                initialValue = "1";
             if (tag.Equals("formationorder", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(initialValue))
                 initialValue = "0";
             if (tag.Equals("workersoftlimit", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(initialValue))
@@ -4179,46 +4233,59 @@ public partial class ProtoEditorWindow : SimpleWindow
             if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
                 return;
 
-            var stack = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 2) };
-            stack.Children.Add(new TextBlock { Text = "Farming Data", FontWeight = FontWeight.Bold, Margin = new Thickness(0, 4, 0, 2) });
+            var rowGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, 90, Auto, 90, Auto, 90, Auto, 90, Auto, 90, Auto"), Margin = new Thickness(0, 2, 0, 2) };
+            rowGrid.Children.Add(new TextBlock { Text = "Farming Data", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
 
-            var topRow = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, 110, Auto, 110") };
-            topRow.Children.Add(new TextBlock { Text = "Radius", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
-            topRow.Children.Add(new TextBlock { Text = "X", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
-            Grid.SetColumn(topRow.Children[^1], 1);
+            var radiusXLabel = new TextBlock { Text = "Radius X", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
+            Grid.SetColumn(radiusXLabel, 1);
+            rowGrid.Children.Add(radiusXLabel);
             var radiusX = CreateOtherTextBox(ProtoXmlHandler.GetSimpleField(unit, "farmingradiusx") ?? "0", true);
             Grid.SetColumn(radiusX, 2);
-            topRow.Children.Add(radiusX);
+            rowGrid.Children.Add(radiusX);
             _fieldControls["farmingradiusx"] = radiusX;
-            topRow.Children.Add(new TextBlock { Text = "Z", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) });
-            Grid.SetColumn(topRow.Children[^1], 3);
+
+            var radiusZLabel = new TextBlock { Text = "Radius Z", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+            Grid.SetColumn(radiusZLabel, 3);
+            rowGrid.Children.Add(radiusZLabel);
             var radiusZ = CreateOtherTextBox(ProtoXmlHandler.GetSimpleField(unit, "farmingradiusz") ?? "0", true);
             Grid.SetColumn(radiusZ, 4);
-            topRow.Children.Add(radiusZ);
+            rowGrid.Children.Add(radiusZ);
             _fieldControls["farmingradiusz"] = radiusZ;
-            stack.Children.Add(topRow);
 
-            var secondRow = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, 110, Auto, 110") };
-            secondRow.Children.Add(new TextBlock { Text = "Obstruction", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
-            secondRow.Children.Add(new TextBlock { Text = "X", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
-            Grid.SetColumn(secondRow.Children[^1], 1);
+            var obstructionXLabel = new TextBlock { Text = "Obstruct X", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+            Grid.SetColumn(obstructionXLabel, 5);
+            rowGrid.Children.Add(obstructionXLabel);
             var obstructionX = CreateOtherTextBox(ProtoXmlHandler.GetSimpleField(unit, "farmingobstructionradiusx") ?? "0", true);
-            Grid.SetColumn(obstructionX, 2);
-            secondRow.Children.Add(obstructionX);
+            Grid.SetColumn(obstructionX, 6);
+            rowGrid.Children.Add(obstructionX);
             _fieldControls["farmingobstructionradiusx"] = obstructionX;
-            secondRow.Children.Add(new TextBlock { Text = "Z", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) });
-            Grid.SetColumn(secondRow.Children[^1], 3);
-            var obstructionZ = CreateOtherTextBox(ProtoXmlHandler.GetSimpleField(unit, "farmingobstructionradiusz") ?? "0", true);
-            Grid.SetColumn(obstructionZ, 4);
-            secondRow.Children.Add(obstructionZ);
-            _fieldControls["farmingobstructionradiusz"] = obstructionZ;
-            stack.Children.Add(secondRow);
 
-            var spotsRow = new Grid { ColumnDefinitions = new ColumnDefinitions("180, 110, Auto") };
-            spotsRow.Children.Add(new TextBlock { Text = "Num Stops", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
-            var numSpots = CreateOtherTextBox(ProtoXmlHandler.GetSimpleField(unit, "farmingnumstops") ?? "0", true);
-            Grid.SetColumn(numSpots, 1);
-            spotsRow.Children.Add(numSpots);
+            var obstructionZLabel = new TextBlock { Text = "Obstruct Z", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+            Grid.SetColumn(obstructionZLabel, 7);
+            rowGrid.Children.Add(obstructionZLabel);
+            var obstructionZ = CreateOtherTextBox(ProtoXmlHandler.GetSimpleField(unit, "farmingobstructionradiusz") ?? "0", true);
+            Grid.SetColumn(obstructionZ, 8);
+            rowGrid.Children.Add(obstructionZ);
+            _fieldControls["farmingobstructionradiusz"] = obstructionZ;
+
+            var numStopsLabel = new TextBlock { Text = "Num Stops", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+            Grid.SetColumn(numStopsLabel, 9);
+            rowGrid.Children.Add(numStopsLabel);
+            var numSpots = CreateOtherTextBox(ProtoXmlHandler.GetSimpleField(unit, "farmingnumstops") ?? "8", true);
+            numSpots.LostFocus += (s, e) =>
+            {
+                if (int.TryParse(numSpots.Text?.Trim(), out var parsedStops))
+                {
+                    if (parsedStops < 2)
+                        numSpots.Text = "2";
+                }
+                else if (string.IsNullOrWhiteSpace(numSpots.Text))
+                {
+                    numSpots.Text = "8";
+                }
+            };
+            Grid.SetColumn(numSpots, 10);
+            rowGrid.Children.Add(numSpots);
             _fieldControls["farmingnumstops"] = numSpots;
             if (!_isReadOnly)
             {
@@ -4233,13 +4300,12 @@ public partial class ProtoEditorWindow : SimpleWindow
                         RenderOtherSpecificAddControls();
                     }
                 };
-                Grid.SetColumn(deleteButton, 2);
-                spotsRow.Children.Add(deleteButton);
+                Grid.SetColumn(deleteButton, 11);
+                rowGrid.Children.Add(deleteButton);
             }
-            stack.Children.Add(spotsRow);
 
-            RegisterOtherSpecificContainer(key, stack);
-            otherSpecificContainer.Children.Add(stack);
+            RegisterOtherSpecificContainer(key, rowGrid);
+            otherSpecificContainer.Children.Add(rowGrid);
         }
 
         void AddStealthEditor()
@@ -4687,6 +4753,240 @@ public partial class ProtoEditorWindow : SimpleWindow
 
             RegisterOtherSpecificContainer(key, rowGrid);
             otherSpecificContainer.Children.Add(rowGrid);
+        }
+
+        void AddResourceReturnEditor()
+        {
+            const string key = "resourcereturn";
+            if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
+                return;
+
+            var existingValues = unit.Elements("ResourceReturn")
+                .Where(x => !string.IsNullOrWhiteSpace((string?)x.Attribute("resourceType")))
+                .ToDictionary(
+                    x => (string?)x.Attribute("resourceType") ?? "",
+                    x => x.Value?.Trim() ?? "",
+                    StringComparer.OrdinalIgnoreCase);
+
+            var stack = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 2) };
+
+            var rowGrid = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("180, Auto, 100, Auto, 100, Auto, 100, Auto, 100, Auto"),
+                Margin = new Thickness(0, 2, 0, 2)
+            };
+            rowGrid.Children.Add(new TextBlock
+            {
+                Text = GetOtherSpecificAttributeLabel(key),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 4, 10, 4)
+            });
+
+            foreach (var rtype in ProtoConstants.KnownResourceTypes)
+            {
+                int index = Array.IndexOf(ProtoConstants.KnownResourceTypes, rtype);
+                int labelColumn = 1 + (index * 2);
+                int valueColumn = labelColumn + 1;
+
+                var label = new TextBlock
+                {
+                    Text = rtype,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(index == 0 ? 0 : 12, 4, 10, 4)
+                };
+                Grid.SetColumn(label, labelColumn);
+                rowGrid.Children.Add(label);
+
+                var tb = CreateOtherTextBox(existingValues.TryGetValue(rtype, out var value) ? value : "", true);
+                Grid.SetColumn(tb, valueColumn);
+                rowGrid.Children.Add(tb);
+                _fieldControls[$"resourcereturn:{rtype}"] = tb;
+            }
+
+            stack.Children.Add(rowGrid);
+
+            var flagRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 18,
+                Margin = new Thickness(180, 0, 0, 0)
+            };
+
+            var currentFlags = ProtoXmlHandler.GetFlagList(unit);
+
+            var returnOnConstructionCb = new CheckBox
+            {
+                Content = "Return on Construction",
+                IsChecked = currentFlags.Contains("ReturnResourcesOnConstruction", StringComparer.OrdinalIgnoreCase),
+                IsEnabled = !_isReadOnly
+            };
+            returnOnConstructionCb.IsCheckedChanged += async (s, e) => await HandleOtherFieldChangedAsync();
+            _fieldControls["resourcereturn:returnonconstruction"] = returnOnConstructionCb;
+            flagRow.Children.Add(returnOnConstructionCb);
+
+            var noReturnOnDeleteCb = new CheckBox
+            {
+                Content = "No Return on Delete",
+                IsChecked = currentFlags.Contains("DoApplyResourceReturnIfDeleted", StringComparer.OrdinalIgnoreCase),
+                IsEnabled = !_isReadOnly
+            };
+            noReturnOnDeleteCb.IsCheckedChanged += async (s, e) => await HandleOtherFieldChangedAsync();
+            _fieldControls["resourcereturn:noreturnondelete"] = noReturnOnDeleteCb;
+            flagRow.Children.Add(noReturnOnDeleteCb);
+
+            stack.Children.Add(flagRow);
+
+            if (!_isReadOnly)
+            {
+                var deleteButton = new Button
+                {
+                    Content = "X",
+                    Background = Brush.Parse("#8b0000"),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Margin = new Thickness(180, 0, 0, 0)
+                };
+                deleteButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        RemoveOtherSpecificContainer(
+                            key,
+                            ProtoConstants.KnownResourceTypes.Select(x => $"resourcereturn:{x}")
+                                .Concat(["resourcereturn:returnonconstruction", "resourcereturn:noreturnondelete"])
+                                .ToArray());
+                        MarkDirty();
+                        RenderOtherSpecificAddControls();
+                    }
+                };
+                stack.Children.Add(deleteButton);
+            }
+
+            RegisterOtherSpecificContainer(key, stack);
+            otherSpecificContainer.Children.Add(stack);
+        }
+
+        void AddResourceReturnRateEditor()
+        {
+            const string key = "resourcereturnrate";
+            if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
+                return;
+
+            var existingValues = unit.Elements("ResourceReturnRate")
+                .Where(x => !string.IsNullOrWhiteSpace((string?)x.Attribute("resourceType")))
+                .ToDictionary(
+                    x => (string?)x.Attribute("resourceType") ?? "",
+                    x => x.Value?.Trim() ?? "",
+                    StringComparer.OrdinalIgnoreCase);
+
+            var stack = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 2) };
+
+            var rowGrid = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("180, Auto, 100, Auto, 100, Auto, 100, Auto, 100, Auto"),
+                Margin = new Thickness(0, 2, 0, 2)
+            };
+            rowGrid.Children.Add(new TextBlock
+            {
+                Text = GetOtherSpecificAttributeLabel(key),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 4, 10, 4)
+            });
+
+            foreach (var rtype in ProtoConstants.KnownResourceTypes)
+            {
+                int index = Array.IndexOf(ProtoConstants.KnownResourceTypes, rtype);
+                int labelColumn = 1 + (index * 2);
+                int valueColumn = labelColumn + 1;
+
+                var label = new TextBlock
+                {
+                    Text = rtype,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(index == 0 ? 0 : 12, 4, 10, 4)
+                };
+                Grid.SetColumn(label, labelColumn);
+                rowGrid.Children.Add(label);
+
+                var tb = CreateOtherTextBox(existingValues.TryGetValue(rtype, out var value) ? value : "", true);
+                Grid.SetColumn(tb, valueColumn);
+                rowGrid.Children.Add(tb);
+                _fieldControls[$"resourcereturnrate:{rtype}"] = tb;
+            }
+
+            stack.Children.Add(rowGrid);
+
+            var flagRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 18,
+                Margin = new Thickness(180, 0, 0, 0)
+            };
+
+            var currentFlags = ProtoXmlHandler.GetFlagList(unit);
+
+            var returnOnConstructionCb = new CheckBox
+            {
+                Content = "Return on Construction",
+                IsChecked = currentFlags.Contains("ReturnResourcesOnConstruction", StringComparer.OrdinalIgnoreCase),
+                IsEnabled = !_isReadOnly
+            };
+            returnOnConstructionCb.IsCheckedChanged += async (s, e) => await HandleOtherFieldChangedAsync();
+            _fieldControls["resourcereturnrate:returnonconstruction"] = returnOnConstructionCb;
+            flagRow.Children.Add(returnOnConstructionCb);
+
+            var noReturnOnDeleteCb = new CheckBox
+            {
+                Content = "No Return on Delete",
+                IsChecked = currentFlags.Contains("DoApplyResourceReturnIfDeleted", StringComparer.OrdinalIgnoreCase),
+                IsEnabled = !_isReadOnly
+            };
+            noReturnOnDeleteCb.IsCheckedChanged += async (s, e) => await HandleOtherFieldChangedAsync();
+            _fieldControls["resourcereturnrate:noreturnondelete"] = noReturnOnDeleteCb;
+            flagRow.Children.Add(noReturnOnDeleteCb);
+
+            var totalCostBasedCb = new CheckBox
+            {
+                Content = "Total Cost Based",
+                IsChecked = currentFlags.Contains("ResourceReturnRateTotalCost", StringComparer.OrdinalIgnoreCase),
+                IsEnabled = !_isReadOnly
+            };
+            totalCostBasedCb.IsCheckedChanged += async (s, e) => await HandleOtherFieldChangedAsync();
+            _fieldControls["resourcereturnrate:totalcostbased"] = totalCostBasedCb;
+            flagRow.Children.Add(totalCostBasedCb);
+
+            stack.Children.Add(flagRow);
+
+            if (!_isReadOnly)
+            {
+                var deleteButton = new Button
+                {
+                    Content = "X",
+                    Background = Brush.Parse("#8b0000"),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Margin = new Thickness(180, 0, 0, 0)
+                };
+                deleteButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        RemoveOtherSpecificContainer(
+                            key,
+                            ProtoConstants.KnownResourceTypes.Select(x => $"resourcereturnrate:{x}")
+                                .Concat(["resourcereturnrate:returnonconstruction", "resourcereturnrate:noreturnondelete", "resourcereturnrate:totalcostbased"])
+                                .ToArray());
+                        MarkDirty();
+                        RenderOtherSpecificAddControls();
+                    }
+                };
+                stack.Children.Add(deleteButton);
+            }
+
+            RegisterOtherSpecificContainer(key, stack);
+            otherSpecificContainer.Children.Add(stack);
         }
 
         void AddDependentUnitEditor()
@@ -5653,6 +5953,163 @@ public partial class ProtoEditorWindow : SimpleWindow
             otherSpecificContainer.Children.Add(stack);
         }
 
+        void AddOnDamageModifiersEditor()
+        {
+            const string key = "ondamagemodifiers";
+            if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
+                return;
+
+            _onDamageModifyRows.Clear();
+
+            var stack = new StackPanel { Spacing = 6, Margin = new Thickness(0, 2, 0, 2) };
+            stack.Children.Add(new TextBlock
+            {
+                Text = GetOtherSpecificAttributeLabel(key),
+                FontWeight = FontWeight.Bold,
+                Margin = new Thickness(0, 4, 0, 2)
+            });
+
+            var rowsHost = new StackPanel { Spacing = 4 };
+            stack.Children.Add(rowsHost);
+
+            static bool NeedsDamageType(string? modifyType)
+                => modifyType != null && (modifyType.Equals("DamageSpecific", StringComparison.OrdinalIgnoreCase) || modifyType.Equals("ArmorSpecific", StringComparison.OrdinalIgnoreCase));
+
+            void AddOnDamageModifyRow(string? modifyType = null, string? value = null, string? damageType = null)
+            {
+                var rowGrid = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("180, Auto, 180, Auto, 120, Auto, 160, Auto"),
+                    Margin = new Thickness(0, 2, 0, 2)
+                };
+
+                rowGrid.Children.Add(new TextBlock { Text = "", VerticalAlignment = VerticalAlignment.Center });
+
+                var modifyTypeLabel = new TextBlock { Text = "Modify Type", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 8, 4) };
+                Grid.SetColumn(modifyTypeLabel, 1);
+                rowGrid.Children.Add(modifyTypeLabel);
+
+                var modifyTypeTb = CreateOtherTextBox(modifyType ?? "");
+                Grid.SetColumn(modifyTypeTb, 2);
+                rowGrid.Children.Add(modifyTypeTb);
+
+                var valueLabel = new TextBlock { Text = "Value", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 8, 4) };
+                Grid.SetColumn(valueLabel, 3);
+                rowGrid.Children.Add(valueLabel);
+
+                var valueTb = CreateOtherTextBox(value ?? "0", true);
+                Grid.SetColumn(valueTb, 4);
+                rowGrid.Children.Add(valueTb);
+
+                var damageTypeLabel = new TextBlock { Text = "Damage Type", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 8, 4) };
+                Grid.SetColumn(damageTypeLabel, 5);
+                rowGrid.Children.Add(damageTypeLabel);
+
+                var damageTypeAcb = CreateValidatedOtherSuggestionBox(damageType ?? "", ProtoConstants.KnownDamageTypes, "Damage Type");
+                damageTypeAcb.Width = 160;
+                Grid.SetColumn(damageTypeAcb, 6);
+                rowGrid.Children.Add(damageTypeAcb);
+
+                void RefreshDamageTypeVisibility()
+                {
+                    var visible = NeedsDamageType(modifyTypeTb.Text?.Trim());
+                    damageTypeLabel.IsVisible = visible;
+                    damageTypeAcb.IsVisible = visible;
+                    if (!visible)
+                        damageTypeAcb.Text = "";
+                }
+
+                modifyTypeTb.TextChanged += (s, e) => RefreshDamageTypeVisibility();
+                RefreshDamageTypeVisibility();
+
+                var rowState = new OnDamageModifyRowState
+                {
+                    RowPanel = rowGrid,
+                    ModifyTypeTb = modifyTypeTb,
+                    ValueTb = valueTb,
+                    DamageTypeAcb = damageTypeAcb,
+                    DamageTypeLabel = damageTypeLabel
+                };
+                _onDamageModifyRows.Add(rowState);
+
+                if (!_isReadOnly)
+                {
+                    var deleteButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), VerticalAlignment = VerticalAlignment.Center };
+                    deleteButton.Click += async (s, e) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            _onDamageModifyRows.Remove(rowState);
+                            rowsHost.Children.Remove(rowGrid);
+                            MarkDirty();
+                        }
+                    };
+                    Grid.SetColumn(deleteButton, 7);
+                    rowGrid.Children.Add(deleteButton);
+                }
+
+                if (!_isReadOnly && rowsHost.Children.Count > 0 && rowsHost.Children[^1] is Button)
+                    rowsHost.Children.Insert(rowsHost.Children.Count - 1, rowGrid);
+                else
+                    rowsHost.Children.Add(rowGrid);
+            }
+
+            var onDamageModifiers = unit.Elements().FirstOrDefault(x => x.Name.LocalName.Equals("OnDamageModifiers", StringComparison.OrdinalIgnoreCase));
+            foreach (var modify in onDamageModifiers?.Elements().Where(x => x.Name.LocalName.Equals("OnDamageModify", StringComparison.OrdinalIgnoreCase)) ?? [])
+            {
+                AddOnDamageModifyRow(
+                    (string?)modify.Attribute("modifyType") ?? (string?)modify.Attribute("modifytype") ?? "",
+                    modify.Value?.Trim() ?? "0",
+                    (string?)modify.Attribute("damageType") ?? (string?)modify.Attribute("damagetype") ?? "");
+            }
+
+            if (!_isReadOnly)
+            {
+                var addButton = new Button
+                {
+                    Content = "+ Add Modifier",
+                    Background = Brush.Parse("#2b7a0b"),
+                    Margin = new Thickness(180, 2, 0, 2),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                addButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        AddOnDamageModifyRow();
+                        MarkDirty();
+                    }
+                };
+                rowsHost.Children.Add(addButton);
+
+                var deleteButton = new Button
+                {
+                    Content = "X",
+                    Background = Brush.Parse("#8b0000"),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                deleteButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        _onDamageModifyRows.Clear();
+                        rowsHost.Children.Clear();
+                        RemoveOtherSpecificContainer(key);
+                        MarkDirty();
+                        RenderOtherSpecificAddControls();
+                    }
+                };
+                stack.Children.Add(deleteButton);
+            }
+
+            RegisterOtherSpecificContainer(key, stack);
+            otherSpecificContainer.Children.Add(stack);
+        }
+
         void AddResourceMapEditor(string key, string elementName)
         {
             if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
@@ -5697,9 +6154,17 @@ public partial class ProtoEditorWindow : SimpleWindow
             {
                 carryCapacityDetails = new StackPanel
                 {
-                    Spacing = 4,
-                    Margin = new Thickness(180, 0, 0, 0)
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 12,
+                    Margin = new Thickness(0, 2, 0, 2)
                 };
+                carryCapacityDetails.Children.Add(new TextBlock
+                {
+                    Text = "Drop Off Multiplier",
+                    Width = 180,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Margin = new Thickness(0, 4, 10, 4)
+                });
             }
 
             foreach (var resourceType in ProtoConstants.KnownResourceTypes)
@@ -5730,28 +6195,27 @@ public partial class ProtoEditorWindow : SimpleWindow
                     _fieldControls[$"{elementName}:dropoffmultiplier:{resourceType}"] = dropOffTb;
 
                     var hasDropOffMultiplier = !string.IsNullOrWhiteSpace(existingMultiplier);
-                    var detailRow = new StackPanel
+                    var detailPanel = new StackPanel
                     {
-                        Orientation = Orientation.Horizontal,
+                        Orientation = Orientation.Vertical,
                         Spacing = 8,
-                        Margin = new Thickness(0, 2, 0, 2)
+                        Margin = new Thickness(0, 2, 0, 2),
+                        VerticalAlignment = VerticalAlignment.Top
                     };
-                    detailRow.Children.Add(new TextBlock
+                    detailPanel.Children.Add(new TextBlock
                     {
                         Text = resourceType,
-                        Width = 60,
                         VerticalAlignment = VerticalAlignment.Center,
                         Margin = new Thickness(0, 4, 0, 4)
                     });
 
                     var toggleButton = new Button
                     {
-                        Content = hasDropOffMultiplier ? "Remove Multiplier" : "+ Add Multiplier",
-                        Background = Brush.Parse(hasDropOffMultiplier ? "#8b0000" : "#2b7a0b"),
+                        Content = "+ Add Multiplier",
+                        Background = Brush.Parse("#2b7a0b"),
                         HorizontalAlignment = HorizontalAlignment.Left,
                         IsEnabled = !_isReadOnly
                     };
-                    detailRow.Children.Add(toggleButton);
 
                     var multiplierPanel = new StackPanel
                     {
@@ -5759,15 +6223,33 @@ public partial class ProtoEditorWindow : SimpleWindow
                         Spacing = 8,
                         IsVisible = hasDropOffMultiplier
                     };
-                    multiplierPanel.Children.Add(new TextBlock
-                    {
-                        Text = "Drop Off Multiplier",
-                        VerticalAlignment = VerticalAlignment.Center,
-                        Margin = new Thickness(0, 4, 0, 4)
-                    });
                     dropOffTb.Width = 110;
                     multiplierPanel.Children.Add(dropOffTb);
-                    detailRow.Children.Add(multiplierPanel);
+                    if (!_isReadOnly)
+                    {
+                        var removeButton = new Button
+                        {
+                            Content = "X",
+                            Background = Brush.Parse("#8b0000"),
+                            VerticalAlignment = VerticalAlignment.Center
+                        };
+                        removeButton.Click += async (s, e) =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (!proceed)
+                                return;
+
+                            multiplierPanel.IsVisible = false;
+                            toggleButton.IsVisible = true;
+                            dropOffTb.Text = "";
+                            MarkDirty();
+                        };
+                        multiplierPanel.Children.Add(removeButton);
+                    }
+
+                    toggleButton.IsVisible = !hasDropOffMultiplier;
+                    detailPanel.Children.Add(toggleButton);
+                    detailPanel.Children.Add(multiplierPanel);
 
                     toggleButton.Click += async (s, e) =>
                     {
@@ -5775,24 +6257,12 @@ public partial class ProtoEditorWindow : SimpleWindow
                         if (!proceed)
                             return;
 
-                        if (multiplierPanel.IsVisible)
-                        {
-                            multiplierPanel.IsVisible = false;
-                            dropOffTb.Text = "";
-                            toggleButton.Content = "+ Add Multiplier";
-                            toggleButton.Background = Brush.Parse("#2b7a0b");
-                        }
-                        else
-                        {
-                            multiplierPanel.IsVisible = true;
-                            toggleButton.Content = "Remove Multiplier";
-                            toggleButton.Background = Brush.Parse("#8b0000");
-                        }
-
+                        multiplierPanel.IsVisible = true;
+                        toggleButton.IsVisible = false;
                         MarkDirty();
                     };
 
-                    carryCapacityDetails!.Children.Add(detailRow);
+                    carryCapacityDetails!.Children.Add(detailPanel);
                 }
             }
             stack.Children.Add(mainRow);
@@ -6041,6 +6511,117 @@ public partial class ProtoEditorWindow : SimpleWindow
             otherSpecificContainer.Children.Add(rowGrid);
         }
 
+        void AddSocketEditor()
+        {
+            const string key = "socketdata";
+            if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
+                return;
+
+            var socketSuggestions = GetAvailableBuildLimitTargets();
+            var socketUnitType = ProtoXmlHandler.GetSimpleField(unit, "socketunittype") ?? "";
+            var nonSocketPlaceProtoId = ProtoXmlHandler.GetSimpleField(unit, "nonsocketplaceprotoid") ?? "";
+            bool showNonSocket = !string.IsNullOrWhiteSpace(nonSocketPlaceProtoId);
+
+            var stack = new StackPanel { Spacing = 6, Margin = new Thickness(0, 2, 0, 2) };
+            var headerGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, *, Auto") };
+            headerGrid.Children.Add(new TextBlock { Text = "Socket", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+
+            var socketLabel = new TextBlock { Text = "Socket Unit Type", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
+            Grid.SetColumn(socketLabel, 1);
+            headerGrid.Children.Add(socketLabel);
+
+            var socketAcb = CreateValidatedOtherSuggestionBox(socketUnitType, socketSuggestions, "Socket Unit Type");
+            Grid.SetColumn(socketAcb, 2);
+            headerGrid.Children.Add(socketAcb);
+            _fieldControls["socketunittype"] = socketAcb;
+
+            if (!_isReadOnly)
+            {
+                var deleteButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
+                deleteButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        RemoveOtherSpecificContainer(key, "socketunittype", "nonsocketplaceprotoid");
+                        MarkDirty();
+                        RenderOtherSpecificAddControls();
+                    }
+                };
+                Grid.SetColumn(deleteButton, 3);
+                headerGrid.Children.Add(deleteButton);
+            }
+
+            stack.Children.Add(headerGrid);
+            var bodyStack = new StackPanel { Spacing = 6 };
+            stack.Children.Add(bodyStack);
+
+            void RenderBody()
+            {
+                bodyStack.Children.Clear();
+                _fieldControls.Remove("nonsocketplaceprotoid");
+
+                if (!showNonSocket)
+                {
+                    if (_isReadOnly)
+                        return;
+
+                    var addButton = new Button
+                    {
+                        Content = "+ Add Non Socket Place Proto ID",
+                        Background = Brush.Parse("#2b7a0b"),
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
+                    addButton.Click += async (s, e) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            showNonSocket = true;
+                            MarkDirty();
+                            RenderBody();
+                        }
+                    };
+                    bodyStack.Children.Add(addButton);
+                    return;
+                }
+
+                var rowGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, *, Auto"), Margin = new Thickness(0, 2, 0, 2) };
+                rowGrid.Children.Add(new TextBlock { Text = "", Margin = new Thickness(0, 4, 10, 4) });
+                var nonSocketLabel = new TextBlock { Text = "Non Socket Place Proto ID", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
+                Grid.SetColumn(nonSocketLabel, 1);
+                rowGrid.Children.Add(nonSocketLabel);
+                var nonSocketAcb = CreateValidatedOtherSuggestionBox(nonSocketPlaceProtoId, socketSuggestions, "Non Socket Place Proto ID");
+                Grid.SetColumn(nonSocketAcb, 2);
+                rowGrid.Children.Add(nonSocketAcb);
+                _fieldControls["nonsocketplaceprotoid"] = nonSocketAcb;
+
+                if (!_isReadOnly)
+                {
+                    var clearButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
+                    clearButton.Click += async (s, e) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            nonSocketPlaceProtoId = "";
+                            showNonSocket = false;
+                            MarkDirty();
+                            RenderBody();
+                        }
+                    };
+                    Grid.SetColumn(clearButton, 3);
+                    rowGrid.Children.Add(clearButton);
+                }
+
+                bodyStack.Children.Add(rowGrid);
+            }
+
+            RenderBody();
+            RegisterOtherSpecificContainer(key, stack);
+            otherSpecificContainer.Children.Add(stack);
+        }
+
         void AddChipListEditor(string key, string title, HashSet<string> values, Action<HashSet<string>> assignTarget)
         {
             if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
@@ -6194,30 +6775,57 @@ public partial class ProtoEditorWindow : SimpleWindow
             if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
                 return;
 
+            var rechargeTime = ProtoXmlHandler.GetSimpleField(unit, "rechargetime") ?? "";
             var recharge = unit.Element("recharge");
-            var rowGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, 120, Auto, 80, Auto, 120, Auto"), Margin = new Thickness(0, 2, 0, 2) };
-            rowGrid.Children.Add(new TextBlock { Text = "Recharge", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
-            var typeLabel = new TextBlock { Text = "Type", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
-            Grid.SetColumn(typeLabel, 1);
-            rowGrid.Children.Add(typeLabel);
-            var typeAcb = CreateOtherTextBox((string?)recharge?.Attribute("type") ?? "");
-            Grid.SetColumn(typeAcb, 2);
-            rowGrid.Children.Add(typeAcb);
-            _fieldControls["recharge.type"] = typeAcb;
-            var initLabel = new TextBlock { Text = "Init", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
-            Grid.SetColumn(initLabel, 3);
-            rowGrid.Children.Add(initLabel);
-            var initTb = CreateOtherTextBox((string?)recharge?.Attribute("init") ?? "", true);
-            Grid.SetColumn(initTb, 4);
-            rowGrid.Children.Add(initTb);
-            _fieldControls["recharge.init"] = initTb;
+            var rechargeTypeRaw = (string?)recharge?.Attribute("type") ?? "";
+            var currentMode = !string.IsNullOrWhiteSpace(rechargeTime)
+                ? "Time"
+                : (KnownRechargeTypes.FirstOrDefault(x => x.Equals(rechargeTypeRaw, StringComparison.OrdinalIgnoreCase)) ?? "Time");
+            var initialValue = currentMode.Equals("Time", StringComparison.OrdinalIgnoreCase)
+                ? rechargeTime
+                : recharge?.Value?.Trim() ?? "";
+            var initialInit = currentMode.Equals("Time", StringComparison.OrdinalIgnoreCase)
+                ? ((string?)unit.Element("rechargetime")?.Attribute("init") ?? "1")
+                : ((string?)recharge?.Attribute("init") ?? "1");
+
+            _currentRechargeIncludeTypes = new HashSet<string>(unit.Element("rechargeincludetypes")?.Elements("unittype").Select(x => x.Value?.Trim() ?? "").Where(x => x.Length > 0) ?? [], StringComparer.OrdinalIgnoreCase);
+            _currentRechargeExcludeTypes = new HashSet<string>(unit.Element("rechargeexcludetypes")?.Elements("unittype").Select(x => x.Value?.Trim() ?? "").Where(x => x.Length > 0) ?? [], StringComparer.OrdinalIgnoreCase);
+            bool showRechargeTypeFilters =
+                (_currentRechargeIncludeTypes?.Count ?? 0) > 0 ||
+                (_currentRechargeExcludeTypes?.Count ?? 0) > 0;
+
+            var stack = new StackPanel { Spacing = 6, Margin = new Thickness(0, 2, 0, 2) };
+            var headerGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, 170, Auto, 120, Auto, 120, Auto") };
+            headerGrid.Children.Add(new TextBlock { Text = "Ability Recharge", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+            var modeLabel = new TextBlock { Text = "Type", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
+            Grid.SetColumn(modeLabel, 1);
+            headerGrid.Children.Add(modeLabel);
+            var modeCb = new ComboBox
+            {
+                ItemsSource = (new[] { "Time" }).Concat(KnownRechargeTypes).ToArray(),
+                SelectedItem = currentMode,
+                IsEnabled = !_isReadOnly,
+                MinWidth = 180
+            };
+            Grid.SetColumn(modeCb, 2);
+            headerGrid.Children.Add(modeCb);
+            _fieldControls["recharge.mode"] = modeCb;
+
             var valueLabel = new TextBlock { Text = "Value", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
-            Grid.SetColumn(valueLabel, 5);
-            rowGrid.Children.Add(valueLabel);
-            var valueTb = CreateOtherTextBox(recharge?.Value?.Trim() ?? "", true);
-            Grid.SetColumn(valueTb, 6);
-            rowGrid.Children.Add(valueTb);
+            Grid.SetColumn(valueLabel, 3);
+            headerGrid.Children.Add(valueLabel);
+            var valueTb = CreateOtherTextBox(initialValue, true);
+            Grid.SetColumn(valueTb, 4);
+            headerGrid.Children.Add(valueTb);
             _fieldControls["recharge.value"] = valueTb;
+
+            var initLabel = new TextBlock { Text = "Init", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+            Grid.SetColumn(initLabel, 5);
+            headerGrid.Children.Add(initLabel);
+            var initTb = CreateOtherTextBox(initialInit, true);
+            Grid.SetColumn(initTb, 6);
+            headerGrid.Children.Add(initTb);
+            _fieldControls["recharge.init"] = initTb;
 
             if (!_isReadOnly)
             {
@@ -6227,17 +6835,432 @@ public partial class ProtoEditorWindow : SimpleWindow
                     var proceed = await CheckStartLocalMod();
                     if (proceed)
                     {
-                        RemoveOtherSpecificContainer(key, "recharge.type", "recharge.init", "recharge.value");
+                        _currentRechargeIncludeTypes = null;
+                        _currentRechargeExcludeTypes = null;
+                        RemoveOtherSpecificContainer(key, "recharge.mode", "recharge.init", "recharge.value");
                         MarkDirty();
                         RenderOtherSpecificAddControls();
                     }
                 };
                 Grid.SetColumn(deleteButton, 7);
-                rowGrid.Children.Add(deleteButton);
+                headerGrid.Children.Add(deleteButton);
             }
 
-            RegisterOtherSpecificContainer(key, rowGrid);
-            otherSpecificContainer.Children.Add(rowGrid);
+            stack.Children.Add(headerGrid);
+            var bodyStack = new StackPanel { Spacing = 6 };
+            stack.Children.Add(bodyStack);
+
+            StackPanel CreateInlineRechargeTypeEditor(string title, HashSet<string> values)
+            {
+                var editorStack = new StackPanel { Spacing = 4 };
+                editorStack.Children.Add(new TextBlock { Text = title, FontWeight = FontWeight.Bold, Margin = new Thickness(0, 4, 0, 2) });
+                var wrap = new WrapPanel { Orientation = Orientation.Horizontal };
+                editorStack.Children.Add(wrap);
+
+                void RefreshDisplay()
+                {
+                    wrap.Children.Clear();
+                    foreach (var value in values.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                    {
+                        wrap.Children.Add(CreateChip(value, async () =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                            {
+                                values.Remove(value);
+                                MarkDirty();
+                                RefreshDisplay();
+                            }
+                        }));
+                    }
+                }
+
+                RefreshDisplay();
+
+                if (!_isReadOnly)
+                {
+                    var addGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("*, Auto") };
+                    var suggestions = GetAvailableBuildLimitTargets();
+                    var acb = CreateOtherSuggestionBox("", suggestions, title);
+                    Grid.SetColumn(acb, 0);
+                    addGrid.Children.Add(acb);
+                    string? selectedValue = null;
+
+                    async Task PerformAdd()
+                    {
+                        var input = acb.Text?.Trim() ?? "";
+                        var match = suggestions.FirstOrDefault(x => x.Equals(input, StringComparison.OrdinalIgnoreCase));
+                        if (!string.IsNullOrWhiteSpace(match) && values.Add(match))
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                            {
+                                acb.Text = "";
+                                MarkDirty();
+                                RefreshDisplay();
+                            }
+                            else
+                            {
+                                values.Remove(match);
+                            }
+                        }
+                    }
+
+                    acb.SelectionChanged += (s, e) =>
+                    {
+                        if (acb.SelectedItem is string selected)
+                        {
+                            selectedValue = selected;
+                            acb.Text = selected;
+                            Dispatcher.UIThread.Post(() =>
+                            {
+                                var input = acb.Text?.Trim() ?? "";
+                                var match = suggestions.FirstOrDefault(x => x.Equals(input, StringComparison.OrdinalIgnoreCase));
+                                if (string.IsNullOrWhiteSpace(match) && !string.IsNullOrWhiteSpace(selectedValue))
+                                    match = suggestions.FirstOrDefault(x => x.Equals(selectedValue, StringComparison.OrdinalIgnoreCase));
+
+                                if (!string.IsNullOrWhiteSpace(match))
+                                    _ = PerformAdd();
+                            }, DispatcherPriority.Background);
+                        }
+                    };
+
+                    var addButton = new Button { Content = "+ Add", Background = Brush.Parse("#2b7a0b"), Margin = new Thickness(8, 0, 0, 0) };
+                    addButton.Click += async (s, e) => await PerformAdd();
+                    Grid.SetColumn(addButton, 1);
+                    addGrid.Children.Add(addButton);
+                    editorStack.Children.Add(addGrid);
+                }
+
+                return editorStack;
+            }
+
+            void RenderBody()
+            {
+                bodyStack.Children.Clear();
+                var selectedMode = modeCb.SelectedItem as string ?? "Time";
+                if (selectedMode.Equals("Time", StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                if (!showRechargeTypeFilters)
+                {
+                    if (_isReadOnly)
+                        return;
+
+                    var addButton = new Button
+                    {
+                        Content = "+ Add Recharge Include/Exclude Types",
+                        Background = Brush.Parse("#2b7a0b"),
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
+                    addButton.Click += async (s, e) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            _currentRechargeIncludeTypes ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            _currentRechargeExcludeTypes ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            showRechargeTypeFilters = true;
+                            MarkDirty();
+                            RenderBody();
+                        }
+                    };
+                    bodyStack.Children.Add(addButton);
+                    return;
+                }
+
+                var filtersGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("*, *, Auto"), ColumnSpacing = 12 };
+                var includeEditor = CreateInlineRechargeTypeEditor("Recharge Include Types", _currentRechargeIncludeTypes ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                Grid.SetColumn(includeEditor, 0);
+                filtersGrid.Children.Add(includeEditor);
+                var excludeEditor = CreateInlineRechargeTypeEditor("Recharge Exclude Types", _currentRechargeExcludeTypes ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                Grid.SetColumn(excludeEditor, 1);
+                filtersGrid.Children.Add(excludeEditor);
+
+                if (!_isReadOnly)
+                {
+                    var clearButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 24, 0, 0) };
+                    clearButton.Click += async (s, e) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            _currentRechargeIncludeTypes?.Clear();
+                            _currentRechargeExcludeTypes?.Clear();
+                            showRechargeTypeFilters = false;
+                            MarkDirty();
+                            RenderBody();
+                        }
+                    };
+                    Grid.SetColumn(clearButton, 2);
+                    filtersGrid.Children.Add(clearButton);
+                }
+
+                bodyStack.Children.Add(filtersGrid);
+            }
+
+            modeCb.SelectionChanged += async (s, e) =>
+            {
+                if (_isPopulating)
+                    return;
+                var proceed = await CheckStartLocalMod();
+                if (proceed)
+                {
+                    MarkDirty();
+                    RenderBody();
+                }
+            };
+
+            RenderBody();
+            RegisterOtherSpecificContainer(key, stack);
+            otherSpecificContainer.Children.Add(stack);
+        }
+
+        void AddAuxRechargeEditor()
+        {
+            const string key = "auxrecharge";
+            if (IsOtherSpecificAttributeVisible(key, _otherSpecificAttributeContainers))
+                return;
+
+            var rechargeTime = ProtoXmlHandler.GetSimpleField(unit, "auxrechargetime") ?? "";
+            var recharge = unit.Element("auxrecharge");
+            var rechargeTypeRaw = (string?)recharge?.Attribute("type") ?? "";
+            var currentMode = !string.IsNullOrWhiteSpace(rechargeTime)
+                ? "Time"
+                : (KnownRechargeTypes.FirstOrDefault(x => x.Equals(rechargeTypeRaw, StringComparison.OrdinalIgnoreCase)) ?? "Time");
+            var initialValue = currentMode.Equals("Time", StringComparison.OrdinalIgnoreCase)
+                ? rechargeTime
+                : recharge?.Value?.Trim() ?? "";
+            var initialInit = currentMode.Equals("Time", StringComparison.OrdinalIgnoreCase)
+                ? ((string?)unit.Element("auxrechargetime")?.Attribute("init") ?? "1")
+                : ((string?)recharge?.Attribute("init") ?? "1");
+
+            _currentAuxRechargeIncludeTypes = new HashSet<string>(unit.Element("auxrechargeincludetypes")?.Elements("unittype").Select(x => x.Value?.Trim() ?? "").Where(x => x.Length > 0) ?? [], StringComparer.OrdinalIgnoreCase);
+            _currentAuxRechargeExcludeTypes = new HashSet<string>(unit.Element("auxrechargeexcludetypes")?.Elements("unittype").Select(x => x.Value?.Trim() ?? "").Where(x => x.Length > 0) ?? [], StringComparer.OrdinalIgnoreCase);
+            bool showRechargeTypeFilters =
+                (_currentAuxRechargeIncludeTypes?.Count ?? 0) > 0 ||
+                (_currentAuxRechargeExcludeTypes?.Count ?? 0) > 0;
+
+            var stack = new StackPanel { Spacing = 6, Margin = new Thickness(0, 2, 0, 2) };
+            var headerGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("180, Auto, 170, Auto, 120, Auto, 120, Auto") };
+            headerGrid.Children.Add(new TextBlock { Text = "Aux Ability Recharge", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+            var modeLabel = new TextBlock { Text = "Type", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
+            Grid.SetColumn(modeLabel, 1);
+            headerGrid.Children.Add(modeLabel);
+            var modeCb = new ComboBox
+            {
+                ItemsSource = (new[] { "Time" }).Concat(KnownRechargeTypes).ToArray(),
+                SelectedItem = currentMode,
+                IsEnabled = !_isReadOnly,
+                MinWidth = 180
+            };
+            Grid.SetColumn(modeCb, 2);
+            headerGrid.Children.Add(modeCb);
+            _fieldControls["auxrecharge.mode"] = modeCb;
+
+            var valueLabel = new TextBlock { Text = "Value", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+            Grid.SetColumn(valueLabel, 3);
+            headerGrid.Children.Add(valueLabel);
+            var valueTb = CreateOtherTextBox(initialValue, true);
+            Grid.SetColumn(valueTb, 4);
+            headerGrid.Children.Add(valueTb);
+            _fieldControls["auxrecharge.value"] = valueTb;
+
+            var initLabel = new TextBlock { Text = "Init", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+            Grid.SetColumn(initLabel, 5);
+            headerGrid.Children.Add(initLabel);
+            var initTb = CreateOtherTextBox(initialInit, true);
+            Grid.SetColumn(initTb, 6);
+            headerGrid.Children.Add(initTb);
+            _fieldControls["auxrecharge.init"] = initTb;
+
+            if (!_isReadOnly)
+            {
+                var deleteButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), VerticalAlignment = VerticalAlignment.Center };
+                deleteButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        _currentAuxRechargeIncludeTypes = null;
+                        _currentAuxRechargeExcludeTypes = null;
+                        RemoveOtherSpecificContainer(key, "auxrecharge.mode", "auxrecharge.init", "auxrecharge.value");
+                        MarkDirty();
+                        RenderOtherSpecificAddControls();
+                    }
+                };
+                Grid.SetColumn(deleteButton, 7);
+                headerGrid.Children.Add(deleteButton);
+            }
+
+            stack.Children.Add(headerGrid);
+            var bodyStack = new StackPanel { Spacing = 6 };
+            stack.Children.Add(bodyStack);
+
+            StackPanel CreateInlineRechargeTypeEditor(string title, HashSet<string> values)
+            {
+                var editorStack = new StackPanel { Spacing = 4 };
+                editorStack.Children.Add(new TextBlock { Text = title, FontWeight = FontWeight.Bold, Margin = new Thickness(0, 4, 0, 2) });
+                var wrap = new WrapPanel { Orientation = Orientation.Horizontal };
+                editorStack.Children.Add(wrap);
+
+                void RefreshDisplay()
+                {
+                    wrap.Children.Clear();
+                    foreach (var value in values.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                    {
+                        wrap.Children.Add(CreateChip(value, async () =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                            {
+                                values.Remove(value);
+                                MarkDirty();
+                                RefreshDisplay();
+                            }
+                        }));
+                    }
+                }
+
+                RefreshDisplay();
+
+                if (!_isReadOnly)
+                {
+                    var addGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("*, Auto") };
+                    var suggestions = GetAvailableBuildLimitTargets();
+                    var acb = CreateOtherSuggestionBox("", suggestions, title);
+                    Grid.SetColumn(acb, 0);
+                    addGrid.Children.Add(acb);
+                    string? selectedValue = null;
+
+                    async Task PerformAdd()
+                    {
+                        var input = acb.Text?.Trim() ?? "";
+                        var match = suggestions.FirstOrDefault(x => x.Equals(input, StringComparison.OrdinalIgnoreCase));
+                        if (!string.IsNullOrWhiteSpace(match) && values.Add(match))
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                            {
+                                acb.Text = "";
+                                MarkDirty();
+                                RefreshDisplay();
+                            }
+                            else
+                            {
+                                values.Remove(match);
+                            }
+                        }
+                    }
+
+                    acb.SelectionChanged += (s, e) =>
+                    {
+                        if (acb.SelectedItem is string selected)
+                        {
+                            selectedValue = selected;
+                            acb.Text = selected;
+                            Dispatcher.UIThread.Post(() =>
+                            {
+                                var input = acb.Text?.Trim() ?? "";
+                                var match = suggestions.FirstOrDefault(x => x.Equals(input, StringComparison.OrdinalIgnoreCase));
+                                if (string.IsNullOrWhiteSpace(match) && !string.IsNullOrWhiteSpace(selectedValue))
+                                    match = suggestions.FirstOrDefault(x => x.Equals(selectedValue, StringComparison.OrdinalIgnoreCase));
+
+                                if (!string.IsNullOrWhiteSpace(match))
+                                    _ = PerformAdd();
+                            }, DispatcherPriority.Background);
+                        }
+                    };
+
+                    var addButton = new Button { Content = "+ Add", Background = Brush.Parse("#2b7a0b"), Margin = new Thickness(8, 0, 0, 0) };
+                    addButton.Click += async (s, e) => await PerformAdd();
+                    Grid.SetColumn(addButton, 1);
+                    addGrid.Children.Add(addButton);
+                    editorStack.Children.Add(addGrid);
+                }
+
+                return editorStack;
+            }
+
+            void RenderBody()
+            {
+                bodyStack.Children.Clear();
+                var selectedMode = modeCb.SelectedItem as string ?? "Time";
+                if (selectedMode.Equals("Time", StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                if (!showRechargeTypeFilters)
+                {
+                    if (_isReadOnly)
+                        return;
+
+                    var addButton = new Button
+                    {
+                        Content = "+ Add Aux Recharge Include/Exclude Types",
+                        Background = Brush.Parse("#2b7a0b"),
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
+                    addButton.Click += async (s, e) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            _currentAuxRechargeIncludeTypes ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            _currentAuxRechargeExcludeTypes ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            showRechargeTypeFilters = true;
+                            MarkDirty();
+                            RenderBody();
+                        }
+                    };
+                    bodyStack.Children.Add(addButton);
+                    return;
+                }
+
+                var filtersGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("*, *, Auto"), ColumnSpacing = 12 };
+                var includeEditor = CreateInlineRechargeTypeEditor("Aux Recharge Include Types", _currentAuxRechargeIncludeTypes ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                Grid.SetColumn(includeEditor, 0);
+                filtersGrid.Children.Add(includeEditor);
+                var excludeEditor = CreateInlineRechargeTypeEditor("Aux Recharge Exclude Types", _currentAuxRechargeExcludeTypes ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                Grid.SetColumn(excludeEditor, 1);
+                filtersGrid.Children.Add(excludeEditor);
+
+                if (!_isReadOnly)
+                {
+                    var clearButton = new Button { Content = "X", Background = Brush.Parse("#8b0000"), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 24, 0, 0) };
+                    clearButton.Click += async (s, e) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            _currentAuxRechargeIncludeTypes?.Clear();
+                            _currentAuxRechargeExcludeTypes?.Clear();
+                            showRechargeTypeFilters = false;
+                            MarkDirty();
+                            RenderBody();
+                        }
+                    };
+                    Grid.SetColumn(clearButton, 2);
+                    filtersGrid.Children.Add(clearButton);
+                }
+
+                bodyStack.Children.Add(filtersGrid);
+            }
+
+            modeCb.SelectionChanged += async (s, e) =>
+            {
+                if (_isPopulating)
+                    return;
+                var proceed = await CheckStartLocalMod();
+                if (proceed)
+                {
+                    MarkDirty();
+                    RenderBody();
+                }
+            };
+
+            RenderBody();
+            RegisterOtherSpecificContainer(key, stack);
+            otherSpecificContainer.Children.Add(stack);
         }
 
         void AddMinimapColorEditor()
@@ -6539,6 +7562,12 @@ public partial class ProtoEditorWindow : SimpleWindow
                 case "bloodandbones":
                     AddBloodAndBonesEditor();
                     break;
+                case "resourcereturn":
+                    AddResourceReturnEditor();
+                    break;
+                case "resourcereturnrate":
+                    AddResourceReturnRateEditor();
+                    break;
                 case "dodgechance":
                     AddSimpleOtherSpecificAttribute("dodgechance", "dodgechance");
                     break;
@@ -6556,6 +7585,12 @@ public partial class ProtoEditorWindow : SimpleWindow
                     break;
                 case "respawntraindata":
                     AddRespawnTrainDataEditor();
+                    break;
+                case "auxrecharge":
+                    AddAuxRechargeEditor();
+                    break;
+                case "socketdata":
+                    AddSocketEditor();
                     break;
                 case "sharedselectionunittypes":
                     AddChipListEditor(key, "Shared Selection Unit Types",
@@ -6583,6 +7618,9 @@ public partial class ProtoEditorWindow : SimpleWindow
                     break;
                 case "replacement":
                     AddReplacementEditor();
+                    break;
+                case "ondamagemodifiers":
+                    AddOnDamageModifiersEditor();
                     break;
                 default:
                     AddSimpleOtherSpecificAttribute(key, key);
@@ -6754,6 +7792,8 @@ public partial class ProtoEditorWindow : SimpleWindow
             "heightbobdata" => unit.Element("heightbob") != null,
             "damageshading" => unit.Element("damageshading") != null,
             "killrewarddata" => unit.Elements("killreward").Any(),
+            "resourcereturn" => unit.Elements("ResourceReturn").Any(),
+            "resourcereturnrate" => unit.Elements("ResourceReturnRate").Any(),
             "dependentunitdata" => unit.Elements("dependentunit").Any(),
             "spawndata" => unit.Elements("spawn").Any(),
             "veterancydata" => unit.Element("veterancyranks") != null || unit.Element("veterancybonus") != null,
@@ -6764,7 +7804,11 @@ public partial class ProtoEditorWindow : SimpleWindow
             "dodgechance" => !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "dodgechance")),
             "directionalarmor" => unit.Element("directionalarmor") != null,
             "carrycapacity" or "initialresource" or "resourceconversion" => unit.Elements(key).Any(),
-            "sharedselectionunittypes" or "rechargeincludetypes" or "rechargeexcludetypes" or "decay" or "recharge" or "replacement" or "respawntraindata" => unit.Element(key) != null,
+            "recharge" => !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "rechargetime")) || unit.Element("recharge") != null || unit.Element("rechargeincludetypes") != null || unit.Element("rechargeexcludetypes") != null,
+            "auxrecharge" => !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "auxrechargetime")) || unit.Element("auxrecharge") != null || unit.Element("auxrechargeincludetypes") != null || unit.Element("auxrechargeexcludetypes") != null,
+            "socketdata" => !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "socketunittype")) || !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, "nonsocketplaceprotoid")),
+            "sharedselectionunittypes" or "decay" or "replacement" or "respawntraindata" => unit.Element(key) != null,
+            "ondamagemodifiers" => unit.Elements().Any(x => x.Name.LocalName.Equals("OnDamageModifiers", StringComparison.OrdinalIgnoreCase)),
             _ => !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetSimpleField(unit, key)),
         };
 
@@ -7820,6 +8864,34 @@ public partial class ProtoEditorWindow : SimpleWindow
             }
         }
 
+        if (_fieldControls.TryGetValue("socketunittype", out var socketUnitTypeCtrl) && socketUnitTypeCtrl is AutoCompleteBox socketUnitTypeAcb)
+        {
+            var socketUnitType = socketUnitTypeAcb.Text?.Trim() ?? "";
+            socketUnitType = GetAvailableBuildLimitTargets().FirstOrDefault(x => x.Equals(socketUnitType, StringComparison.OrdinalIgnoreCase)) ?? "";
+            if (!string.IsNullOrWhiteSpace(socketUnitType))
+                ProtoXmlHandler.SetSimpleField(unit, "socketunittype", socketUnitType);
+            else
+                ProtoXmlHandler.RemoveSimpleField(unit, "socketunittype");
+        }
+        else
+        {
+            ProtoXmlHandler.RemoveSimpleField(unit, "socketunittype");
+        }
+
+        if (_fieldControls.TryGetValue("nonsocketplaceprotoid", out var nonSocketCtrl) && nonSocketCtrl is AutoCompleteBox nonSocketAcb)
+        {
+            var nonSocketPlaceProtoId = nonSocketAcb.Text?.Trim() ?? "";
+            nonSocketPlaceProtoId = GetAvailableBuildLimitTargets().FirstOrDefault(x => x.Equals(nonSocketPlaceProtoId, StringComparison.OrdinalIgnoreCase)) ?? "";
+            if (!string.IsNullOrWhiteSpace(nonSocketPlaceProtoId))
+                ProtoXmlHandler.SetSimpleField(unit, "nonsocketplaceprotoid", nonSocketPlaceProtoId);
+            else
+                ProtoXmlHandler.RemoveSimpleField(unit, "nonsocketplaceprotoid");
+        }
+        else
+        {
+            ProtoXmlHandler.RemoveSimpleField(unit, "nonsocketplaceprotoid");
+        }
+
         void SyncFlagWithOtherSpecificField(string tag, bool shouldHaveFlag)
         {
             var flag = GetFlagForOtherSpecificAttribute(tag);
@@ -7843,6 +8915,24 @@ public partial class ProtoEditorWindow : SimpleWindow
             _fieldControls.TryGetValue("dodgechance", out var dodgeChanceCtrl) &&
             dodgeChanceCtrl is TextBox dodgeChanceTbForFlag &&
             !string.IsNullOrWhiteSpace(dodgeChanceTbForFlag.Text));
+
+        SyncFlagWithOtherSpecificField(
+            "farming",
+            (_fieldControls.TryGetValue("farmingradiusx", out var farmingRadiusXCtrl) &&
+             farmingRadiusXCtrl is TextBox farmingRadiusXTb &&
+             !string.IsNullOrWhiteSpace(farmingRadiusXTb.Text)) ||
+            (_fieldControls.TryGetValue("farmingradiusz", out var farmingRadiusZCtrl) &&
+             farmingRadiusZCtrl is TextBox farmingRadiusZTb &&
+             !string.IsNullOrWhiteSpace(farmingRadiusZTb.Text)) ||
+            (_fieldControls.TryGetValue("farmingobstructionradiusx", out var farmingObstructionXCtrl) &&
+             farmingObstructionXCtrl is TextBox farmingObstructionXTb &&
+             !string.IsNullOrWhiteSpace(farmingObstructionXTb.Text)) ||
+            (_fieldControls.TryGetValue("farmingobstructionradiusz", out var farmingObstructionZCtrl) &&
+             farmingObstructionZCtrl is TextBox farmingObstructionZTb &&
+             !string.IsNullOrWhiteSpace(farmingObstructionZTb.Text)) ||
+            (_fieldControls.TryGetValue("farmingnumstops", out var farmingNumStopsCtrl) &&
+             farmingNumStopsCtrl is TextBox farmingNumStopsTb &&
+             !string.IsNullOrWhiteSpace(farmingNumStopsTb.Text)));
 
         unit.Elements("directionalarmor").Remove();
         if (_fieldControls.TryGetValue("directionalarmor.value", out var directionalArmorValueCtrl) && directionalArmorValueCtrl is TextBox directionalArmorValueTb)
@@ -7971,6 +9061,76 @@ public partial class ProtoEditorWindow : SimpleWindow
             }
         }
 
+        unit.Elements("ResourceReturn").Remove();
+        foreach (var resourceType in ProtoConstants.KnownResourceTypes)
+        {
+            if (_fieldControls.TryGetValue($"resourcereturn:{resourceType}", out var resourceReturnCtrl) && resourceReturnCtrl is TextBox resourceReturnTb)
+            {
+                var resourceReturnValue = resourceReturnTb.Text?.Trim() ?? "";
+                if (!string.IsNullOrWhiteSpace(resourceReturnValue))
+                {
+                    unit.Add(new XElement("ResourceReturn",
+                        new XAttribute("resourceType", resourceType),
+                        resourceReturnValue));
+                }
+            }
+        }
+
+        unit.Elements("ResourceReturnRate").Remove();
+        foreach (var resourceType in ProtoConstants.KnownResourceTypes)
+        {
+            if (_fieldControls.TryGetValue($"resourcereturnrate:{resourceType}", out var resourceReturnRateCtrl) && resourceReturnRateCtrl is TextBox resourceReturnRateTb)
+            {
+                var resourceReturnRateValue = resourceReturnRateTb.Text?.Trim() ?? "";
+                if (!string.IsNullOrWhiteSpace(resourceReturnRateValue))
+                {
+                    unit.Add(new XElement("ResourceReturnRate",
+                        new XAttribute("resourceType", resourceType),
+                        resourceReturnRateValue));
+                }
+            }
+        }
+
+        if (_currentFlags != null)
+        {
+            var shouldReturnOnConstruction =
+                (_fieldControls.TryGetValue("resourcereturn:returnonconstruction", out var returnOnConstructionCtrl) &&
+                 returnOnConstructionCtrl is CheckBox returnOnConstructionCb &&
+                 returnOnConstructionCb.IsChecked == true) ||
+                (_fieldControls.TryGetValue("resourcereturnrate:returnonconstruction", out var returnRateOnConstructionCtrl) &&
+                 returnRateOnConstructionCtrl is CheckBox returnRateOnConstructionCb &&
+                 returnRateOnConstructionCb.IsChecked == true);
+
+            if (shouldReturnOnConstruction)
+                _currentFlags.Add("ReturnResourcesOnConstruction");
+            else
+                _currentFlags.Remove("ReturnResourcesOnConstruction");
+
+            var shouldDisableDeleteReturn =
+                (_fieldControls.TryGetValue("resourcereturn:noreturnondelete", out var noReturnOnDeleteCtrl) &&
+                 noReturnOnDeleteCtrl is CheckBox noReturnOnDeleteCb &&
+                 noReturnOnDeleteCb.IsChecked == true) ||
+                (_fieldControls.TryGetValue("resourcereturnrate:noreturnondelete", out var noReturnRateOnDeleteCtrl) &&
+                 noReturnRateOnDeleteCtrl is CheckBox noReturnRateOnDeleteCb &&
+                 noReturnRateOnDeleteCb.IsChecked == true);
+
+            if (shouldDisableDeleteReturn)
+                _currentFlags.Add("DoApplyResourceReturnIfDeleted");
+            else
+                _currentFlags.Remove("DoApplyResourceReturnIfDeleted");
+
+            if (_fieldControls.TryGetValue("resourcereturnrate:totalcostbased", out var totalCostBasedCtrl) &&
+                totalCostBasedCtrl is CheckBox totalCostBasedCb &&
+                totalCostBasedCb.IsChecked == true)
+            {
+                _currentFlags.Add("ResourceReturnRateTotalCost");
+            }
+            else
+            {
+                _currentFlags.Remove("ResourceReturnRateTotalCost");
+            }
+        }
+
         unit.Elements("dependentunit").Remove();
         var validDependentUnitNames = GetAvailableTrainUnitNames();
         foreach (var row in _dependentUnitRows)
@@ -8062,6 +9222,35 @@ public partial class ProtoEditorWindow : SimpleWindow
 
             if (veterancyBonus.HasElements)
                 unit.Add(veterancyBonus);
+        }
+
+        unit.Elements().Where(x => x.Name.LocalName.Equals("OnDamageModifiers", StringComparison.OrdinalIgnoreCase)).Remove();
+        if (_onDamageModifyRows.Count > 0)
+        {
+            var onDamageModifiers = new XElement("OnDamageModifiers");
+            foreach (var row in _onDamageModifyRows)
+            {
+                var modifyType = row.ModifyTypeTb.Text?.Trim() ?? "";
+                var value = row.ValueTb.Text?.Trim() ?? "";
+                if (string.IsNullOrWhiteSpace(modifyType) || string.IsNullOrWhiteSpace(value))
+                    continue;
+
+                var modify = new XElement("OnDamageModify", value);
+                modify.SetAttributeValue("modifyType", modifyType);
+                if (modifyType.Equals("DamageSpecific", StringComparison.OrdinalIgnoreCase) ||
+                    modifyType.Equals("ArmorSpecific", StringComparison.OrdinalIgnoreCase))
+                {
+                    var damageType = row.DamageTypeAcb.Text?.Trim() ?? "";
+                    damageType = ProtoConstants.KnownDamageTypes.FirstOrDefault(x => x.Equals(damageType, StringComparison.OrdinalIgnoreCase)) ?? "";
+                    if (!string.IsNullOrWhiteSpace(damageType))
+                        modify.SetAttributeValue("damageType", damageType);
+                }
+
+                onDamageModifiers.Add(modify);
+            }
+
+            if (onDamageModifiers.HasElements)
+                unit.Add(onDamageModifiers);
         }
 
         unit.Elements("spawn").Remove();
@@ -8215,6 +9404,25 @@ public partial class ProtoEditorWindow : SimpleWindow
                     AutoCompleteBox acb => acb.Text?.Trim() ?? "",
                     _ => ""
                 };
+
+                if (tag.Equals("farmingnumstops", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (string.IsNullOrWhiteSpace(value))
+                    {
+                        value = "8";
+                    }
+                    else if (int.TryParse(value, out var parsedStops))
+                    {
+                        if (parsedStops < 2)
+                            parsedStops = 2;
+                        value = parsedStops.ToString();
+                    }
+                    else
+                    {
+                        value = "8";
+                    }
+                }
+
                 if (!string.IsNullOrWhiteSpace(value))
                     ProtoXmlHandler.SetSimpleField(unit, tag, value);
                 else
@@ -8396,8 +9604,6 @@ public partial class ProtoEditorWindow : SimpleWindow
         }
 
         SaveUnitTypeListElement("sharedselectionunittypes", _currentSharedSelectionUnitTypes);
-        SaveUnitTypeListElement("rechargeincludetypes", _currentRechargeIncludeTypes);
-        SaveUnitTypeListElement("rechargeexcludetypes", _currentRechargeExcludeTypes);
 
         if (_fieldControls.TryGetValue("decay.delay", out var decayDelayCtrl) && decayDelayCtrl is TextBox decayDelayTb &&
             _fieldControls.TryGetValue("decay.duration", out var decayDurationCtrl) && decayDurationCtrl is TextBox decayDurationTb)
@@ -8420,29 +9626,92 @@ public partial class ProtoEditorWindow : SimpleWindow
             unit.Element("decay")?.Remove();
         }
 
-        if (_fieldControls.TryGetValue("recharge.value", out var rechargeValueCtrl) && rechargeValueCtrl is TextBox rechargeValueTb)
+        unit.Element("rechargetime")?.Remove();
+        unit.Element("recharge")?.Remove();
+        unit.Element("rechargeincludetypes")?.Remove();
+        unit.Element("rechargeexcludetypes")?.Remove();
+        if (_fieldControls.TryGetValue("recharge.mode", out var rechargeModeCtrl) && rechargeModeCtrl is ComboBox rechargeModeCb)
         {
-            unit.Element("recharge")?.Remove();
-            var rechargeValue = rechargeValueTb.Text?.Trim() ?? "";
-            var rechargeType = _fieldControls.TryGetValue("recharge.type", out var rechargeTypeCtrl) && rechargeTypeCtrl is TextBox rechargeTypeTb
-                ? rechargeTypeTb.Text?.Trim() ?? ""
+            var rechargeMode = rechargeModeCb.SelectedItem as string ?? "Time";
+            var rechargeValue = _fieldControls.TryGetValue("recharge.value", out var rechargeValueCtrl) && rechargeValueCtrl is TextBox rechargeValueTb
+                ? rechargeValueTb.Text?.Trim() ?? ""
                 : "";
             var rechargeInit = _fieldControls.TryGetValue("recharge.init", out var rechargeInitCtrl) && rechargeInitCtrl is TextBox rechargeInitTb
                 ? rechargeInitTb.Text?.Trim() ?? ""
                 : "";
-            if (!string.IsNullOrWhiteSpace(rechargeValue) || !string.IsNullOrWhiteSpace(rechargeType) || !string.IsNullOrWhiteSpace(rechargeInit))
+
+            if (string.IsNullOrWhiteSpace(rechargeInit))
+                rechargeInit = "1";
+
+            if (rechargeMode.Equals("Time", StringComparison.OrdinalIgnoreCase))
             {
-                var rechargeElement = new XElement("recharge", rechargeValue);
-                if (!string.IsNullOrWhiteSpace(rechargeType))
-                    rechargeElement.SetAttributeValue("type", rechargeType);
-                if (!string.IsNullOrWhiteSpace(rechargeInit))
-                    rechargeElement.SetAttributeValue("init", rechargeInit);
-                unit.Add(rechargeElement);
+                if (!string.IsNullOrWhiteSpace(rechargeValue))
+                {
+                    var rechargeTimeElement = new XElement("rechargetime", rechargeValue);
+                    if (!string.IsNullOrWhiteSpace(rechargeInit))
+                        rechargeTimeElement.SetAttributeValue("init", rechargeInit);
+                    unit.Add(rechargeTimeElement);
+                }
+            }
+            else
+            {
+                var validRechargeType = KnownRechargeTypes.FirstOrDefault(x => x.Equals(rechargeMode, StringComparison.OrdinalIgnoreCase)) ?? "";
+                if (!string.IsNullOrWhiteSpace(rechargeValue) && !string.IsNullOrWhiteSpace(validRechargeType))
+                {
+                    var rechargeElement = new XElement("recharge", rechargeValue);
+                    rechargeElement.SetAttributeValue("type", validRechargeType);
+                    if (!string.IsNullOrWhiteSpace(rechargeInit))
+                        rechargeElement.SetAttributeValue("init", rechargeInit);
+                    unit.Add(rechargeElement);
+
+                    SaveUnitTypeListElement("rechargeincludetypes", _currentRechargeIncludeTypes);
+                    SaveUnitTypeListElement("rechargeexcludetypes", _currentRechargeExcludeTypes);
+                }
             }
         }
-        else
+
+        unit.Element("auxrechargetime")?.Remove();
+        unit.Element("auxrecharge")?.Remove();
+        unit.Element("auxrechargeincludetypes")?.Remove();
+        unit.Element("auxrechargeexcludetypes")?.Remove();
+        if (_fieldControls.TryGetValue("auxrecharge.mode", out var auxRechargeModeCtrl) && auxRechargeModeCtrl is ComboBox auxRechargeModeCb)
         {
-            unit.Element("recharge")?.Remove();
+            var auxRechargeMode = auxRechargeModeCb.SelectedItem as string ?? "Time";
+            var auxRechargeValue = _fieldControls.TryGetValue("auxrecharge.value", out var auxRechargeValueCtrl) && auxRechargeValueCtrl is TextBox auxRechargeValueTb
+                ? auxRechargeValueTb.Text?.Trim() ?? ""
+                : "";
+            var auxRechargeInit = _fieldControls.TryGetValue("auxrecharge.init", out var auxRechargeInitCtrl) && auxRechargeInitCtrl is TextBox auxRechargeInitTb
+                ? auxRechargeInitTb.Text?.Trim() ?? ""
+                : "";
+
+            if (string.IsNullOrWhiteSpace(auxRechargeInit))
+                auxRechargeInit = "1";
+
+            if (auxRechargeMode.Equals("Time", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!string.IsNullOrWhiteSpace(auxRechargeValue))
+                {
+                    var auxRechargeTimeElement = new XElement("auxrechargetime", auxRechargeValue);
+                    if (!string.IsNullOrWhiteSpace(auxRechargeInit))
+                        auxRechargeTimeElement.SetAttributeValue("init", auxRechargeInit);
+                    unit.Add(auxRechargeTimeElement);
+                }
+            }
+            else
+            {
+                var validAuxRechargeType = KnownRechargeTypes.FirstOrDefault(x => x.Equals(auxRechargeMode, StringComparison.OrdinalIgnoreCase)) ?? "";
+                if (!string.IsNullOrWhiteSpace(auxRechargeValue) && !string.IsNullOrWhiteSpace(validAuxRechargeType))
+                {
+                    var auxRechargeElement = new XElement("auxrecharge", auxRechargeValue);
+                    auxRechargeElement.SetAttributeValue("type", validAuxRechargeType);
+                    if (!string.IsNullOrWhiteSpace(auxRechargeInit))
+                        auxRechargeElement.SetAttributeValue("init", auxRechargeInit);
+                    unit.Add(auxRechargeElement);
+
+                    SaveUnitTypeListElement("auxrechargeincludetypes", _currentAuxRechargeIncludeTypes);
+                    SaveUnitTypeListElement("auxrechargeexcludetypes", _currentAuxRechargeExcludeTypes);
+                }
+            }
         }
 
         if (_fieldControls.TryGetValue("minimapcolor.red", out var redCtrl) && redCtrl is TextBox redTb)
@@ -9035,6 +10304,25 @@ public partial class ProtoEditorWindow : SimpleWindow
             SaveCurrentModStringEntries(entries);
     }
 
+    private HashSet<string> CollectUnitStringIdsForRemoval(string unitName, XElement? unit)
+    {
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var tag in StringBackedFieldTags)
+        {
+            var unitId = unit != null ? ProtoXmlHandler.GetSimpleField(unit, tag) : null;
+            if (!string.IsNullOrWhiteSpace(unitId))
+                ids.Add(unitId);
+
+            if (_currentStringFieldIds.TryGetValue(tag, out var currentId) && !string.IsNullOrWhiteSpace(currentId))
+                ids.Add(currentId);
+
+            ids.Add(BuildStringIdForUnit(unitName, GetStringSuffixForField(tag)));
+        }
+
+        return ids;
+    }
+
     private void SaveCurrentUnitStringValues()
     {
         if (_modXmlRoot == null || string.IsNullOrWhiteSpace(_currentUnitName))
@@ -9399,7 +10687,32 @@ public partial class ProtoEditorWindow : SimpleWindow
             }
             else
             {
+                var typeWindow = new NewUnitTypeWindow();
+                await typeWindow.ShowDialog(this);
+                if (typeWindow.SelectedType == null)
+                    return;
+
+                var selectedKind = typeWindow.SelectedType switch
+                {
+                    "Building" => NewCustomUnitKind.Building,
+                    "Other" => NewCustomUnitKind.Other,
+                    _ => NewCustomUnitKind.Unit
+                };
                 var newUnit = ProtoXmlHandler.AddNewUnit(_modXmlRoot, name);
+
+                switch (selectedKind)
+                {
+                    case NewCustomUnitKind.Unit:
+                        newUnit.Add(new XElement("unittype", "Unit"));
+                        break;
+                    case NewCustomUnitKind.Building:
+                        newUnit.Add(new XElement("unittype", "Building"));
+                        ProtoXmlHandler.SetSimpleField(newUnit, "buildpoints", "0");
+                        break;
+                    case NewCustomUnitKind.Other:
+                        break;
+                }
+
                 ProtoXmlHandler.SetCostEntries(newUnit, ProtoConstants.KnownResourceTypes.Select(r => (r, "0")));
                 ProtoXmlHandler.SetArmorEntries(newUnit, ProtoConstants.KnownArmorTypes.Select(a => (a, "0")));
                 AssignGeneratedStringIds(name);
@@ -9435,6 +10748,8 @@ public partial class ProtoEditorWindow : SimpleWindow
         await pConfirm.ShowDialog(this);
         if (pConfirm.Confirmed && _modXmlRoot != null)
         {
+            var unitToDelete = ProtoXmlHandler.GetUnitElement(_modXmlRoot, _currentUnitName);
+            RemoveStringEntries(CollectUnitStringIdsForRemoval(_currentUnitName, unitToDelete));
             ProtoXmlHandler.DeleteUnit(_modXmlRoot, _currentUnitName);
             _currentUnitName = null;
             MarkDirty();

@@ -1,0 +1,21 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="CryBarEditor.Windows.NewUnitTypeWindow"
+        Title="New Unit Type" Width="320" Height="150"
+        WindowStartupLocation="CenterOwner" CanResize="False"
+        Foreground="#d9d9d9" Background="#141414">
+    <Border Padding="15" BorderThickness="1" BorderBrush="#3f3f46">
+        <DockPanel>
+            <TextBlock DockPanel.Dock="Top" Text="Create as:" FontWeight="Bold" Margin="0,0,0,10" />
+            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10" Margin="0,15,0,0">
+                <Button Content="Cancel" Click="Cancel_Click" />
+                <Button Content="OK" Click="OK_Click" Background="#4772b5" IsDefault="True" />
+            </StackPanel>
+            <ComboBox x:Name="_typeComboBox" VerticalAlignment="Center" SelectedIndex="0">
+                <ComboBoxItem Content="Unit" />
+                <ComboBoxItem Content="Building" />
+                <ComboBoxItem Content="Other" />
+            </ComboBox>
+        </DockPanel>
+    </Border>
+</Window>
