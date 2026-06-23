@@ -5248,12 +5248,12 @@ public partial class ProtoEditorWindow : SimpleWindow
                     var vfxLabel = new TextBlock { Text = "Respawn VFX", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
                     Grid.SetRow(vfxLabel, 1);
                     selfGrid.Children.Add(vfxLabel);
-                    var vfxTb = CreateOtherTextBox(respawnTrainData?.Element("respawnvfx")?.Value?.Trim() ?? "");
-                    Grid.SetColumn(vfxTb, 1);
-                    Grid.SetColumnSpan(vfxTb, 5);
-                    Grid.SetRow(vfxTb, 1);
-                    selfGrid.Children.Add(vfxTb);
-                    _fieldControls["respawntraindata.respawnvfx"] = vfxTb;
+                    var vfxAcb = CreateValidatedOtherSuggestionBox(respawnTrainData?.Element("respawnvfx")?.Value?.Trim() ?? "", protoSuggestions, "Respawn VFX");
+                    Grid.SetColumn(vfxAcb, 1);
+                    Grid.SetColumnSpan(vfxAcb, 5);
+                    Grid.SetRow(vfxAcb, 1);
+                    selfGrid.Children.Add(vfxAcb);
+                    _fieldControls["respawntraindata.respawnvfx"] = vfxAcb;
 
                     bodyStack.Children.Add(selfGrid);
                     return;
@@ -5300,10 +5300,10 @@ public partial class ProtoEditorWindow : SimpleWindow
                 var vfxLabel2 = new TextBlock { Text = "Respawn VFX", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
                 Grid.SetColumn(vfxLabel2, 2);
                 miscGrid.Children.Add(vfxLabel2);
-                var vfxTb2 = CreateOtherTextBox(respawnTrainData?.Element("respawnvfx")?.Value?.Trim() ?? "");
-                Grid.SetColumn(vfxTb2, 3);
-                miscGrid.Children.Add(vfxTb2);
-                _fieldControls["respawntraindata.respawnvfx"] = vfxTb2;
+                var vfxAcb2 = CreateValidatedOtherSuggestionBox(respawnTrainData?.Element("respawnvfx")?.Value?.Trim() ?? "", protoSuggestions, "Respawn VFX");
+                Grid.SetColumn(vfxAcb2, 3);
+                miscGrid.Children.Add(vfxAcb2);
+                _fieldControls["respawntraindata.respawnvfx"] = vfxAcb2;
                 bodyStack.Children.Add(miscGrid);
             }
 
@@ -8142,12 +8142,13 @@ public partial class ProtoEditorWindow : SimpleWindow
                 var respawnTime = _fieldControls.TryGetValue("respawntraindata.respawntime", out var respawnTimeCtrl) && respawnTimeCtrl is TextBox respawnTimeTb
                     ? respawnTimeTb.Text?.Trim() ?? ""
                     : "";
-                var respawnVfx = _fieldControls.TryGetValue("respawntraindata.respawnvfx", out var respawnVfxCtrl) && respawnVfxCtrl is TextBox respawnVfxTb
-                    ? respawnVfxTb.Text?.Trim() ?? ""
+                var respawnVfx = _fieldControls.TryGetValue("respawntraindata.respawnvfx", out var respawnVfxCtrl) && respawnVfxCtrl is AutoCompleteBox respawnVfxAcb
+                    ? respawnVfxAcb.Text?.Trim() ?? ""
                     : "";
 
                 targetType = GetAvailableBuildLimitTargets().FirstOrDefault(x => x.Equals(targetType, StringComparison.OrdinalIgnoreCase)) ?? "";
                 trainProto = validSpawnProtoUnits.FirstOrDefault(x => x.Equals(trainProto, StringComparison.OrdinalIgnoreCase)) ?? "";
+                respawnVfx = validSpawnProtoUnits.FirstOrDefault(x => x.Equals(respawnVfx, StringComparison.OrdinalIgnoreCase)) ?? "";
 
                 if (!string.IsNullOrWhiteSpace(targetType) && !string.IsNullOrWhiteSpace(trainProto))
                 {
@@ -8192,9 +8193,10 @@ public partial class ProtoEditorWindow : SimpleWindow
                     : "0";
                 respawnTrainData.Add(new XElement("respawnlimit", string.IsNullOrWhiteSpace(respawnLimit) ? "0" : respawnLimit));
 
-                var respawnVfx = _fieldControls.TryGetValue("respawntraindata.respawnvfx", out var respawnPointVfxCtrl) && respawnPointVfxCtrl is TextBox respawnPointVfxTb
-                    ? respawnPointVfxTb.Text?.Trim() ?? ""
+                var respawnVfx = _fieldControls.TryGetValue("respawntraindata.respawnvfx", out var respawnPointVfxCtrl) && respawnPointVfxCtrl is AutoCompleteBox respawnPointVfxAcb
+                    ? respawnPointVfxAcb.Text?.Trim() ?? ""
                     : "";
+                respawnVfx = validSpawnProtoUnits.FirstOrDefault(x => x.Equals(respawnVfx, StringComparison.OrdinalIgnoreCase)) ?? "";
                 if (!string.IsNullOrWhiteSpace(respawnVfx))
                     respawnTrainData.Add(new XElement("respawnvfx", respawnVfx));
             }
