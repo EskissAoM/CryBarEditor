@@ -48,6 +48,49 @@ public static class ProtoConstants
     public static readonly string[] KnownResourceTypes = ["Food", "Wood", "Gold", "Favor"];
     public static readonly string[] KnownArmorTypes    = ["Hack", "Pierce", "Crush"];
     public static readonly string[] KnownDamageTypes   = ["Hack", "Pierce", "Crush", "Divine"];
+    public static readonly string[] KnownModifyTypes =
+    [
+        "Speed", "MaxHP", "Damage", "SiegeDamage", "UnitDamage", "LOS", "Armor",
+        "GatherRate", "ROF", "AutoGatherRate", "BaseHP", "BuildingWorkRate",
+        "BuildRate", "Chaos", "FarmingGatherRate", "HealRate", "AutoGatherAbsolute",
+        "RepairCost", "TrainingRate", "EconomicTrainingRate", "MilitaryTrainingRate",
+        "ResearchRate", "ResourceGatherRate", "ResourceYield", "NaturalFoodGatherRate",
+        "TreeGatherRate", "MineGatherRate", "AutoBuildRate", "PeaceFlag", "BaseDamage",
+        "RechargeTime", "Range", "RangeAbsolute", "Shield", "FavorGatherRate",
+        "DropsiteRate", "DoubleTrainChance", "GodPowerBlockRadius", "AuraEmpower",
+        "MilitaryTrainingCost", "DamageSpecific", "ArmorSpecific", "AutoGatherFactor",
+        "NumProjectiles", "VisualScale", "ProgFreezeSpeed", "LOSFactor", "ForcedTarget",
+        "RevealUI", "MaxShieldPoints", "ShieldRegenRate", "BaseShieldPoints",
+        "GatherRateMultiplier", "Invulnerable", "LifeSteal", "DecaySpeed",
+        "TradeRate", "DodgeChance", "ConstructionSuspended", "CommandResearchCost",
+        "RegenRate", "InventoryAmount", "InventoryExtraCap", "DamageByTargetType",
+        "PopCapBonus", "AttackDisabled", "FavorDeathReward",
+    ];
+
+    public static readonly Dictionary<string, string> ModifyTypeDisplayNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Shield"] = "Redirect Damage",
+    };
+
+    public static string GetModifyTypeDisplayName(string modifyType)
+        => ModifyTypeDisplayNames.TryGetValue(modifyType, out var displayName) ? displayName : modifyType;
+
+    public static string GetModifyTypeValue(string modifyTypeOrDisplayName)
+    {
+        if (string.IsNullOrWhiteSpace(modifyTypeOrDisplayName))
+            return "";
+
+        foreach (var modifyType in KnownModifyTypes)
+        {
+            if (modifyType.Equals(modifyTypeOrDisplayName, StringComparison.OrdinalIgnoreCase))
+                return modifyType;
+
+            if (GetModifyTypeDisplayName(modifyType).Equals(modifyTypeOrDisplayName, StringComparison.OrdinalIgnoreCase))
+                return modifyType;
+        }
+
+        return "";
+    }
 
     // ── ProtoAction type mappings ─────────────────────────────────────────────
     // ── Known Unit Types ──────────────────────────────────────────────────────
@@ -182,6 +225,29 @@ public static class ProtoConstants
         "UseChargeOnDamaged", "UseFarmingAnims", "UseSharedBuildLimit", "UseStaticFarmingAnims",
         "VariationLocked", "VisibleOwnerOnly", "VisibleUnderFog", "VisibleUnderFogIfNature",
         "VisibleUnderFogOnlyAfterSeen", "Wanders", "WitherDoesDamage", "wallBuild",
+        "StartEnabled", "NoBloodOnDeath", "AlphaFadeLifespan", "FadeInOnBuild",
+        "FaceOutwards", "NoProjectileDamage", "AlwaysShowAsSocket", "DeadReplacementWhenDestroyed",
+        "ConvertToGaiaAtZeroHitpoints", "MakeUnbuiltAtZeroHitpoints", "MeteredGarrison",
+        "NotRotateable", "NotScalable", "DeadReplaceOnlyOnTimeout", "CantBeSlowed",
+        "MutateDopples", "InvalidTownBellLocation", "TCBuildLimit", "PlaceAnywhereRules",
+        "ForcePopulationImpactWhenPlaced", "AllowOverPopCap", "CivSpecificText",
+        "InvulnerableToAreaDamage", "KillIfConverted", "SettlerBuildLimit", "InflictsNoDamage",
+        "NextResearchIsFree", "BuiltWithSeedingAnim", "RangeDisplayedAsSquare",
+        "AllowSocketPlacement", "OptionalSocketPlacement", "GatherableWhenSocketed",
+        "DoNotQueue", "GatherableByAllies", "DoTacticToSameUnitType", "DoNotUseBaseSpeedRunAnim",
+        "DeadTransformBuildLimit", "ForceGatherSiteResource", "GatherGarrisonToggle",
+        "HerdablesIgnoreGatherPoint", "FreeRepair", "CountHerdableAsGatherer",
+        "AllowGatheringWhenFull", "HideHealAttachment", "ChargeMoveAnim", "SocketFreeBuilding",
+        "FakeConversion", "ForceUpdateVisualWhenCnverted", "KillSocketWhenDestroyed",
+        "TeamBuildLimit", "IgnoreDefaultEjectTimeout", "DoNotQueueEjectActions",
+        "DeploymentUngarrison", "HideIfSocketedFoundationUntouched", "NoAllyRepair",
+        "DestroyWhenCompleted", "RecoverableDeathProximity", "AutoScout",
+        "PreQueueNotAllowed", "SelfRespawn", "DisplayOnMinimapIfContained", "ContainedLOS",
+        "MilitaryUIDefault", "PassiveAttack", "ImmuneDamageBonus", "NoBallistic",
+        "TradeAddAllyResources", "GarrisonIgnoreDiplomacy", "NoAutoDelayedTransform",
+        "RespawnTrainOnDeath", "HasReflectAttack", "BloodOverlayEnabled",
+        "DisableStealthInCutscenes", "HostileNature","CanDodgeAttacks","ResourceReturnRateTotalCost",
+        "ReturnResourcesOnConstruction","DoApplyResourceReturnIfDeleted",
     ];
 
     // ── Field suggestions (merged with BAR data at runtime) ───────────────────

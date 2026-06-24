@@ -221,14 +221,16 @@ public partial class ProtoEditorWindow : SimpleWindow
     {
         public required Panel RowPanel { get; set; }
         public required TextBox RankIdTb { get; set; }
-        public required TextBox ModifyTypeTb { get; set; }
+        public required AutoCompleteBox ModifyTypeAcb { get; set; }
         public required TextBox ValueTb { get; set; }
+        public required AutoCompleteBox DamageTypeAcb { get; set; }
+        public required TextBlock DamageTypeLabel { get; set; }
     }
 
     private class OnDamageModifyRowState
     {
         public required Panel RowPanel { get; set; }
-        public required TextBox ModifyTypeTb { get; set; }
+        public required AutoCompleteBox ModifyTypeAcb { get; set; }
         public required TextBox ValueTb { get; set; }
         public required AutoCompleteBox DamageTypeAcb { get; set; }
         public required TextBlock DamageTypeLabel { get; set; }
@@ -5709,11 +5711,17 @@ public partial class ProtoEditorWindow : SimpleWindow
                     ranksHost.Children.Add(rowGrid);
             }
 
-            void AddVeterancyBonusRow(string? rankId = null, string? modifyType = null, string? value = null)
+            void AddVeterancyBonusRow(string? rankId = null, string? modifyType = null, string? value = null, string? damageType = null)
             {
+                var modifyTypeSuggestions = ProtoConstants.KnownModifyTypes
+                    .Select(ProtoConstants.GetModifyTypeDisplayName)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
                 var rowGrid = new Grid
                 {
-                    ColumnDefinitions = new ColumnDefinitions("180, Auto, 70, Auto, 180, Auto, 120, Auto"),
+                    ColumnDefinitions = new ColumnDefinitions("180, Auto, 70, Auto, 180, Auto, 120, Auto, 160, Auto"),
                     Margin = new Thickness(0, 2, 0, 2)
                 };
 
@@ -5731,9 +5739,12 @@ public partial class ProtoEditorWindow : SimpleWindow
                 Grid.SetColumn(modifyTypeLabel, 3);
                 rowGrid.Children.Add(modifyTypeLabel);
 
-                var modifyTypeTb = CreateOtherTextBox(modifyType ?? "");
-                Grid.SetColumn(modifyTypeTb, 4);
-                rowGrid.Children.Add(modifyTypeTb);
+                var modifyTypeAcb = CreateValidatedOtherSuggestionBox(
+                    ProtoConstants.GetModifyTypeDisplayName(ProtoConstants.GetModifyTypeValue(modifyType ?? "")),
+                    modifyTypeSuggestions,
+                    "Modify Type");
+                Grid.SetColumn(modifyTypeAcb, 4);
+                rowGrid.Children.Add(modifyTypeAcb);
 
                 var valueLabel = new TextBlock { Text = "Value", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 8, 4) };
                 Grid.SetColumn(valueLabel, 5);
@@ -5743,12 +5754,35 @@ public partial class ProtoEditorWindow : SimpleWindow
                 Grid.SetColumn(valueTb, 6);
                 rowGrid.Children.Add(valueTb);
 
+                var damageTypeLabel = new TextBlock { Text = "Damage Type", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 8, 4) };
+                Grid.SetColumn(damageTypeLabel, 7);
+                rowGrid.Children.Add(damageTypeLabel);
+
+                var damageTypeAcb = CreateValidatedOtherSuggestionBox(damageType ?? "", ProtoConstants.KnownDamageTypes, "Damage Type");
+                damageTypeAcb.Width = 160;
+                Grid.SetColumn(damageTypeAcb, 8);
+                rowGrid.Children.Add(damageTypeAcb);
+
+                void RefreshDamageTypeVisibility()
+                {
+                    var visible = ProtoConstants.GetModifyTypeValue(modifyTypeAcb.Text?.Trim() ?? "") is "DamageSpecific" or "ArmorSpecific";
+                    damageTypeLabel.IsVisible = visible;
+                    damageTypeAcb.IsVisible = visible;
+                    if (!visible)
+                        damageTypeAcb.Text = "";
+                }
+
+                modifyTypeAcb.TextChanged += (s, e) => RefreshDamageTypeVisibility();
+                RefreshDamageTypeVisibility();
+
                 var rowState = new VeterancyBonusRowState
                 {
                     RowPanel = rowGrid,
                     RankIdTb = rankIdTb,
-                    ModifyTypeTb = modifyTypeTb,
-                    ValueTb = valueTb
+                    ModifyTypeAcb = modifyTypeAcb,
+                    ValueTb = valueTb,
+                    DamageTypeAcb = damageTypeAcb,
+                    DamageTypeLabel = damageTypeLabel
                 };
                 _veterancyBonusRows.Add(rowState);
 
@@ -5765,7 +5799,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                             MarkDirty();
                         }
                     };
-                    Grid.SetColumn(deleteButton, 7);
+                    Grid.SetColumn(deleteButton, 9);
                     rowGrid.Children.Add(deleteButton);
                 }
 
@@ -5795,7 +5829,11 @@ public partial class ProtoEditorWindow : SimpleWindow
                 var rankId = (string?)rank.Attribute("id") ?? "0";
                 foreach (var modify in rank.Elements("veterancymodify"))
                 {
-                    AddVeterancyBonusRow(rankId, (string?)modify.Attribute("modifytype") ?? "", modify.Value?.Trim() ?? "0");
+                    AddVeterancyBonusRow(
+                        rankId,
+                        (string?)modify.Attribute("modifytype") ?? "",
+                        modify.Value?.Trim() ?? "0",
+                        (string?)modify.Attribute("damagetype") ?? (string?)modify.Attribute("damageType") ?? "");
                 }
             }
 
@@ -5973,10 +6011,16 @@ public partial class ProtoEditorWindow : SimpleWindow
             stack.Children.Add(rowsHost);
 
             static bool NeedsDamageType(string? modifyType)
-                => modifyType != null && (modifyType.Equals("DamageSpecific", StringComparison.OrdinalIgnoreCase) || modifyType.Equals("ArmorSpecific", StringComparison.OrdinalIgnoreCase));
+                => ProtoConstants.GetModifyTypeValue(modifyType ?? "") is "DamageSpecific" or "ArmorSpecific";
 
             void AddOnDamageModifyRow(string? modifyType = null, string? value = null, string? damageType = null)
             {
+                var modifyTypeSuggestions = ProtoConstants.KnownModifyTypes
+                    .Select(ProtoConstants.GetModifyTypeDisplayName)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
                 var rowGrid = new Grid
                 {
                     ColumnDefinitions = new ColumnDefinitions("180, Auto, 180, Auto, 120, Auto, 160, Auto"),
@@ -5989,9 +6033,12 @@ public partial class ProtoEditorWindow : SimpleWindow
                 Grid.SetColumn(modifyTypeLabel, 1);
                 rowGrid.Children.Add(modifyTypeLabel);
 
-                var modifyTypeTb = CreateOtherTextBox(modifyType ?? "");
-                Grid.SetColumn(modifyTypeTb, 2);
-                rowGrid.Children.Add(modifyTypeTb);
+                var modifyTypeAcb = CreateValidatedOtherSuggestionBox(
+                    ProtoConstants.GetModifyTypeDisplayName(ProtoConstants.GetModifyTypeValue(modifyType ?? "")),
+                    modifyTypeSuggestions,
+                    "Modify Type");
+                Grid.SetColumn(modifyTypeAcb, 2);
+                rowGrid.Children.Add(modifyTypeAcb);
 
                 var valueLabel = new TextBlock { Text = "Value", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 8, 4) };
                 Grid.SetColumn(valueLabel, 3);
@@ -6012,20 +6059,20 @@ public partial class ProtoEditorWindow : SimpleWindow
 
                 void RefreshDamageTypeVisibility()
                 {
-                    var visible = NeedsDamageType(modifyTypeTb.Text?.Trim());
+                    var visible = NeedsDamageType(modifyTypeAcb.Text?.Trim());
                     damageTypeLabel.IsVisible = visible;
                     damageTypeAcb.IsVisible = visible;
                     if (!visible)
                         damageTypeAcb.Text = "";
                 }
 
-                modifyTypeTb.TextChanged += (s, e) => RefreshDamageTypeVisibility();
+                modifyTypeAcb.TextChanged += (s, e) => RefreshDamageTypeVisibility();
                 RefreshDamageTypeVisibility();
 
                 var rowState = new OnDamageModifyRowState
                 {
                     RowPanel = rowGrid,
-                    ModifyTypeTb = modifyTypeTb,
+                    ModifyTypeAcb = modifyTypeAcb,
                     ValueTb = valueTb,
                     DamageTypeAcb = damageTypeAcb,
                     DamageTypeLabel = damageTypeLabel
@@ -9187,8 +9234,9 @@ public partial class ProtoEditorWindow : SimpleWindow
                 .Select(row => new
                 {
                     RankId = row.RankIdTb.Text?.Trim() ?? "0",
-                    ModifyType = row.ModifyTypeTb.Text?.Trim() ?? "",
-                    Value = row.ValueTb.Text?.Trim() ?? ""
+                    ModifyType = ProtoConstants.GetModifyTypeValue(row.ModifyTypeAcb.Text?.Trim() ?? ""),
+                    Value = row.ValueTb.Text?.Trim() ?? "",
+                    DamageType = row.DamageTypeAcb.Text?.Trim() ?? ""
                 })
                 .Where(x => !string.IsNullOrWhiteSpace(x.ModifyType) && !string.IsNullOrWhiteSpace(x.Value))
                 .GroupBy(x => string.IsNullOrWhiteSpace(x.RankId) ? "0" : x.RankId);
@@ -9202,6 +9250,12 @@ public partial class ProtoEditorWindow : SimpleWindow
                 {
                     var modify = new XElement("veterancymodify", bonus.Value);
                     modify.SetAttributeValue("modifytype", bonus.ModifyType);
+                    if (bonus.ModifyType is "DamageSpecific" or "ArmorSpecific")
+                    {
+                        var damageType = ProtoConstants.KnownDamageTypes.FirstOrDefault(x => x.Equals(bonus.DamageType, StringComparison.OrdinalIgnoreCase)) ?? "";
+                        if (!string.IsNullOrWhiteSpace(damageType))
+                            modify.SetAttributeValue("damagetype", damageType);
+                    }
                     rank.Add(modify);
                 }
                 veterancyBonus.Add(rank);
@@ -9230,7 +9284,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             var onDamageModifiers = new XElement("OnDamageModifiers");
             foreach (var row in _onDamageModifyRows)
             {
-                var modifyType = row.ModifyTypeTb.Text?.Trim() ?? "";
+                var modifyType = ProtoConstants.GetModifyTypeValue(row.ModifyTypeAcb.Text?.Trim() ?? "");
                 var value = row.ValueTb.Text?.Trim() ?? "";
                 if (string.IsNullOrWhiteSpace(modifyType) || string.IsNullOrWhiteSpace(value))
                     continue;
