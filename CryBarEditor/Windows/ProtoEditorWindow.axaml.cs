@@ -2,13 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
+using Avalonia.LogicalTree;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
@@ -92,6 +95,7 @@ public partial class ProtoEditorWindow : SimpleWindow
     private HashSet<string>? _currentVeterancyExcludeTypes;
     private HashSet<string>? _currentRespawnTrainTypes;
     private HashSet<string>? _currentRespawnTrainExcludeTypes;
+    private List<string>? _cachedTrainUnitNames;
     private List<string>? _cachedTechNames;
     private List<string>? _cachedCommandNames;
     private List<string>? _cachedResourceSubtypeNames;
@@ -100,6 +104,8 @@ public partial class ProtoEditorWindow : SimpleWindow
     private List<string>? _cachedHotkeyContexts;
     private List<string>? _cachedBloodGroupNames;
     private List<string>? _cachedMinimapIcons;
+    private string? _cachedModStringEntriesPath;
+    private Dictionary<string, string>? _cachedModStringEntries;
     private readonly Dictionary<string, string> _protoActionTypeMap = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _globalTacticsActionTypeMap = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _currentUnitProtoActionTypeMap = new(StringComparer.OrdinalIgnoreCase);
@@ -121,6 +127,16 @@ public partial class ProtoEditorWindow : SimpleWindow
     private readonly List<VeterancyBonusRowState> _veterancyBonusRows = [];
     private readonly List<OnDamageModifyRowState> _onDamageModifyRows = [];
     private BuildLimitMode _currentBuildLimitMode = BuildLimitMode.Standard;
+    private readonly List<PageSearchTarget> _pageSearchTargets = [];
+    private readonly List<PageSearchTarget> _pageSearchMatches = [];
+    private readonly HashSet<TextBlock> _pageSearchHighlightedBlocks = [];
+    private int _currentPageSearchMatchIndex = -1;
+
+    private sealed class PageSearchTarget
+    {
+        public required Control Control { get; init; }
+        public required string Text { get; init; }
+    }
 
     private enum BuildLimitMode
     {
@@ -239,6 +255,7 @@ public partial class ProtoEditorWindow : SimpleWindow
     public ProtoEditorWindow()
     {
         InitializeComponent();
+        InitializePageSearch();
         _mainWindow = null!;
     }
 
@@ -247,6 +264,7 @@ public partial class ProtoEditorWindow : SimpleWindow
         _mainWindow = mainWindow;
         DataContext = this;
         InitializeComponent();
+        InitializePageSearch();
 
         _unitList.ItemsSource = _filteredUnitNames;
 
@@ -359,7 +377,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                 var (barData, root) = ProtoDataExtractor.ExtractProtoData(xmlContent);
                 _barData = barData;
                 _barXmlRoot = root;
-                _cachedCommandNames = null;
+                InvalidateBarDerivedCaches();
                 tacticsActionTypes = ExtractProtoActionTypesFromTactics(barFile, barPath);
                 foreach (var kvp in LoadProtoActionTypesFromLooseTactics())
                     tacticsActionTypes[kvp.Key] = kvp.Value;
@@ -423,7 +441,7 @@ public partial class ProtoEditorWindow : SimpleWindow
 
             _barData = barData;
             _barXmlRoot = barRoot;
-            _cachedCommandNames = null;
+            InvalidateBarDerivedCaches();
             RefreshProtoActionMetadata(tacticsActionTypes);
 
             File.WriteAllText(cachePath, combinedXml);
@@ -438,6 +456,32 @@ public partial class ProtoEditorWindow : SimpleWindow
         {
             _statusMessage.Text = $"Failed to load proto data: {ex.Message}";
         }
+    }
+
+    private void InvalidateSuggestionCaches(bool includeTechNames = false)
+    {
+        _cachedTrainUnitNames = null;
+        _cachedCommandNames = null;
+
+        if (includeTechNames)
+            _cachedTechNames = null;
+    }
+
+    private void InvalidateBarDerivedCaches()
+    {
+        InvalidateSuggestionCaches(includeTechNames: true);
+        _cachedResourceSubtypeNames = null;
+        _cachedPlacementFileNames = null;
+        _cachedPathabilityFlags = null;
+        _cachedHotkeyContexts = null;
+        _cachedBloodGroupNames = null;
+        _cachedMinimapIcons = null;
+    }
+
+    private void InvalidateModStringEntriesCache()
+    {
+        _cachedModStringEntriesPath = null;
+        _cachedModStringEntries = null;
     }
 
     private void RefreshUnitList()
@@ -501,6 +545,82 @@ public partial class ProtoEditorWindow : SimpleWindow
         }
     }
 
+    private void InitializePageSearch()
+    {
+        AddHandler(InputElement.KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
+
+        _pageSearchBox.TextChanged += (_, _) => RefreshPageSearchMatches(scrollToCurrentMatch: true);
+        _pageSearchBox.KeyDown += PageSearchBox_KeyDown;
+
+        _pageSearchMatchCaseToggle.IsCheckedChanged += OnPageSearchOptionChanged;
+        _pageSearchWholeWordToggle.IsCheckedChanged += OnPageSearchOptionChanged;
+        _pageSearchRegexToggle.IsCheckedChanged += OnPageSearchOptionChanged;
+
+        _pageSearchPreviousButton.Click += (_, _) => MoveToPreviousPageSearchMatch();
+        _pageSearchNextButton.Click += (_, _) => MoveToNextPageSearchMatch();
+        _pageSearchCloseButton.Click += (_, _) => ClosePageSearch();
+
+        UpdatePageSearchUiState(hasMatches: false, hasQuery: false, hasValidPattern: true);
+    }
+
+    private void OnWindowKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.F && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            if (!string.IsNullOrWhiteSpace(_currentUnitName))
+            {
+                OpenPageSearch();
+                e.Handled = true;
+            }
+            return;
+        }
+
+        if (!_pageSearchPanel.IsVisible)
+            return;
+
+        if (e.Key == Key.Escape)
+        {
+            ClosePageSearch();
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.F3)
+        {
+            if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+                MoveToPreviousPageSearchMatch();
+            else
+                MoveToNextPageSearchMatch();
+
+            e.Handled = true;
+        }
+    }
+
+    private void PageSearchBox_KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+                MoveToPreviousPageSearchMatch();
+            else
+                MoveToNextPageSearchMatch();
+
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Escape)
+        {
+            ClosePageSearch();
+            e.Handled = true;
+        }
+    }
+
+    private void OnPageSearchOptionChanged(object? sender, RoutedEventArgs e)
+    {
+        RefreshPageSearchMatches(scrollToCurrentMatch: true);
+    }
+
     private void AddSectionHeader(string title)
     {
         var lbl = new TextBlock
@@ -513,6 +633,273 @@ public partial class ProtoEditorWindow : SimpleWindow
             Margin = new Thickness(0, 15, 0, 5)
         };
         _editorPanel.Children.Add(lbl);
+    }
+
+    private void OpenPageSearch()
+    {
+        _pageSearchPanel.IsVisible = true;
+        RefreshPageSearchMatches(scrollToCurrentMatch: !string.IsNullOrWhiteSpace(_pageSearchBox.Text));
+        Dispatcher.UIThread.Post(() =>
+        {
+            _pageSearchBox.Focus();
+            _pageSearchBox.SelectAll();
+        }, DispatcherPriority.Input);
+    }
+
+    private void ClosePageSearch()
+    {
+        ClearPageSearchHighlights();
+        _pageSearchPanel.IsVisible = false;
+        _editorScroll.Focus();
+    }
+
+    private void RebuildPageSearchTargets()
+    {
+        _pageSearchTargets.Clear();
+
+        foreach (var target in EnumeratePageSearchTargets(_editorPanel))
+        {
+            _pageSearchTargets.Add(target);
+        }
+
+        RefreshPageSearchMatches(scrollToCurrentMatch: _pageSearchPanel.IsVisible && !string.IsNullOrWhiteSpace(_pageSearchBox.Text));
+    }
+
+    private IEnumerable<PageSearchTarget> EnumeratePageSearchTargets(ILogical root)
+    {
+        foreach (var child in root.LogicalChildren)
+        {
+            if (child is TextBlock textBlock)
+            {
+                var text = NormalizePageSearchTargetText(textBlock.Text);
+                if (!string.IsNullOrWhiteSpace(text) && ShouldIncludePageSearchTextBlock(textBlock, text))
+                {
+                    yield return new PageSearchTarget
+                    {
+                        Control = textBlock,
+                        Text = text
+                    };
+                }
+            }
+            else if (child is CheckBox checkBox && checkBox.Content is string checkBoxText)
+            {
+                var text = NormalizePageSearchTargetText(checkBoxText);
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    yield return new PageSearchTarget
+                    {
+                        Control = checkBox,
+                        Text = text
+                    };
+                }
+            }
+
+            if (child is ILogical logicalChild)
+            {
+                foreach (var nestedTarget in EnumeratePageSearchTargets(logicalChild))
+                {
+                    yield return nestedTarget;
+                }
+            }
+        }
+    }
+
+    private bool ShouldIncludePageSearchTextBlock(TextBlock textBlock, string text)
+    {
+        if (text.StartsWith("Editing:", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        for (StyledElement? current = textBlock; current != null; current = current.Parent as StyledElement)
+        {
+            if (current is Button ||
+                current is ToggleButton ||
+                current is TabStripItem ||
+                current is ListBoxItem)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsPageSearchTargetVisible(Control control)
+    {
+        for (StyledElement? current = control; current != null; current = current.Parent as StyledElement)
+        {
+            if (current is Visual visual && !visual.IsVisible)
+                return false;
+        }
+
+        return true;
+    }
+
+    private static string NormalizePageSearchTargetText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return string.Empty;
+
+        var normalized = text.Replace('\u2500', ' ').Trim();
+        return Regex.Replace(normalized, "\\s+", " ");
+    }
+
+    private void RefreshPageSearchMatches(bool scrollToCurrentMatch)
+    {
+        ClearPageSearchHighlights();
+        _pageSearchMatches.Clear();
+        _currentPageSearchMatchIndex = -1;
+
+        var query = _pageSearchBox.Text?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            UpdatePageSearchUiState(hasMatches: false, hasQuery: false, hasValidPattern: true);
+            return;
+        }
+
+        if (!TryCreatePageSearchRegex(query, out var regex))
+        {
+            UpdatePageSearchUiState(hasMatches: false, hasQuery: true, hasValidPattern: false);
+            return;
+        }
+
+        foreach (var target in _pageSearchTargets)
+        {
+            if (IsPageSearchTargetVisible(target.Control) && regex.IsMatch(target.Text))
+            {
+                _pageSearchMatches.Add(target);
+            }
+        }
+
+        if (_pageSearchMatches.Count == 0)
+        {
+            UpdatePageSearchUiState(hasMatches: false, hasQuery: true, hasValidPattern: true);
+            return;
+        }
+
+        _currentPageSearchMatchIndex = 0;
+        UpdatePageSearchUiState(hasMatches: true, hasQuery: true, hasValidPattern: true);
+        ApplyCurrentPageSearchMatch(scrollToCurrentMatch);
+    }
+
+    private bool TryCreatePageSearchRegex(string query, out Regex regex)
+    {
+        try
+        {
+            var pattern = _pageSearchRegexToggle.IsChecked == true
+                ? query
+                : Regex.Escape(query);
+
+            if (_pageSearchWholeWordToggle.IsChecked == true)
+            {
+                pattern = $"\\b{pattern}\\b";
+            }
+
+            var options = RegexOptions.CultureInvariant;
+            if (_pageSearchMatchCaseToggle.IsChecked != true)
+            {
+                options |= RegexOptions.IgnoreCase;
+            }
+
+            regex = new Regex(pattern, options);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            regex = null!;
+            return false;
+        }
+    }
+
+    private void MoveToNextPageSearchMatch()
+    {
+        if (_pageSearchMatches.Count == 0)
+            return;
+
+        _currentPageSearchMatchIndex = (_currentPageSearchMatchIndex + 1) % _pageSearchMatches.Count;
+        ApplyCurrentPageSearchMatch(scrollToCurrentMatch: true);
+    }
+
+    private void MoveToPreviousPageSearchMatch()
+    {
+        if (_pageSearchMatches.Count == 0)
+            return;
+
+        _currentPageSearchMatchIndex = (_currentPageSearchMatchIndex - 1 + _pageSearchMatches.Count) % _pageSearchMatches.Count;
+        ApplyCurrentPageSearchMatch(scrollToCurrentMatch: true);
+    }
+
+    private void ApplyCurrentPageSearchMatch(bool scrollToCurrentMatch)
+    {
+        if (_currentPageSearchMatchIndex < 0 || _currentPageSearchMatchIndex >= _pageSearchMatches.Count)
+            return;
+
+        ClearPageSearchHighlights();
+
+        var target = _pageSearchMatches[_currentPageSearchMatchIndex].Control;
+        if (target is TextBlock textBlock)
+        {
+            textBlock.Classes.Add("PageSearchQueryMatch");
+            _pageSearchHighlightedBlocks.Add(textBlock);
+        }
+
+        UpdatePageSearchMatchCountText();
+
+        if (scrollToCurrentMatch)
+        {
+            Dispatcher.UIThread.Post(() => target.BringIntoView(), DispatcherPriority.Loaded);
+        }
+    }
+
+    private void ClearPageSearchHighlights()
+    {
+        foreach (var textBlock in _pageSearchHighlightedBlocks)
+        {
+            textBlock.Classes.Remove("PageSearchQueryMatch");
+        }
+
+        _pageSearchHighlightedBlocks.Clear();
+    }
+
+    private void UpdatePageSearchMatchCountText()
+    {
+        if (string.IsNullOrWhiteSpace(_pageSearchBox.Text))
+        {
+            _pageSearchMatchCountText.Text = string.Empty;
+            return;
+        }
+
+        if (_currentPageSearchMatchIndex >= 0 && _pageSearchMatches.Count > 0)
+        {
+            _pageSearchMatchCountText.Text = $"{_currentPageSearchMatchIndex + 1} of {_pageSearchMatches.Count}";
+            return;
+        }
+
+        _pageSearchMatchCountText.Text = _pageSearchMatches.Count == 0 ? "0 of 0" : $"0 of {_pageSearchMatches.Count}";
+    }
+
+    private void UpdatePageSearchUiState(bool hasMatches, bool hasQuery, bool hasValidPattern)
+    {
+        var borderBrush = hasMatches || !hasQuery
+            ? "#3f3f46"
+            : "#8b0000";
+
+        _pageSearchPanel.BorderBrush = Brush.Parse(borderBrush);
+        _pageSearchPreviousButton.IsEnabled = hasMatches;
+        _pageSearchNextButton.IsEnabled = hasMatches;
+        _pageSearchMatchCountText.Foreground = Brush.Parse(hasValidPattern ? "#d9d9d9" : "#ff7a7a");
+
+        if (!hasQuery)
+        {
+            _pageSearchMatchCountText.Text = string.Empty;
+        }
+        else if (!hasValidPattern)
+        {
+            _pageSearchMatchCountText.Text = "Invalid pattern";
+        }
+        else
+        {
+            UpdatePageSearchMatchCountText();
+        }
     }
 
     private static bool IsSelectionOnlySimpleField(string tag) => SelectionOnlySimpleFields.Contains(tag);
@@ -758,17 +1145,21 @@ public partial class ProtoEditorWindow : SimpleWindow
 
     private List<string> GetAvailableTrainUnitNames()
     {
+        if (_cachedTrainUnitNames != null)
+            return _cachedTrainUnitNames;
+
         var names = new List<string>();
         if (_barData != null)
             names.AddRange(_barData.UnitNames);
         if (_modXmlRoot != null)
             names.AddRange(ProtoXmlHandler.GetUnitNames(_modXmlRoot));
 
-        return names
+        _cachedTrainUnitNames = names
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
             .ToList();
+        return _cachedTrainUnitNames;
     }
 
     private List<string> GetAvailableTechNames()
@@ -818,12 +1209,8 @@ public partial class ProtoEditorWindow : SimpleWindow
             if (root == null)
                 return;
 
-            foreach (var unitName in ProtoXmlHandler.GetUnitNames(root))
+            foreach (var unit in root.Descendants("unit"))
             {
-                var unit = ProtoXmlHandler.GetUnitElement(root, unitName);
-                if (unit == null)
-                    continue;
-
                 foreach (var entry in ProtoXmlHandler.GetCommandEntries(unit))
                 {
                     if (!string.IsNullOrWhiteSpace(entry.Value))
@@ -1144,6 +1531,7 @@ public partial class ProtoEditorWindow : SimpleWindow
     private void AddCommandSection(string title, string itemLabel, IEnumerable<ProtoCommandEntry> entries, List<string> suggestions, List<CommandRowState> stateStore)
     {
         AddSectionHeader(title);
+        var entryList = entries.ToList();
 
         var commandContainer = new StackPanel { Spacing = 4 };
         _editorPanel.Children.Add(commandContainer);
@@ -1182,6 +1570,7 @@ public partial class ProtoEditorWindow : SimpleWindow
         Grid.SetColumn(valueHeader, 2);
         headerGrid.Children.Add(valueHeader);
 
+        headerGrid.IsVisible = entryList.Count > 0;
         commandContainer.Children.Add(headerGrid);
 
         void AddCommandRow(ProtoCommandEntry entry)
@@ -1266,6 +1655,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                 MergeMode = entry.MergeMode
             };
             stateStore.Add(rowState);
+            headerGrid.IsVisible = true;
 
             if (!_isReadOnly)
             {
@@ -1277,6 +1667,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                     {
                         stateStore.Remove(rowState);
                         commandContainer.Children.Remove(rowPanel);
+                        headerGrid.IsVisible = stateStore.Count > 0;
                         MarkDirty();
                     }
                 };
@@ -1287,7 +1678,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             commandContainer.Children.Add(rowPanel);
         }
 
-        foreach (var entry in entries)
+        foreach (var entry in entryList)
             AddCommandRow(entry);
 
         if (!_isReadOnly)
@@ -1859,10 +2250,17 @@ public partial class ProtoEditorWindow : SimpleWindow
         }
     }
 
+    private void ResetEditorScrollToTop()
+    {
+        _editorScroll.Offset = new Vector(0, 0);
+        Dispatcher.UIThread.Post(() => _editorScroll.Offset = new Vector(0, 0), DispatcherPriority.Loaded);
+    }
+
     private void BuildEditorPanel(string unitName)
     {
         _isPopulating = true;
         _editorPanel.Children.Clear();
+        ResetEditorScrollToTop();
         _fieldControls.Clear();
         _otherSpecificAttributeContainers.Clear();
         _currentStringFieldIds.Clear();
@@ -1899,6 +2297,11 @@ public partial class ProtoEditorWindow : SimpleWindow
 
         if (unit == null)
         {
+            _pageSearchTargets.Clear();
+            _pageSearchMatches.Clear();
+            ClearPageSearchHighlights();
+            UpdatePageSearchUiState(hasMatches: false, hasQuery: !string.IsNullOrWhiteSpace(_pageSearchBox.Text), hasValidPattern: true);
+            ResetEditorScrollToTop();
             _isPopulating = false;
             return;
         }
@@ -1978,7 +2381,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             if (field.Tag.Equals("buildpoints", StringComparison.OrdinalIgnoreCase) && !useBuildingLayout)
                 continue;
 
-            if (field.Tag.Equals("turnrate", StringComparison.OrdinalIgnoreCase) && useBuildingLayout)
+            if (field.Tag.Equals("turnrate", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             if (field.Tag.Equals("weightclass", StringComparison.OrdinalIgnoreCase) && useBuildingLayout)
@@ -2010,7 +2413,7 @@ public partial class ProtoEditorWindow : SimpleWindow
 
                 var obstructionGrid = new Grid
                 {
-                    ColumnDefinitions = new ColumnDefinitions("Auto, 140, Auto, 140")
+                    ColumnDefinitions = new ColumnDefinitions("Auto, 140, Auto, 140, Auto, 140")
                 };
 
                 var obstructionXLabel = new TextBlock
@@ -2065,12 +2468,39 @@ public partial class ProtoEditorWindow : SimpleWindow
                 Grid.SetColumn(obstructionZTb, 3);
                 obstructionGrid.Children.Add(obstructionZTb);
 
+                var turnRateLabel = new TextBlock
+                {
+                    Text = "Turn Rate",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(16, 4, 10, 4)
+                };
+                Grid.SetColumn(turnRateLabel, 4);
+                obstructionGrid.Children.Add(turnRateLabel);
+
+                var turnRateTb = new TextBox
+                {
+                    Text = ProtoXmlHandler.GetSimpleField(unit, "turnrate") ?? "",
+                    IsEnabled = !_isReadOnly,
+                    Margin = new Thickness(0, 4, 0, 4)
+                };
+                turnRateTb.TextChanged += async (s, e) =>
+                {
+                    if (!_isPopulating)
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed) MarkDirty();
+                    }
+                };
+                Grid.SetColumn(turnRateTb, 5);
+                obstructionGrid.Children.Add(turnRateTb);
+
                 Grid.SetColumn(obstructionGrid, 1);
                 Grid.SetRow(obstructionGrid, gridRow);
                 propertiesGrid.Children.Add(obstructionGrid);
 
                 _fieldControls["obstructionradiusx"] = obstructionXTb;
                 _fieldControls["obstructionradiusz"] = obstructionZTb;
+                _fieldControls["turnrate"] = turnRateTb;
                 gridRow++;
                 continue;
             }
@@ -8330,6 +8760,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             _editorPanel.Children.Add(btnAddAction);
         }
 
+        RebuildPageSearchTargets();
         _ = PopulateStringFieldDisplaysAsync();
     }
 
@@ -10153,7 +10584,8 @@ public partial class ProtoEditorWindow : SimpleWindow
             _modFilePath = path;
             _fileLabel.Text = path;
             _isDirty = false;
-            _cachedCommandNames = null;
+            InvalidateSuggestionCaches(includeTechNames: true);
+            InvalidateModStringEntriesCache();
             RefreshProtoActionMetadata();
 
             var config = ProtoEditorSettings.LoadSettings();
@@ -10205,7 +10637,8 @@ public partial class ProtoEditorWindow : SimpleWindow
                 var (doc, root) = ProtoXmlHandler.CreateNewProtoFile(xmlPath);
                 _modXmlDoc = doc;
                 _modXmlRoot = root;
-                _cachedCommandNames = null;
+                InvalidateSuggestionCaches(includeTechNames: true);
+                InvalidateModStringEntriesCache();
                 RefreshProtoActionMetadata();
             }
             else if (!TryLoadModFile(xmlPath))
@@ -10299,9 +10732,18 @@ public partial class ProtoEditorWindow : SimpleWindow
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+        if (string.Equals(_cachedModStringEntriesPath, path, StringComparison.OrdinalIgnoreCase) &&
+            _cachedModStringEntries != null)
+        {
+            return _cachedModStringEntries;
+        }
+
         try
         {
-            return StringTableParser.Parse(File.ReadAllText(path));
+            var parsed = StringTableParser.Parse(File.ReadAllText(path));
+            _cachedModStringEntriesPath = path;
+            _cachedModStringEntries = parsed;
+            return parsed;
         }
         catch
         {
@@ -10330,6 +10772,8 @@ public partial class ProtoEditorWindow : SimpleWindow
         }
 
         File.WriteAllText(path, writer.ToString());
+        _cachedModStringEntriesPath = path;
+        _cachedModStringEntries = new Dictionary<string, string>(entries, StringComparer.OrdinalIgnoreCase);
     }
 
     private void EnsureCurrentModStringFileExists()
@@ -10343,7 +10787,10 @@ public partial class ProtoEditorWindow : SimpleWindow
             Directory.CreateDirectory(dir);
 
         if (!File.Exists(path))
+        {
             File.WriteAllText(path, "Language = \"English\"\n\n");
+            InvalidateModStringEntriesCache();
+        }
     }
 
     private void RemoveStringEntries(IEnumerable<string> ids)
@@ -10564,6 +11011,8 @@ public partial class ProtoEditorWindow : SimpleWindow
         _modXmlRoot = null;
         _modFilePath = null;
         _isDirty = false;
+        InvalidateSuggestionCaches(includeTechNames: true);
+        InvalidateModStringEntriesCache();
 
         if (await EnsureLocalModAsync(forceNew: true))
         {
@@ -10583,7 +11032,7 @@ public partial class ProtoEditorWindow : SimpleWindow
         }
 
         ApplyCurrentEdits();
-        _cachedCommandNames = null;
+        InvalidateSuggestionCaches();
         try
         {
             SaveCurrentUnitStringValues();
@@ -10622,7 +11071,8 @@ public partial class ProtoEditorWindow : SimpleWindow
             }
 
             ApplyCurrentEdits();
-            _cachedCommandNames = null;
+            InvalidateSuggestionCaches(includeTechNames: true);
+            InvalidateModStringEntriesCache();
 
             if (_modXmlDoc == null)
             {
@@ -10774,6 +11224,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             }
 
             MarkDirty();
+            InvalidateSuggestionCaches();
             RefreshUnitList();
             _unitTabs.SelectedIndex = 1;
 
@@ -10807,6 +11258,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             ProtoXmlHandler.DeleteUnit(_modXmlRoot, _currentUnitName);
             _currentUnitName = null;
             MarkDirty();
+            InvalidateSuggestionCaches();
             RefreshUnitList();
             _editorPanel.Children.Clear();
         }
