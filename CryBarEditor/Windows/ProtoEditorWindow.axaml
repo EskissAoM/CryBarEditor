@@ -110,135 +110,156 @@
 
             <GridSplitter Grid.Column="1" Width="5" Background="#2d2d30" ResizeDirection="Columns" />
 
-            <!-- Right panel: scrollable editor -->
+            <!-- Right panel: fixed tools + scrollable editor -->
             <Border Grid.Column="2" Padding="15">
-                <Grid RowDefinitions="*,Auto">
-                    <ScrollViewer Grid.Row="0" x:Name="_editorScroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                <Grid RowDefinitions="Auto,*,Auto">
+                    <Grid Grid.Row="0"
+                          ColumnDefinitions="Auto,*,Auto"
+                          Margin="0,0,0,10">
+                        <Button x:Name="_sectionsButton"
+                                Content="Sections"
+                                IsVisible="False"
+                                IsEnabled="False"
+                                Padding="12,5"
+                                HorizontalAlignment="Left"
+                                VerticalAlignment="Top">
+                            <Button.Flyout>
+                                <Flyout Placement="BottomEdgeAlignedLeft">
+                                    <ScrollViewer MaxHeight="420"
+                                                  MinWidth="220"
+                                                  VerticalScrollBarVisibility="Auto">
+                                        <StackPanel x:Name="_sectionsFlyoutPanel"
+                                                    Spacing="4"
+                                                    Margin="4" />
+                                    </ScrollViewer>
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+                        <Border Grid.Column="2"
+                                x:Name="_pageSearchPanel"
+                                IsVisible="False"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Top"
+                                BorderThickness="1,0,1,1"
+                                CornerRadius="0,0,4,4"
+                                BorderBrush="#3f3f46"
+                                Background="#1c1c1c"
+                                Padding="8">
+                            <StackPanel Spacing="4">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBox x:Name="_pageSearchBox"
+                                             Width="265"
+                                             PlaceholderText="Find...">
+                                        <TextBox.InnerRightContent>
+                                            <StackPanel Orientation="Horizontal">
+                                                <ToggleButton x:Name="_pageSearchMatchCaseToggle"
+                                                              Background="Transparent"
+                                                              Foreground="#d9d9d9"
+                                                              BorderThickness="0"
+                                                              MinWidth="22"
+                                                              MinHeight="20"
+                                                              Padding="4"
+                                                              ToolTip.Tip="Match case">
+                                                    <Path Data="{StaticResource PageSearchCaseSensitiveIconPath}"
+                                                          Width="12"
+                                                          Height="12"
+                                                          Stretch="Uniform"
+                                                          Fill="{Binding $parent[ToggleButton].Foreground}"
+                                                          Stroke="{Binding $parent[ToggleButton].Foreground}"
+                                                          StrokeThickness="1" />
+                                                </ToggleButton>
+                                                <ToggleButton x:Name="_pageSearchWholeWordToggle"
+                                                              Background="Transparent"
+                                                              Foreground="#d9d9d9"
+                                                              BorderThickness="0"
+                                                              MinWidth="22"
+                                                              MinHeight="20"
+                                                              Padding="4"
+                                                              Margin="3,0,0,0"
+                                                              ToolTip.Tip="Match whole words">
+                                                    <Path Data="{StaticResource PageSearchCompleteWordIconPath}"
+                                                          Width="14"
+                                                          Height="12"
+                                                          Stretch="Uniform"
+                                                          Fill="{Binding $parent[ToggleButton].Foreground}"
+                                                          Stroke="{Binding $parent[ToggleButton].Foreground}"
+                                                          StrokeThickness="1" />
+                                                </ToggleButton>
+                                                <ToggleButton x:Name="_pageSearchRegexToggle"
+                                                              Background="Transparent"
+                                                              Foreground="#d9d9d9"
+                                                              BorderThickness="0"
+                                                              MinWidth="22"
+                                                              MinHeight="20"
+                                                              Padding="4"
+                                                              Margin="3,0,5,0"
+                                                              ToolTip.Tip="Use regex">
+                                                    <Path Data="{StaticResource PageSearchRegularExpressionIconPath}"
+                                                          Width="12"
+                                                          Height="12"
+                                                          Stretch="Uniform"
+                                                          Fill="{Binding $parent[ToggleButton].Foreground}"
+                                                          Stroke="{Binding $parent[ToggleButton].Foreground}"
+                                                          StrokeThickness="1" />
+                                                </ToggleButton>
+                                            </StackPanel>
+                                        </TextBox.InnerRightContent>
+                                    </TextBox>
+                                    <Button x:Name="_pageSearchPreviousButton"
+                                            Margin="5,0,0,0"
+                                            MinWidth="34"
+                                            BorderThickness="0"
+                                            Padding="4"
+                                            ToolTip.Tip="Find previous">
+                                        <Path Data="{StaticResource PageSearchFindPreviousIconPath}"
+                                              Width="16"
+                                              Height="16"
+                                              Stretch="Uniform"
+                                              Fill="{Binding $parent[Button].Foreground}"
+                                              Stroke="{Binding $parent[Button].Foreground}"
+                                              StrokeThickness="1" />
+                                    </Button>
+                                    <Button x:Name="_pageSearchNextButton"
+                                            Margin="3,0,0,0"
+                                            MinWidth="34"
+                                            BorderThickness="0"
+                                            Padding="4"
+                                            ToolTip.Tip="Find next">
+                                        <Path Data="{StaticResource PageSearchFindNextIconPath}"
+                                              Width="16"
+                                              Height="16"
+                                              Stretch="Uniform"
+                                              Fill="{Binding $parent[Button].Foreground}"
+                                              Stroke="{Binding $parent[Button].Foreground}"
+                                              StrokeThickness="1" />
+                                    </Button>
+                                    <Button x:Name="_pageSearchCloseButton"
+                                            Margin="3,0,0,0"
+                                            MinWidth="34"
+                                            BorderThickness="0"
+                                            Padding="4"
+                                            ToolTip.Tip="Close search">
+                                        <Path Data="{StaticResource PageSearchCloseIconPath}"
+                                              Width="12"
+                                              Height="12"
+                                              Stretch="Uniform"
+                                              Fill="{Binding $parent[Button].Foreground}"
+                                              Stroke="{Binding $parent[Button].Foreground}"
+                                              StrokeThickness="1" />
+                                    </Button>
+                                </StackPanel>
+                                <TextBlock x:Name="_pageSearchMatchCountText"
+                                           Text=""
+                                           FontSize="12"
+                                           Foreground="#d9d9d9"
+                                           Margin="2,0,0,0" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                    <ScrollViewer Grid.Row="1" x:Name="_editorScroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
                         <StackPanel x:Name="_editorPanel" Spacing="10" />
                     </ScrollViewer>
-                    <Border Grid.Row="0"
-                            x:Name="_pageSearchPanel"
-                            IsVisible="False"
-                            ZIndex="10"
-                            HorizontalAlignment="Right"
-                            VerticalAlignment="Top"
-                            Margin="0,0,18,0"
-                            BorderThickness="1,0,1,1"
-                            CornerRadius="0,0,4,4"
-                            BorderBrush="#3f3f46"
-                            Background="#1c1c1c"
-                            Padding="8">
-                        <StackPanel Spacing="4">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBox x:Name="_pageSearchBox"
-                                         Width="265"
-                                         PlaceholderText="Find...">
-                                    <TextBox.InnerRightContent>
-                                        <StackPanel Orientation="Horizontal">
-                                            <ToggleButton x:Name="_pageSearchMatchCaseToggle"
-                                                          Background="Transparent"
-                                                          Foreground="#d9d9d9"
-                                                          BorderThickness="0"
-                                                          MinWidth="22"
-                                                          MinHeight="20"
-                                                          Padding="4"
-                                                          ToolTip.Tip="Match case">
-                                                <Path Data="{StaticResource PageSearchCaseSensitiveIconPath}"
-                                                      Width="12"
-                                                      Height="12"
-                                                      Stretch="Uniform"
-                                                      Fill="{Binding $parent[ToggleButton].Foreground}"
-                                                      Stroke="{Binding $parent[ToggleButton].Foreground}"
-                                                      StrokeThickness="1" />
-                                            </ToggleButton>
-                                            <ToggleButton x:Name="_pageSearchWholeWordToggle"
-                                                          Background="Transparent"
-                                                          Foreground="#d9d9d9"
-                                                          BorderThickness="0"
-                                                          MinWidth="22"
-                                                          MinHeight="20"
-                                                          Padding="4"
-                                                          Margin="3,0,0,0"
-                                                          ToolTip.Tip="Match whole words">
-                                                <Path Data="{StaticResource PageSearchCompleteWordIconPath}"
-                                                      Width="14"
-                                                      Height="12"
-                                                      Stretch="Uniform"
-                                                      Fill="{Binding $parent[ToggleButton].Foreground}"
-                                                      Stroke="{Binding $parent[ToggleButton].Foreground}"
-                                                      StrokeThickness="1" />
-                                            </ToggleButton>
-                                            <ToggleButton x:Name="_pageSearchRegexToggle"
-                                                          Background="Transparent"
-                                                          Foreground="#d9d9d9"
-                                                          BorderThickness="0"
-                                                          MinWidth="22"
-                                                          MinHeight="20"
-                                                          Padding="4"
-                                                          Margin="3,0,5,0"
-                                                          ToolTip.Tip="Use regex">
-                                                <Path Data="{StaticResource PageSearchRegularExpressionIconPath}"
-                                                      Width="12"
-                                                      Height="12"
-                                                      Stretch="Uniform"
-                                                      Fill="{Binding $parent[ToggleButton].Foreground}"
-                                                      Stroke="{Binding $parent[ToggleButton].Foreground}"
-                                                      StrokeThickness="1" />
-                                            </ToggleButton>
-                                        </StackPanel>
-                                    </TextBox.InnerRightContent>
-                                </TextBox>
-                                <Button x:Name="_pageSearchPreviousButton"
-                                        Margin="5,0,0,0"
-                                        MinWidth="34"
-                                        BorderThickness="0"
-                                        Padding="4"
-                                        ToolTip.Tip="Find previous">
-                                    <Path Data="{StaticResource PageSearchFindPreviousIconPath}"
-                                          Width="16"
-                                          Height="16"
-                                          Stretch="Uniform"
-                                          Fill="{Binding $parent[Button].Foreground}"
-                                          Stroke="{Binding $parent[Button].Foreground}"
-                                          StrokeThickness="1" />
-                                </Button>
-                                <Button x:Name="_pageSearchNextButton"
-                                        Margin="3,0,0,0"
-                                        MinWidth="34"
-                                        BorderThickness="0"
-                                        Padding="4"
-                                        ToolTip.Tip="Find next">
-                                    <Path Data="{StaticResource PageSearchFindNextIconPath}"
-                                          Width="16"
-                                          Height="16"
-                                          Stretch="Uniform"
-                                          Fill="{Binding $parent[Button].Foreground}"
-                                          Stroke="{Binding $parent[Button].Foreground}"
-                                          StrokeThickness="1" />
-                                </Button>
-                                <Button x:Name="_pageSearchCloseButton"
-                                        Margin="3,0,0,0"
-                                        MinWidth="34"
-                                        BorderThickness="0"
-                                        Padding="4"
-                                        ToolTip.Tip="Close search">
-                                    <Path Data="{StaticResource PageSearchCloseIconPath}"
-                                          Width="12"
-                                          Height="12"
-                                          Stretch="Uniform"
-                                          Fill="{Binding $parent[Button].Foreground}"
-                                          Stroke="{Binding $parent[Button].Foreground}"
-                                          StrokeThickness="1" />
-                                </Button>
-                            </StackPanel>
-                            <TextBlock x:Name="_pageSearchMatchCountText"
-                                       Text=""
-                                       FontSize="12"
-                                       Foreground="#d9d9d9"
-                                       Margin="2,0,0,0" />
-                        </StackPanel>
-                    </Border>
-                    <TextBlock Grid.Row="1" x:Name="_statusMessage" Text="" Foreground="#e3bd54" FontWeight="Bold" Margin="0,5,0,0" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    <TextBlock Grid.Row="2" x:Name="_statusMessage" Text="" Foreground="#e3bd54" FontWeight="Bold" Margin="0,5,0,0" HorizontalAlignment="Center" VerticalAlignment="Center" />
                 </Grid>
             </Border>
         </Grid>

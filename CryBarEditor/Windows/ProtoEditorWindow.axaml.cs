@@ -130,12 +130,19 @@ public partial class ProtoEditorWindow : SimpleWindow
     private readonly List<PageSearchTarget> _pageSearchTargets = [];
     private readonly List<PageSearchTarget> _pageSearchMatches = [];
     private readonly HashSet<TextBlock> _pageSearchHighlightedBlocks = [];
+    private readonly List<SectionJumpTarget> _sectionJumpTargets = [];
     private int _currentPageSearchMatchIndex = -1;
 
     private sealed class PageSearchTarget
     {
         public required Control Control { get; init; }
         public required string Text { get; init; }
+    }
+
+    private sealed class SectionJumpTarget
+    {
+        public required string Title { get; init; }
+        public required TextBlock Header { get; init; }
     }
 
     private enum BuildLimitMode
@@ -561,6 +568,7 @@ public partial class ProtoEditorWindow : SimpleWindow
         _pageSearchCloseButton.Click += (_, _) => ClosePageSearch();
 
         UpdatePageSearchUiState(hasMatches: false, hasQuery: false, hasValidPattern: true);
+        RebuildSectionJumpFlyout();
     }
 
     private void OnWindowKeyDown(object? sender, KeyEventArgs e)
@@ -633,6 +641,56 @@ public partial class ProtoEditorWindow : SimpleWindow
             Margin = new Thickness(0, 15, 0, 5)
         };
         _editorPanel.Children.Add(lbl);
+        _sectionJumpTargets.Add(new SectionJumpTarget
+        {
+            Title = title,
+            Header = lbl
+        });
+    }
+
+    private void RebuildSectionJumpFlyout()
+    {
+        _sectionsFlyoutPanel.Children.Clear();
+
+        foreach (var target in _sectionJumpTargets)
+        {
+            var button = new Button
+            {
+                Content = target.Title,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Padding = new Thickness(10, 6),
+                MinWidth = 180
+            };
+
+            button.Click += (_, _) =>
+            {
+                _sectionsButton.Flyout?.Hide();
+                Dispatcher.UIThread.Post(() => ScrollEditorControlToTop(target.Header), DispatcherPriority.Loaded);
+            };
+
+            _sectionsFlyoutPanel.Children.Add(button);
+        }
+
+        var hasSections = _sectionJumpTargets.Count > 0;
+        _sectionsButton.IsVisible = hasSections;
+        _sectionsButton.IsEnabled = hasSections;
+    }
+
+    private void ScrollEditorControlToTop(Control target, double topPadding = 8)
+    {
+        var targetOrigin = target.TranslatePoint(new Point(0, 0), _editorPanel);
+        if (targetOrigin == null)
+        {
+            target.BringIntoView();
+            return;
+        }
+
+        var desiredOffsetY = Math.Max(0, targetOrigin.Value.Y - topPadding);
+        var maxOffsetY = Math.Max(0, _editorScroll.Extent.Height - _editorScroll.Viewport.Height);
+        var clampedOffsetY = Math.Min(desiredOffsetY, maxOffsetY);
+
+        _editorScroll.Offset = new Vector(_editorScroll.Offset.X, clampedOffsetY);
     }
 
     private void OpenPageSearch()
@@ -2261,6 +2319,8 @@ public partial class ProtoEditorWindow : SimpleWindow
         _isPopulating = true;
         _editorPanel.Children.Clear();
         ResetEditorScrollToTop();
+        _sectionJumpTargets.Clear();
+        RebuildSectionJumpFlyout();
         _fieldControls.Clear();
         _otherSpecificAttributeContainers.Clear();
         _currentStringFieldIds.Clear();
@@ -2300,6 +2360,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             _pageSearchTargets.Clear();
             _pageSearchMatches.Clear();
             ClearPageSearchHighlights();
+            RebuildSectionJumpFlyout();
             UpdatePageSearchUiState(hasMatches: false, hasQuery: !string.IsNullOrWhiteSpace(_pageSearchBox.Text), hasValidPattern: true);
             ResetEditorScrollToTop();
             _isPopulating = false;
@@ -8761,6 +8822,7 @@ public partial class ProtoEditorWindow : SimpleWindow
         }
 
         RebuildPageSearchTargets();
+        RebuildSectionJumpFlyout();
         _ = PopulateStringFieldDisplaysAsync();
     }
 
