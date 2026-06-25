@@ -98,6 +98,7 @@ public partial class ProtoEditorWindow : SimpleWindow
     private List<string>? _cachedTrainUnitNames;
     private List<string>? _cachedTechNames;
     private List<string>? _cachedCommandNames;
+    private List<string>? _cachedBuildLimitTargets;
     private List<string>? _cachedResourceSubtypeNames;
     private List<string>? _cachedPlacementFileNames;
     private List<string>? _cachedPathabilityFlags;
@@ -469,6 +470,7 @@ public partial class ProtoEditorWindow : SimpleWindow
     {
         _cachedTrainUnitNames = null;
         _cachedCommandNames = null;
+        _cachedBuildLimitTargets = null;
 
         if (includeTechNames)
             _cachedTechNames = null;
@@ -1286,6 +1288,9 @@ public partial class ProtoEditorWindow : SimpleWindow
 
     private List<string> GetAvailableBuildLimitTargets()
     {
+        if (_cachedBuildLimitTargets != null)
+            return _cachedBuildLimitTargets;
+
         var values = new List<string>();
         if (_barData != null)
         {
@@ -1298,11 +1303,12 @@ public partial class ProtoEditorWindow : SimpleWindow
         if (_modXmlRoot != null)
             values.AddRange(ProtoXmlHandler.GetUnitNames(_modXmlRoot));
 
-        return values
+        _cachedBuildLimitTargets = values
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
             .ToList();
+        return _cachedBuildLimitTargets;
     }
 
     private List<string> GetDistinctBarSimpleFieldValues(string tag)
@@ -2314,11 +2320,12 @@ public partial class ProtoEditorWindow : SimpleWindow
         Dispatcher.UIThread.Post(() => _editorScroll.Offset = new Vector(0, 0), DispatcherPriority.Loaded);
     }
 
-    private void BuildEditorPanel(string unitName)
+    private void BuildEditorPanel(string unitName, bool resetScroll = true)
     {
         _isPopulating = true;
         _editorPanel.Children.Clear();
-        ResetEditorScrollToTop();
+        if (resetScroll)
+            ResetEditorScrollToTop();
         _sectionJumpTargets.Clear();
         RebuildSectionJumpFlyout();
         _fieldControls.Clear();
@@ -2362,7 +2369,8 @@ public partial class ProtoEditorWindow : SimpleWindow
             ClearPageSearchHighlights();
             RebuildSectionJumpFlyout();
             UpdatePageSearchUiState(hasMatches: false, hasQuery: !string.IsNullOrWhiteSpace(_pageSearchBox.Text), hasValidPattern: true);
-            ResetEditorScrollToTop();
+            if (resetScroll)
+                ResetEditorScrollToTop();
             _isPopulating = false;
             return;
         }
@@ -4401,6 +4409,14 @@ public partial class ProtoEditorWindow : SimpleWindow
                 _fieldControls.Remove(fieldKey);
         }
 
+        static IReadOnlyList<string> MaterializeSuggestionItems(IEnumerable<string> suggestions)
+        {
+            if (suggestions is IReadOnlyList<string> readOnlyList)
+                return readOnlyList;
+
+            return suggestions.ToList();
+        }
+
         AutoCompleteBox CreateOtherSuggestionBox(string initialValue, IEnumerable<string> suggestions, string? placeholder = null)
         {
             var acb = new AutoCompleteBox
@@ -4408,7 +4424,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                 Text = initialValue,
                 PlaceholderText = placeholder,
                 FilterMode = AutoCompleteFilterMode.Contains,
-                ItemsSource = suggestions.ToList(),
+                ItemsSource = MaterializeSuggestionItems(suggestions),
                 IsEnabled = !_isReadOnly
             };
             EnableDropdownAutoComplete(acb);
@@ -4416,13 +4432,15 @@ public partial class ProtoEditorWindow : SimpleWindow
             return acb;
         }
 
-        AutoCompleteBox CreateValidatedOtherSuggestionBox(string initialValue, IEnumerable<string> suggestions, string? placeholder = null, bool allowCustom = false)
+        AutoCompleteBox CreateValidatedOtherSuggestionBox(string initialValue, IEnumerable<string> suggestions, string? placeholder = null, bool allowCustom = false, bool suggestionsAlreadyNormalized = false)
         {
-            var suggestionList = suggestions
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            IReadOnlyList<string> suggestionList = suggestionsAlreadyNormalized
+                ? MaterializeSuggestionItems(suggestions)
+                : suggestions
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
 
             var acb = CreateOtherSuggestionBox(initialValue, suggestionList, placeholder);
             string? selectedValue = suggestionList.FirstOrDefault(x => x.Equals(initialValue, StringComparison.OrdinalIgnoreCase));
@@ -4531,7 +4549,8 @@ public partial class ProtoEditorWindow : SimpleWindow
                 editor = tag switch
                 {
                     "placementfile" => CreateValidatedOtherSuggestionBox(initialValue, suggestions, GetOtherSpecificAttributeLabel(key), allowCustom: true),
-                    "resourcesubtype" or "initialunitaistance" or "pathabilityflags" or "hotkeycontext" or "allyhotkeycontext" or "partisantype"
+                    "partisantype" => CreateValidatedOtherSuggestionBox(initialValue, suggestions, GetOtherSpecificAttributeLabel(key), suggestionsAlreadyNormalized: true),
+                    "resourcesubtype" or "initialunitaistance" or "pathabilityflags" or "hotkeycontext" or "allyhotkeycontext"
                         => CreateValidatedOtherSuggestionBox(initialValue, suggestions, GetOtherSpecificAttributeLabel(key)),
                     _ => CreateOtherSuggestionBox(initialValue, suggestions, GetOtherSpecificAttributeLabel(key))
                 };
@@ -4861,7 +4880,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             rowGrid.Children.Add(typeLabel);
 
             var partisantypeInitial = ProtoXmlHandler.GetSimpleField(unit, "partisantype") ?? "";
-            var partisantypeAcb = CreateValidatedOtherSuggestionBox(partisantypeInitial, otherProtoUnitSuggestions, "Proto Unit");
+            var partisantypeAcb = CreateValidatedOtherSuggestionBox(partisantypeInitial, otherProtoUnitSuggestions, "Proto Unit", suggestionsAlreadyNormalized: true);
             Grid.SetColumn(partisantypeAcb, 2);
             rowGrid.Children.Add(partisantypeAcb);
             _fieldControls["partisantype"] = partisantypeAcb;
@@ -5508,7 +5527,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                     Margin = new Thickness(0, 2, 0, 2)
                 };
 
-                var valueAcb = CreateValidatedOtherSuggestionBox(existing?.Value?.Trim() ?? "", otherProtoUnitSuggestions, "Proto Unit");
+                var valueAcb = CreateValidatedOtherSuggestionBox(existing?.Value?.Trim() ?? "", otherProtoUnitSuggestions, "Proto Unit", suggestionsAlreadyNormalized: true);
                 valueAcb.Margin = new Thickness(0, 0, 8, 0);
                 Grid.SetColumn(valueAcb, 0);
                 rowGrid.Children.Add(valueAcb);
@@ -5654,7 +5673,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                 var rowStack = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 2) };
 
                 var row1 = new Grid { ColumnDefinitions = new ColumnDefinitions("*, Auto, 160, Auto, 100, Auto"), Margin = new Thickness(0, 2, 0, 2) };
-                var valueAcb = CreateValidatedOtherSuggestionBox(existing?.Value?.Trim() ?? "", otherProtoUnitSuggestions, "Proto Unit");
+                var valueAcb = CreateValidatedOtherSuggestionBox(existing?.Value?.Trim() ?? "", otherProtoUnitSuggestions, "Proto Unit", suggestionsAlreadyNormalized: true);
                 Grid.SetColumn(valueAcb, 0);
                 row1.Children.Add(valueAcb);
 
@@ -5730,7 +5749,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                 var waterLabel = new TextBlock { Text = "Water Proto Unit", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 8, 4) };
                 Grid.SetColumn(waterLabel, 0);
                 row3.Children.Add(waterLabel);
-                var waterProtoUnitAcb = CreateValidatedOtherSuggestionBox((string?)existing?.Attribute("waterProtoUnit") ?? "", otherProtoUnitSuggestions, "Water Proto Unit");
+                var waterProtoUnitAcb = CreateValidatedOtherSuggestionBox((string?)existing?.Attribute("waterProtoUnit") ?? "", otherProtoUnitSuggestions, "Water Proto Unit", suggestionsAlreadyNormalized: true);
                 Grid.SetColumn(waterProtoUnitAcb, 1);
                 row3.Children.Add(waterProtoUnitAcb);
 
@@ -6017,7 +6036,7 @@ public partial class ProtoEditorWindow : SimpleWindow
 
                     var targetTypeLabel = new TextBlock { Text = "Target Type", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
                     selfGrid.Children.Add(targetTypeLabel);
-                    var targetTypeAcb = CreateValidatedOtherSuggestionBox(respawnTrainData?.Element("targettype")?.Value?.Trim() ?? "", targetSuggestions, "Target Type");
+                    var targetTypeAcb = CreateValidatedOtherSuggestionBox(respawnTrainData?.Element("targettype")?.Value?.Trim() ?? "", targetSuggestions, "Target Type", suggestionsAlreadyNormalized: true);
                     Grid.SetColumn(targetTypeAcb, 1);
                     selfGrid.Children.Add(targetTypeAcb);
                     _fieldControls["respawntraindata.targettype"] = targetTypeAcb;
@@ -6025,7 +6044,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                     var trainProtoLabel = new TextBlock { Text = "Train Proto", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
                     Grid.SetColumn(trainProtoLabel, 2);
                     selfGrid.Children.Add(trainProtoLabel);
-                    var trainProtoAcb = CreateValidatedOtherSuggestionBox(respawnTrainData?.Element("trainproto")?.Value?.Trim() ?? "", protoSuggestions, "Train Proto");
+                    var trainProtoAcb = CreateValidatedOtherSuggestionBox(respawnTrainData?.Element("trainproto")?.Value?.Trim() ?? "", protoSuggestions, "Train Proto", suggestionsAlreadyNormalized: true);
                     Grid.SetColumn(trainProtoAcb, 3);
                     selfGrid.Children.Add(trainProtoAcb);
                     _fieldControls["respawntraindata.trainproto"] = trainProtoAcb;
@@ -6041,7 +6060,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                     var vfxLabel = new TextBlock { Text = "Respawn VFX", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
                     Grid.SetRow(vfxLabel, 1);
                     selfGrid.Children.Add(vfxLabel);
-                    var vfxAcb = CreateValidatedOtherSuggestionBox(respawnTrainData?.Element("respawnvfx")?.Value?.Trim() ?? "", protoSuggestions, "Respawn VFX");
+                    var vfxAcb = CreateValidatedOtherSuggestionBox(respawnTrainData?.Element("respawnvfx")?.Value?.Trim() ?? "", protoSuggestions, "Respawn VFX", suggestionsAlreadyNormalized: true);
                     Grid.SetColumn(vfxAcb, 1);
                     Grid.SetColumnSpan(vfxAcb, 5);
                     Grid.SetRow(vfxAcb, 1);
@@ -6093,7 +6112,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                 var vfxLabel2 = new TextBlock { Text = "Respawn VFX", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
                 Grid.SetColumn(vfxLabel2, 2);
                 miscGrid.Children.Add(vfxLabel2);
-                var vfxAcb2 = CreateValidatedOtherSuggestionBox(respawnTrainData?.Element("respawnvfx")?.Value?.Trim() ?? "", protoSuggestions, "Respawn VFX");
+                var vfxAcb2 = CreateValidatedOtherSuggestionBox(respawnTrainData?.Element("respawnvfx")?.Value?.Trim() ?? "", protoSuggestions, "Respawn VFX", suggestionsAlreadyNormalized: true);
                 Grid.SetColumn(vfxAcb2, 3);
                 miscGrid.Children.Add(vfxAcb2);
                 _fieldControls["respawntraindata.respawnvfx"] = vfxAcb2;
@@ -6359,7 +6378,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                 if (!_isReadOnly)
                 {
                     var addGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("*, Auto") };
-                    var acb = CreateValidatedOtherSuggestionBox("", typeSuggestions, title);
+                    var acb = CreateValidatedOtherSuggestionBox("", typeSuggestions, title, suggestionsAlreadyNormalized: true);
                     Grid.SetColumn(acb, 0);
                     addGrid.Children.Add(acb);
                     string? selectedTypeValue = null;
@@ -7068,7 +7087,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             Grid.SetColumn(socketLabel, 1);
             headerGrid.Children.Add(socketLabel);
 
-            var socketAcb = CreateValidatedOtherSuggestionBox(socketUnitType, socketSuggestions, "Socket Unit Type");
+            var socketAcb = CreateValidatedOtherSuggestionBox(socketUnitType, socketSuggestions, "Socket Unit Type", suggestionsAlreadyNormalized: true);
             Grid.SetColumn(socketAcb, 2);
             headerGrid.Children.Add(socketAcb);
             _fieldControls["socketunittype"] = socketAcb;
@@ -7129,7 +7148,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                 var nonSocketLabel = new TextBlock { Text = "Non Socket Place Proto ID", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) };
                 Grid.SetColumn(nonSocketLabel, 1);
                 rowGrid.Children.Add(nonSocketLabel);
-                var nonSocketAcb = CreateValidatedOtherSuggestionBox(nonSocketPlaceProtoId, socketSuggestions, "Non Socket Place Proto ID");
+                var nonSocketAcb = CreateValidatedOtherSuggestionBox(nonSocketPlaceProtoId, socketSuggestions, "Non Socket Place Proto ID", suggestionsAlreadyNormalized: true);
                 Grid.SetColumn(nonSocketAcb, 2);
                 rowGrid.Children.Add(nonSocketAcb);
                 _fieldControls["nonsocketplaceprotoid"] = nonSocketAcb;
@@ -7941,7 +7960,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             Grid.SetColumn(valueLabel, 3);
             row1.Children.Add(valueLabel);
 
-            var valueAcb = CreateValidatedOtherSuggestionBox(replacement?.Value?.Trim() ?? "", otherProtoUnitSuggestions, "Proto Unit");
+            var valueAcb = CreateValidatedOtherSuggestionBox(replacement?.Value?.Trim() ?? "", otherProtoUnitSuggestions, "Proto Unit", suggestionsAlreadyNormalized: true);
             Grid.SetColumn(valueAcb, 4);
             row1.Children.Add(valueAcb);
             _fieldControls["replacement.value"] = valueAcb;
@@ -11103,7 +11122,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             _fileLabel.Text = _modFilePath;
             _statusMessage.Text = "Saved successfully.";
             if (!string.IsNullOrWhiteSpace(_currentUnitName))
-                BuildEditorPanel(_currentUnitName);
+                BuildEditorPanel(_currentUnitName, resetScroll: false);
             _ = Task.Delay(2000).ContinueWith(_ => Dispatcher.UIThread.Post(() => _statusMessage.Text = ""));
         }
         catch (Exception ex)
@@ -11157,7 +11176,7 @@ public partial class ProtoEditorWindow : SimpleWindow
 
                 RefreshUnitList();
                 if (!string.IsNullOrWhiteSpace(_currentUnitName))
-                    BuildEditorPanel(_currentUnitName);
+                    BuildEditorPanel(_currentUnitName, resetScroll: false);
             }
             catch (Exception ex)
             {
