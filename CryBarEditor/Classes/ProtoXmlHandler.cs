@@ -20,6 +20,37 @@ public sealed class ProtoAction
     public string MaxRange{ get; set; } = "";
     public List<(string DamageType, string Amount)> Damages       { get; } = [];
     public List<(string UnitType, string Multiplier)> DamageBonuses { get; } = [];
+    public XElement? SourceElement { get; set; }
+    public List<XElement> AdditionalElements { get; } = [];
+
+    public ProtoAction Clone()
+    {
+        var clone = new ProtoAction
+        {
+            Name = Name,
+            Type = Type,
+            Rof = Rof,
+            MaxRange = MaxRange,
+            SourceElement = SourceElement != null ? new XElement(SourceElement) : null,
+        };
+
+        foreach (var damage in Damages)
+            clone.Damages.Add(damage);
+
+        foreach (var bonus in DamageBonuses)
+            clone.DamageBonuses.Add(bonus);
+
+        foreach (var element in AdditionalElements)
+            clone.AdditionalElements.Add(new XElement(element));
+
+        return clone;
+    }
+}
+
+public sealed class ProtoActionStructuredFieldEntry
+{
+    public string Value { get; set; } = "";
+    public Dictionary<string, string> Attributes { get; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class ProtoCommandEntry
@@ -47,6 +78,16 @@ public sealed class ProtoCultureFieldEntry
 /// </summary>
 public static class ProtoXmlHandler
 {
+    private static readonly HashSet<string> KnownProtoActionChildTags = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "name",
+        "type",
+        "rof",
+        "maxrange",
+        "damage",
+        "damagebonus",
+    };
+
     private sealed class Utf8StringWriter : StringWriter
     {
         public override Encoding Encoding => new UTF8Encoding(false);
@@ -363,20 +404,7 @@ public static class ProtoXmlHandler
     {
         var result = new List<ProtoAction>();
         foreach (var pa in unit.Elements("protoaction"))
-        {
-            var action = new ProtoAction
-            {
-                Name     = (string?)pa.Element("name")     ?? "",
-                Type     = (string?)pa.Element("type")     ?? "",
-                Rof      = (string?)pa.Element("rof")      ?? "",
-                MaxRange = (string?)pa.Element("maxrange") ?? "",
-            };
-            foreach (var d in pa.Elements("damage"))
-                action.Damages.Add(((string?)d.Attribute("type") ?? "", d.Value));
-            foreach (var db in pa.Elements("damagebonus"))
-                action.DamageBonuses.Add(((string?)db.Attribute("type") ?? (string?)db.Attribute("unittype") ?? "", db.Value));
-            result.Add(action);
-        }
+            result.Add(ParseProtoActionLikeElement(pa));
         return result;
     }
 
@@ -386,7 +414,11 @@ public static class ProtoXmlHandler
         unit.Elements("protoaction").Remove();
         foreach (var a in actions)
         {
-            var pa = new XElement("protoaction");
+            var pa = a.SourceElement != null
+                ? new XElement(a.SourceElement)
+                : new XElement("protoaction");
+
+            pa.RemoveNodes();
             if (a.Name.Length     > 0) pa.Add(new XElement("name",     a.Name));
             if (a.Type.Length     > 0) pa.Add(new XElement("type",     a.Type));
             if (a.Rof.Length      > 0) pa.Add(new XElement("rof",      a.Rof));
@@ -395,7 +427,132 @@ public static class ProtoXmlHandler
                 pa.Add(new XElement("damage", new XAttribute("type", dt), amt));
             foreach (var (ut, mult) in a.DamageBonuses)
                 pa.Add(new XElement("damagebonus", new XAttribute("type", ut), mult));
+            foreach (var extra in a.AdditionalElements)
+                pa.Add(new XElement(extra));
             unit.Add(pa);
+        }
+    }
+
+    public static ProtoAction ParseProtoActionLikeElement(XElement actionElement)
+    {
+        if (actionElement == null)
+            throw new ArgumentNullException(nameof(actionElement));
+
+        var action = new ProtoAction
+        {
+            Name = (string?)actionElement.Element("name") ?? "",
+            Type = (string?)actionElement.Element("type") ?? "",
+            Rof = (string?)actionElement.Element("rof") ?? "",
+            MaxRange = (string?)actionElement.Element("maxrange") ?? "",
+            SourceElement = new XElement(actionElement),
+        };
+
+        foreach (var d in actionElement.Elements("damage"))
+            action.Damages.Add(((string?)d.Attribute("type") ?? "", d.Value));
+        foreach (var db in actionElement.Elements("damagebonus"))
+            action.DamageBonuses.Add(((string?)db.Attribute("type") ?? (string?)db.Attribute("unittype") ?? "", db.Value));
+        foreach (var child in actionElement.Elements())
+        {
+            if (!KnownProtoActionChildTags.Contains(child.Name.LocalName))
+                action.AdditionalElements.Add(new XElement(child));
+        }
+
+        return action;
+    }
+
+    public static string GetProtoActionSimpleFieldValue(ProtoAction action, string tag)
+    {
+        if (action == null)
+            throw new ArgumentNullException(nameof(action));
+
+        if (string.IsNullOrWhiteSpace(tag))
+            return "";
+
+        return action.AdditionalElements
+            .FirstOrDefault(x =>
+                x.Name.LocalName.Equals(tag.Trim(), StringComparison.OrdinalIgnoreCase) &&
+                !x.HasElements)
+            ?.Value
+            ?.Trim()
+            ?? "";
+    }
+
+    public static void SetProtoActionSimpleFieldValue(ProtoAction action, string tag, string value)
+    {
+        if (action == null)
+            throw new ArgumentNullException(nameof(action));
+
+        if (string.IsNullOrWhiteSpace(tag))
+            return;
+
+        var normalizedTag = tag.Trim();
+        action.AdditionalElements.RemoveAll(x => x.Name.LocalName.Equals(normalizedTag, StringComparison.OrdinalIgnoreCase));
+
+        if (!string.IsNullOrWhiteSpace(value))
+            action.AdditionalElements.Add(new XElement(normalizedTag, value.Trim()));
+    }
+
+    public static List<ProtoActionStructuredFieldEntry> GetProtoActionStructuredFieldEntries(ProtoAction action, string tag)
+    {
+        if (action == null)
+            throw new ArgumentNullException(nameof(action));
+
+        if (string.IsNullOrWhiteSpace(tag))
+            return [];
+
+        return action.AdditionalElements
+            .Where(x =>
+                x.Name.LocalName.Equals(tag.Trim(), StringComparison.OrdinalIgnoreCase) &&
+                !x.HasElements)
+            .Select(element =>
+            {
+                var entry = new ProtoActionStructuredFieldEntry
+                {
+                    Value = element.Value?.Trim() ?? "",
+                };
+
+                foreach (var attribute in element.Attributes())
+                {
+                    if (!string.IsNullOrWhiteSpace(attribute.Name.LocalName))
+                        entry.Attributes[attribute.Name.LocalName] = attribute.Value?.Trim() ?? "";
+                }
+
+                return entry;
+            })
+            .ToList();
+    }
+
+    public static void SetProtoActionStructuredFieldEntries(ProtoAction action, string tag, IEnumerable<ProtoActionStructuredFieldEntry> entries)
+    {
+        if (action == null)
+            throw new ArgumentNullException(nameof(action));
+
+        if (string.IsNullOrWhiteSpace(tag))
+            return;
+
+        var normalizedTag = tag.Trim();
+        action.AdditionalElements.RemoveAll(x => x.Name.LocalName.Equals(normalizedTag, StringComparison.OrdinalIgnoreCase));
+
+        foreach (var entry in entries ?? [])
+        {
+            var value = entry?.Value?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(value) &&
+                (entry == null || entry.Attributes.Values.All(string.IsNullOrWhiteSpace)))
+            {
+                continue;
+            }
+
+            var element = new XElement(normalizedTag, value);
+            if (entry != null)
+            {
+                foreach (var attribute in entry.Attributes)
+                {
+                    if (!string.IsNullOrWhiteSpace(attribute.Key) && !string.IsNullOrWhiteSpace(attribute.Value))
+                        element.SetAttributeValue(attribute.Key.Trim(), attribute.Value.Trim());
+                }
+            }
+
+            action.AdditionalElements.Add(element);
         }
     }
 

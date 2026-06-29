@@ -247,7 +247,7 @@ public static class ProtoConstants
         "TradeAddAllyResources", "GarrisonIgnoreDiplomacy", "NoAutoDelayedTransform",
         "RespawnTrainOnDeath", "HasReflectAttack", "BloodOverlayEnabled",
         "DisableStealthInCutscenes", "HostileNature","CanDodgeAttacks","ResourceReturnRateTotalCost",
-        "ReturnResourcesOnConstruction","DoApplyResourceReturnIfDeleted",
+        "ReturnResourcesOnConstruction","DoNotApplyResourceReturnIfDeleted",
     ];
 
     // ── Field suggestions (merged with BAR data at runtime) ───────────────────

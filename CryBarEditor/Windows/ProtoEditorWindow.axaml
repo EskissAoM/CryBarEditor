@@ -70,6 +70,7 @@
 
     </Window.Styles>
 
+    <Grid>
     <DockPanel>
         <!-- Menu bar / Top toolbar -->
         <Border DockPanel.Dock="Top" Background="#1c1c1c" BorderThickness="0,0,0,1" BorderBrush="#2d2d30" Height="45">
@@ -264,4 +265,24 @@
             </Border>
         </Grid>
     </DockPanel>
+        <Border x:Name="_startupLoadingOverlay"
+                IsVisible="False"
+                Background="#CC141414"
+                ZIndex="10">
+            <StackPanel Width="280"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="12">
+                <ProgressBar IsIndeterminate="True"
+                             Height="8" />
+                <TextBlock x:Name="_startupLoadingText"
+                           Text="Loading Proto Editor..."
+                           HorizontalAlignment="Center"
+                           TextAlignment="Center"
+                           FontSize="15"
+                           FontWeight="SemiBold"
+                           Foreground="#f0f0f0" />
+            </StackPanel>
+        </Border>
+    </Grid>
 </Window>

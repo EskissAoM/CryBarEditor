@@ -21,10 +21,10 @@ public static class ProtoEditorSettings
 {
     private const string SettingsFilename = "aom_editor_settings.json";
 
-    private static string GetSettingsPath()
+    internal static string GetAppDataPath(string filename)
     {
         string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-        string path = Path.Combine(baseDir, SettingsFilename);
+        string path = Path.Combine(baseDir, filename);
 
         try
         {
@@ -37,9 +37,12 @@ public static class ProtoEditorSettings
         catch
         {
             // Fallback to user profile directory
-            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), SettingsFilename);
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), filename);
         }
     }
+
+    private static string GetSettingsPath()
+        => GetAppDataPath(SettingsFilename);
 
     public static ProtoEditorConfig LoadSettings()
     {

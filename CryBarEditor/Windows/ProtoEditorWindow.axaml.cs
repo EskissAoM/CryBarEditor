@@ -64,6 +64,8 @@ public partial class ProtoEditorWindow : SimpleWindow
 
     private readonly MainWindow _mainWindow;
     private XElement? _barXmlRoot;
+    private BarFile? _protoDataBarFile;
+    private string? _protoDataBarPath;
     private XDocument? _modXmlDoc;
     private XElement? _modXmlRoot;
     private string? _modFilePath;
@@ -105,13 +107,21 @@ public partial class ProtoEditorWindow : SimpleWindow
     private List<string>? _cachedHotkeyContexts;
     private List<string>? _cachedBloodGroupNames;
     private List<string>? _cachedMinimapIcons;
+    private List<string>? _cachedProtoActionAnimationSuggestions;
+    private List<string>? _cachedProtoActionModelAttachmentBoneSuggestions;
+    private List<string> _barProtoActionAnimationNames = [];
+    private List<string> _barProtoActionModelAttachmentBones = [];
+    private bool _barProtoActionSuggestionDataLoaded;
     private string? _cachedModStringEntriesPath;
     private Dictionary<string, string>? _cachedModStringEntries;
     private readonly Dictionary<string, string> _protoActionTypeMap = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _globalTacticsActionTypeMap = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _currentUnitProtoActionTypeMap = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _currentUnitTacticsActionTypeMap = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ProtoAction> _currentUnitTacticsActions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ProtoActionTypeProfile> _protoActionTypeProfiles = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Dictionary<string, string>> _tacticsActionTypeCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Dictionary<string, ProtoAction>> _tacticsActionCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _knownProtoActionNames = new(StringComparer.OrdinalIgnoreCase);
     private List<string> _protoActionNameSuggestions = [];
     private List<string> _protoActionTypeSuggestions = [];
@@ -155,13 +165,37 @@ public partial class ProtoEditorWindow : SimpleWindow
 
     private class ProtoActionWidgetState
     {
+        public required ProtoAction Model { get; set; }
         public required Panel Container { get; set; }
         public required AutoCompleteBox NameAcb { get; set; }
         public required AutoCompleteBox TypeAcb { get; set; }
+        public required Grid CoreFieldsGrid { get; set; }
+        public required TextBlock RofLabel { get; set; }
         public required TextBox RofTb { get; set; }
+        public required TextBlock MaxRangeLabel { get; set; }
         public required TextBox MaxRangeTb { get; set; }
+        public required StackPanel AdditionalFieldsContainer { get; set; }
+        public required StackPanel StructuredFieldsContainer { get; set; }
+        public required StackPanel FlagsContainer { get; set; }
+        public required StackPanel OptionalFieldsContainer { get; set; }
+        public required StackPanel DamageSectionContainer { get; set; }
+        public required StackPanel BonusSectionContainer { get; set; }
+        public Dictionary<string, Control> AdditionalFieldControls { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, List<ProtoActionStructuredFieldRowState>> StructuredFieldRows { get; } = new(StringComparer.OrdinalIgnoreCase);
         public List<DamageRowState> DamageRows { get; } = [];
         public List<BonusRowState> BonusRows { get; } = [];
+        public HashSet<string> ForcedVisibleFieldTags { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> SelectedFlagTags { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, CheckBox> CustomFlagControls { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public bool DefaultFlagsInitialized { get; set; }
+    }
+
+    private class ProtoActionStructuredFieldRowState
+    {
+        public required string Tag { get; set; }
+        public required Panel RowPanel { get; set; }
+        public required Control ValueTb { get; set; }
+        public Dictionary<string, Control> AttributeEditors { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
     private class DamageRowState
@@ -278,10 +312,67 @@ public partial class ProtoEditorWindow : SimpleWindow
 
         _ = Dispatcher.UIThread.InvokeAsync(async () =>
         {
+            await InitializeProtoEditorAsync();
+        });
+    }
+
+    private async Task InitializeProtoEditorAsync()
+    {
+        await ShowStartupLoadingAsync("Loading Proto Editor...");
+
+        try
+        {
             await LoadProtoDataFromBar();
+
+            await ShowStartupLoadingAsync("Loading unit list...");
             await EnsureInitialModSelectionAsync();
             RefreshUnitList();
-        });
+
+            if (_barData != null)
+            {
+                await ShowStartupLoadingAsync("Preparing first unit...");
+                await PreloadInitialVisibleUnitAsync();
+            }
+        }
+        finally
+        {
+            HideStartupLoading();
+        }
+    }
+
+    private async Task ShowStartupLoadingAsync(string message)
+    {
+        _startupLoadingText.Text = message;
+        _startupLoadingOverlay.IsVisible = true;
+        await Dispatcher.UIThread.InvokeAsync(static () => { }, DispatcherPriority.Render);
+    }
+
+    private void HideStartupLoading()
+    {
+        _startupLoadingOverlay.IsVisible = false;
+    }
+
+    private async Task PreloadInitialVisibleUnitAsync()
+    {
+        var selectedName = _unitList.SelectedItem as string;
+        var initialUnitName = !string.IsNullOrWhiteSpace(selectedName) &&
+                              _filteredUnitNames.Contains(selectedName, StringComparer.OrdinalIgnoreCase)
+            ? selectedName
+            : _filteredUnitNames.FirstOrDefault();
+
+        if (string.IsNullOrWhiteSpace(initialUnitName))
+            return;
+
+        _unitList.ScrollIntoView(initialUnitName);
+        await Dispatcher.UIThread.InvokeAsync(static () => { }, DispatcherPriority.Render);
+
+        if (!string.Equals(_unitList.SelectedItem as string, initialUnitName, StringComparison.OrdinalIgnoreCase))
+        {
+            _unitList.SelectedItem = initialUnitName;
+            return;
+        }
+
+        BuildEditorPanel(initialUnitName);
     }
 
     private async Task EnsureInitialModSelectionAsync()
@@ -301,11 +392,17 @@ public partial class ProtoEditorWindow : SimpleWindow
 
     private async Task LoadProtoDataFromBar()
     {
+        _protoDataBarFile = null;
+        _protoDataBarPath = null;
+        ResetBarProtoActionSuggestionData();
+
         var barFile = _mainWindow.BarFile;
         var barStream = _mainWindow.BarFileStream;
 
         if (barFile != null && barStream != null && Path.GetFileName(barStream.Name).Equals("Data.bar", StringComparison.OrdinalIgnoreCase))
         {
+            _protoDataBarFile = barFile;
+            _protoDataBarPath = barStream.Name;
             ExtractProtoFromBar(barFile, barStream.Name);
             return;
         }
@@ -322,6 +419,8 @@ public partial class ProtoEditorWindow : SimpleWindow
                     var file = new BarFile(stream);
                     if (file.Load(out _))
                     {
+                        _protoDataBarFile = file;
+                        _protoDataBarPath = dataBarPath;
                         ExtractProtoFromBar(file, dataBarPath);
                     }
                 });
@@ -385,10 +484,9 @@ public partial class ProtoEditorWindow : SimpleWindow
                 var (barData, root) = ProtoDataExtractor.ExtractProtoData(xmlContent);
                 _barData = barData;
                 _barXmlRoot = root;
+                ResetBarProtoActionSuggestionData();
                 InvalidateBarDerivedCaches();
-                tacticsActionTypes = ExtractProtoActionTypesFromTactics(barFile, barPath);
-                foreach (var kvp in LoadProtoActionTypesFromLooseTactics())
-                    tacticsActionTypes[kvp.Key] = kvp.Value;
+                tacticsActionTypes = LoadOrBuildGlobalTacticsActionTypes(barFile, barPath);
                 RefreshProtoActionMetadata(tacticsActionTypes);
                 _statusMessage.Text = "";
                 return;
@@ -443,12 +541,11 @@ public partial class ProtoEditorWindow : SimpleWindow
 
             var combinedXml = $"<protos>\n{string.Join("\n", xmlParts)}\n</protos>";
             var (barData, barRoot) = ProtoDataExtractor.ExtractProtoData(combinedXml);
-            tacticsActionTypes = ExtractProtoActionTypesFromTactics(barFile, barPath);
-            foreach (var kvp in LoadProtoActionTypesFromLooseTactics())
-                tacticsActionTypes[kvp.Key] = kvp.Value;
+            tacticsActionTypes = LoadOrBuildGlobalTacticsActionTypes(barFile, barPath);
 
             _barData = barData;
             _barXmlRoot = barRoot;
+            ResetBarProtoActionSuggestionData();
             InvalidateBarDerivedCaches();
             RefreshProtoActionMetadata(tacticsActionTypes);
 
@@ -464,6 +561,21 @@ public partial class ProtoEditorWindow : SimpleWindow
         {
             _statusMessage.Text = $"Failed to load proto data: {ex.Message}";
         }
+    }
+
+    private Dictionary<string, string> LoadOrBuildGlobalTacticsActionTypes(BarFile barFile, string barPath)
+    {
+        var gameplayDirectory = ResolveBaseGameplayDirectory();
+        var cached = ProtoEditorMetadataCacheStore.LoadGlobalTacticsActionTypes(barPath, gameplayDirectory);
+        if (cached != null)
+            return cached;
+
+        var tacticsActionTypes = ExtractProtoActionTypesFromTactics(barFile, barPath);
+        foreach (var kvp in LoadProtoActionTypesFromLooseTactics())
+            tacticsActionTypes[kvp.Key] = kvp.Value;
+
+        ProtoEditorMetadataCacheStore.SaveGlobalTacticsActionTypes(barPath, gameplayDirectory, tacticsActionTypes);
+        return tacticsActionTypes;
     }
 
     private void InvalidateSuggestionCaches(bool includeTechNames = false)
@@ -485,6 +597,21 @@ public partial class ProtoEditorWindow : SimpleWindow
         _cachedHotkeyContexts = null;
         _cachedBloodGroupNames = null;
         _cachedMinimapIcons = null;
+        InvalidateProtoActionValueSuggestionCaches();
+    }
+
+    private void InvalidateProtoActionValueSuggestionCaches()
+    {
+        _cachedProtoActionAnimationSuggestions = null;
+        _cachedProtoActionModelAttachmentBoneSuggestions = null;
+    }
+
+    private void ResetBarProtoActionSuggestionData()
+    {
+        _barProtoActionAnimationNames = [];
+        _barProtoActionModelAttachmentBones = [];
+        _barProtoActionSuggestionDataLoaded = false;
+        InvalidateProtoActionValueSuggestionCaches();
     }
 
     private void InvalidateModStringEntriesCache()
@@ -1913,10 +2040,14 @@ public partial class ProtoEditorWindow : SimpleWindow
         }
 
         _protoActionTypeMap.Clear();
+        _protoActionTypeProfiles.Clear();
         _knownProtoActionNames.Clear();
 
         if (_barData != null)
         {
+            foreach (var kvp in ProtoActionMetadataCatalog.BuildTypeProfiles(_barData))
+                _protoActionTypeProfiles[kvp.Key] = kvp.Value;
+
             foreach (var kvp in _barData.ProtoActionTypes)
             {
                 _knownProtoActionNames.Add(kvp.Key);
@@ -1963,6 +2094,2411 @@ public partial class ProtoEditorWindow : SimpleWindow
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private IReadOnlyList<string> GetRecommendedProtoActionFieldTags(string actionType, int maxCount = 8)
+    {
+        if (string.IsNullOrWhiteSpace(actionType))
+            return [];
+
+        var configured = ProtoActionMetadataCatalog.GetEditorProfile(actionType).DefaultVisibleTags;
+        var observed = _protoActionTypeProfiles.TryGetValue(actionType.Trim(), out var profile)
+            ? profile.GetRecommendedFieldTags(maxCount)
+            : [];
+
+        return configured
+            .Concat(observed)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static readonly HashSet<string> HardcodedProtoActionFieldTags = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "name",
+        "type",
+        "rof",
+        "maxrange",
+        "damage",
+        "damagebonus",
+    };
+
+    private static readonly HashSet<string> ProtoActionAttributePickerExcludedTags = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "name",
+        "type",
+    };
+
+    private static bool IsKnownProtoActionFlagTag(string tag)
+        => !string.IsNullOrWhiteSpace(tag) &&
+           ProtoActionMetadataCatalog.GetKnownFlagTags().Contains(tag.Trim(), StringComparer.OrdinalIgnoreCase);
+
+    private static bool IsAutoConvertActionType(string actionType)
+        => actionType.Equals("AutoConvert", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsCombinedProtoActionModifyTypeTag(string actionType, string tag)
+        => IsAutoConvertActionType(actionType) &&
+           tag.Equals("modifyabstracttype", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsManagedModelAttachmentFieldTag(string actionType, string tag)
+        => SupportsOptionalModelAttachmentActionType(actionType) &&
+           OptionalModelAttachmentTags.Contains(tag, StringComparer.OrdinalIgnoreCase);
+
+    private static bool IsAutoConvertManagedStructuredFieldTag(string actionType, string tag)
+        => IsAutoConvertActionType(actionType) &&
+           (tag.Equals("modifyabstracttype", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("modifyunittype", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsVisibleProtoActionFlagFieldTag(string actionType, string tag)
+    {
+        if (string.IsNullOrWhiteSpace(actionType) || !IsKnownProtoActionFlagTag(tag))
+            return false;
+
+        return ProtoActionMetadataCatalog.GetEditorProfile(actionType)
+            .DefaultVisibleTags
+            .Contains(tag.Trim(), StringComparer.OrdinalIgnoreCase);
+    }
+
+    private List<string> GetVisibleProtoActionSimpleFieldTags(ProtoAction action, string actionType)
+    {
+        var tags = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddTag(string? tag)
+        {
+            if (string.IsNullOrWhiteSpace(tag))
+                return;
+
+            var normalized = tag.Trim();
+            if (HardcodedProtoActionFieldTags.Contains(normalized))
+                return;
+            if (IsManagedModelAttachmentFieldTag(actionType, normalized))
+                return;
+            if (IsKnownProtoActionFlagTag(normalized) && !IsVisibleProtoActionFlagFieldTag(actionType, normalized))
+                return;
+
+            var definition = ProtoActionMetadataCatalog.GetFieldDefinition(normalized);
+            if (!ProtoActionMetadataCatalog.SupportsAutoRender(normalized))
+                return;
+
+            if (definition.EditorKind == ProtoActionFieldEditorKind.StructuredList || definition.IsRepeatable)
+                return;
+
+            if (seen.Add(normalized))
+                tags.Add(normalized);
+        }
+
+        foreach (var tag in GetRecommendedProtoActionFieldTags(actionType))
+            AddTag(tag);
+
+        foreach (var extra in action.AdditionalElements)
+        {
+            if (!extra.HasElements)
+                AddTag(extra.Name.LocalName);
+        }
+
+        return tags;
+    }
+
+    private List<string> GetVisibleProtoActionSimpleFieldTags(ProtoActionWidgetState state, ProtoAction action, string actionType)
+    {
+        var tags = new List<string>(GetVisibleProtoActionSimpleFieldTags(action, actionType));
+
+        foreach (var tag in state.ForcedVisibleFieldTags)
+        {
+            if (string.IsNullOrWhiteSpace(tag))
+                continue;
+
+            var normalized = tag.Trim();
+            if (HardcodedProtoActionFieldTags.Contains(normalized) ||
+                IsManagedModelAttachmentFieldTag(actionType, normalized) ||
+                (IsKnownProtoActionFlagTag(normalized) && !IsVisibleProtoActionFlagFieldTag(actionType, normalized)) ||
+                !ProtoActionMetadataCatalog.SupportsAutoRender(normalized))
+            {
+                continue;
+            }
+
+            var definition = ProtoActionMetadataCatalog.GetFieldDefinition(normalized);
+            if (definition.EditorKind == ProtoActionFieldEditorKind.StructuredList || definition.IsRepeatable)
+                continue;
+
+            if (!tags.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+                tags.Add(normalized);
+        }
+
+        return tags;
+    }
+
+    private List<string> GetSuggestedProtoActionSimpleFieldTags(string actionType)
+    {
+        var tags = new List<string>();
+        foreach (var tag in GetRecommendedProtoActionFieldTags(actionType))
+        {
+            var normalized = tag?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(normalized) || HardcodedProtoActionFieldTags.Contains(normalized))
+                continue;
+            if (IsManagedModelAttachmentFieldTag(actionType, normalized))
+                continue;
+            if (IsKnownProtoActionFlagTag(normalized) && !IsVisibleProtoActionFlagFieldTag(actionType, normalized))
+                continue;
+
+            var definition = ProtoActionMetadataCatalog.GetFieldDefinition(normalized);
+            if (!ProtoActionMetadataCatalog.SupportsAutoRender(normalized) ||
+                definition.EditorKind == ProtoActionFieldEditorKind.StructuredList ||
+                definition.IsRepeatable)
+            {
+                continue;
+            }
+
+            if (!tags.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+                tags.Add(normalized);
+        }
+
+        return tags;
+    }
+
+    private List<string> GetVisibleProtoActionStructuredFieldTags(ProtoAction action, string actionType)
+    {
+        var tags = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddTag(string? tag)
+        {
+            if (string.IsNullOrWhiteSpace(tag))
+                return;
+
+            var normalized = tag.Trim();
+            if (HardcodedProtoActionFieldTags.Contains(normalized))
+                return;
+
+            var definition = ProtoActionMetadataCatalog.GetFieldDefinition(normalized);
+            if (!ProtoActionMetadataCatalog.SupportsAutoRender(normalized))
+                return;
+
+            if (definition.EditorKind != ProtoActionFieldEditorKind.StructuredList ||
+                !definition.IsRepeatable)
+            {
+                return;
+            }
+
+            if (seen.Add(normalized))
+                tags.Add(normalized);
+        }
+
+        foreach (var tag in GetRecommendedProtoActionFieldTags(actionType))
+            AddTag(tag);
+
+        foreach (var extra in action.AdditionalElements)
+        {
+            if (!extra.HasElements)
+                AddTag(extra.Name.LocalName);
+        }
+
+        return tags;
+    }
+
+    private List<string> GetVisibleProtoActionStructuredFieldTags(ProtoActionWidgetState state, ProtoAction action, string actionType)
+    {
+        var tags = new List<string>(GetVisibleProtoActionStructuredFieldTags(action, actionType));
+
+        foreach (var tag in state.ForcedVisibleFieldTags)
+        {
+            if (string.IsNullOrWhiteSpace(tag))
+                continue;
+
+            var normalized = tag.Trim();
+            if (HardcodedProtoActionFieldTags.Contains(normalized) ||
+                !ProtoActionMetadataCatalog.SupportsAutoRender(normalized))
+            {
+                continue;
+            }
+
+            var definition = ProtoActionMetadataCatalog.GetFieldDefinition(normalized);
+            if (definition.EditorKind != ProtoActionFieldEditorKind.StructuredList ||
+                !definition.IsRepeatable)
+            {
+                continue;
+            }
+
+            if (!tags.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+                tags.Add(normalized);
+        }
+
+        return tags;
+    }
+
+    private List<string> GetSuggestedProtoActionStructuredFieldTags(string actionType)
+    {
+        var tags = new List<string>();
+        foreach (var tag in GetRecommendedProtoActionFieldTags(actionType))
+        {
+            var normalized = tag?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(normalized) || HardcodedProtoActionFieldTags.Contains(normalized))
+                continue;
+
+            var definition = ProtoActionMetadataCatalog.GetFieldDefinition(normalized);
+            if (!ProtoActionMetadataCatalog.SupportsAutoRender(normalized) ||
+                definition.EditorKind != ProtoActionFieldEditorKind.StructuredList ||
+                !definition.IsRepeatable)
+            {
+                continue;
+            }
+
+            if (!tags.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+                tags.Add(normalized);
+        }
+
+        return tags;
+    }
+
+    private string ReadProtoActionFieldControlValue(Control control, ProtoActionFieldDefinition definition)
+    {
+        return definition.EditorKind switch
+        {
+            ProtoActionFieldEditorKind.Toggle when control is CheckBox checkBox => checkBox.IsChecked == true ? "1" : "",
+            _ when control is AutoCompleteBox autoCompleteBox => autoCompleteBox.Text?.Trim() ?? "",
+            _ when control is TextBox textBox => textBox.Text?.Trim() ?? "",
+            _ => "",
+        };
+    }
+
+    private static string ReadTextLikeControlValue(Control control)
+        => control switch
+        {
+            AutoCompleteBox autoCompleteBox => autoCompleteBox.Text?.Trim() ?? "",
+            TextBox textBox => textBox.Text?.Trim() ?? "",
+            _ => "",
+        };
+
+    private static void AttachProtoActionDecimalBehavior(TextBox textBox)
+    {
+        textBox.TextChanged += (s, e) =>
+        {
+            var text = textBox.Text ?? "";
+            if (!string.IsNullOrWhiteSpace(text) &&
+                (!double.TryParse(text, out _) || text.Count(ch => ch == '.') > 1))
+            {
+                var filtered = new string(text.Where(ch => char.IsDigit(ch) || ch == '.').ToArray());
+                var dotIndex = filtered.IndexOf('.');
+                if (dotIndex >= 0)
+                    filtered = filtered[..(dotIndex + 1)] + filtered[(dotIndex + 1)..].Replace(".", "", StringComparison.Ordinal);
+                if (!string.Equals(textBox.Text, filtered, StringComparison.Ordinal))
+                    textBox.Text = filtered;
+            }
+        };
+    }
+
+    private static string ReadProtoActionStructuredAttributeValue(Control control)
+    {
+        return control switch
+        {
+            AutoCompleteBox autoCompleteBox => autoCompleteBox.Text?.Trim() ?? "",
+            TextBox textBox => textBox.Text?.Trim() ?? "",
+            _ => "",
+        };
+    }
+
+    private List<ProtoActionStructuredFieldEntry> GetProtoActionStructuredFieldEntriesForEditor(ProtoAction action, string actionType, string tag)
+    {
+        if (IsCombinedProtoActionModifyTypeTag(actionType, tag))
+        {
+            return ProtoXmlHandler.GetProtoActionStructuredFieldEntries(action, "modifyabstracttype")
+                .Concat(ProtoXmlHandler.GetProtoActionStructuredFieldEntries(action, "modifyunittype"))
+                .ToList();
+        }
+
+        return ProtoXmlHandler.GetProtoActionStructuredFieldEntries(action, tag);
+    }
+
+    private bool IsKnownProtoActionAbstractUnitType(string value)
+    {
+        var normalized = value?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(normalized))
+            return false;
+
+        if (_barData != null && _barData.UnitTypes.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+            return true;
+        if (ProtoConstants.KnownUnitTypes.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+            return true;
+        if (_currentUnitTypes != null && _currentUnitTypes.Contains(normalized))
+            return true;
+
+        return false;
+    }
+
+    private List<ProtoActionStructuredFieldEntry> CollectProtoActionStructuredFieldEntries(ProtoActionWidgetState state, string tag)
+    {
+        if (!state.StructuredFieldRows.TryGetValue(tag, out var rows))
+            return [];
+
+        return rows
+            .Select(row =>
+            {
+                var entry = new ProtoActionStructuredFieldEntry
+                {
+                    Value = ReadTextLikeControlValue(row.ValueTb),
+                };
+
+                foreach (var attribute in row.AttributeEditors)
+                {
+                    var value = ReadProtoActionStructuredAttributeValue(attribute.Value);
+                    if (!string.IsNullOrWhiteSpace(value))
+                        entry.Attributes[attribute.Key] = value;
+                }
+
+                return entry;
+            })
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.Value) || entry.Attributes.Count > 0)
+            .ToList();
+    }
+
+    private void SaveCombinedProtoActionModifyTypeEntries(ProtoActionWidgetState pw, ProtoAction pa, ProtoAction? tacticsAction)
+    {
+        var currentEntries = CollectProtoActionStructuredFieldEntries(pw, "modifyabstracttype");
+        var currentAbstractEntries = currentEntries
+            .Where(x => IsKnownProtoActionAbstractUnitType(x.Value))
+            .ToList();
+        var currentUnitEntries = currentEntries
+            .Where(x => !IsKnownProtoActionAbstractUnitType(x.Value))
+            .ToList();
+
+        var tacticsAbstractEntries = tacticsAction != null
+            ? ProtoXmlHandler.GetProtoActionStructuredFieldEntries(tacticsAction, "modifyabstracttype")
+            : [];
+        var tacticsUnitEntries = tacticsAction != null
+            ? ProtoXmlHandler.GetProtoActionStructuredFieldEntries(tacticsAction, "modifyunittype")
+            : [];
+        var originalProtoAbstractEntries = ProtoXmlHandler.GetProtoActionStructuredFieldEntries(pw.Model, "modifyabstracttype");
+        var originalProtoUnitEntries = ProtoXmlHandler.GetProtoActionStructuredFieldEntries(pw.Model, "modifyunittype");
+
+        var protoAbstractEntries = StructuredFieldEntriesEqual(currentAbstractEntries, tacticsAbstractEntries) &&
+                                   !StructuredFieldEntriesEqual(originalProtoAbstractEntries, currentAbstractEntries)
+            ? []
+            : currentAbstractEntries;
+        var protoUnitEntries = StructuredFieldEntriesEqual(currentUnitEntries, tacticsUnitEntries) &&
+                               !StructuredFieldEntriesEqual(originalProtoUnitEntries, currentUnitEntries)
+            ? []
+            : currentUnitEntries;
+
+        ProtoXmlHandler.SetProtoActionStructuredFieldEntries(pa, "modifyabstracttype", protoAbstractEntries);
+        ProtoXmlHandler.SetProtoActionStructuredFieldEntries(pa, "modifyunittype", protoUnitEntries);
+    }
+
+    private bool TryGetCurrentUnitTacticsAction(string actionName, out ProtoAction tacticsAction)
+    {
+        var normalized = actionName?.Trim() ?? "";
+        if (!string.IsNullOrWhiteSpace(normalized) &&
+            _currentUnitTacticsActions.TryGetValue(normalized, out var matched))
+        {
+            tacticsAction = matched;
+            return true;
+        }
+
+        tacticsAction = null!;
+        return false;
+    }
+
+    private ProtoAction CreateEffectiveProtoActionSnapshot(ProtoAction protoAction, string actionName, string actionType)
+    {
+        ProtoAction? tacticsAction = TryGetCurrentUnitTacticsAction(actionName, out var matchedTacticsAction)
+            ? matchedTacticsAction
+            : null;
+
+        var effective = tacticsAction?.Clone() ?? new ProtoAction();
+        effective.Name = string.IsNullOrWhiteSpace(actionName) ? protoAction.Name : actionName;
+        effective.Type = string.IsNullOrWhiteSpace(actionType)
+            ? (!string.IsNullOrWhiteSpace(protoAction.Type) ? protoAction.Type : effective.Type)
+            : actionType;
+
+        if (!string.IsNullOrWhiteSpace(protoAction.Rof))
+            effective.Rof = protoAction.Rof;
+        if (!string.IsNullOrWhiteSpace(protoAction.MaxRange))
+            effective.MaxRange = protoAction.MaxRange;
+
+        effective.Damages.Clear();
+        foreach (var damage in MergeDamageEntries(tacticsAction?.Damages, protoAction.Damages))
+            effective.Damages.Add(damage);
+
+        effective.DamageBonuses.Clear();
+        foreach (var bonus in MergeDamageBonusEntries(tacticsAction?.DamageBonuses, protoAction.DamageBonuses))
+            effective.DamageBonuses.Add(bonus);
+
+        effective.AdditionalElements.Clear();
+        foreach (var element in MergeProtoActionAdditionalElements(tacticsAction?.AdditionalElements, protoAction.AdditionalElements))
+            effective.AdditionalElements.Add(new XElement(element));
+
+        return effective;
+    }
+
+    private ProtoAction CreateEffectiveProtoActionSnapshot(ProtoActionWidgetState state)
+    {
+        return CreateEffectiveProtoActionSnapshot(
+            state.Model,
+            state.NameAcb.Text?.Trim() ?? "",
+            state.TypeAcb.Text?.Trim() ?? "");
+    }
+
+    private static List<(string DamageType, string Amount)> MergeDamageEntries(
+        IEnumerable<(string DamageType, string Amount)>? tacticsEntries,
+        IEnumerable<(string DamageType, string Amount)> protoEntries)
+    {
+        var result = new List<(string DamageType, string Amount)>();
+
+        foreach (var entry in tacticsEntries ?? [])
+        {
+            if (!string.IsNullOrWhiteSpace(entry.DamageType))
+                result.Add((entry.DamageType.Trim(), entry.Amount.Trim()));
+        }
+
+        foreach (var entry in protoEntries)
+        {
+            if (string.IsNullOrWhiteSpace(entry.DamageType))
+                continue;
+
+            var normalizedType = entry.DamageType.Trim();
+            var index = result.FindIndex(x => x.DamageType.Equals(normalizedType, StringComparison.OrdinalIgnoreCase));
+            var normalizedEntry = (normalizedType, entry.Amount.Trim());
+            if (index >= 0)
+                result[index] = normalizedEntry;
+            else
+                result.Add(normalizedEntry);
+        }
+
+        return result;
+    }
+
+    private static List<(string UnitType, string Multiplier)> MergeDamageBonusEntries(
+        IEnumerable<(string UnitType, string Multiplier)>? tacticsEntries,
+        IEnumerable<(string UnitType, string Multiplier)> protoEntries)
+    {
+        var result = new List<(string UnitType, string Multiplier)>();
+
+        foreach (var entry in tacticsEntries ?? [])
+        {
+            if (!string.IsNullOrWhiteSpace(entry.UnitType))
+                result.Add((entry.UnitType.Trim(), entry.Multiplier.Trim()));
+        }
+
+        foreach (var entry in protoEntries)
+        {
+            if (string.IsNullOrWhiteSpace(entry.UnitType))
+                continue;
+
+            var normalizedType = entry.UnitType.Trim();
+            var index = result.FindIndex(x => x.UnitType.Equals(normalizedType, StringComparison.OrdinalIgnoreCase));
+            var normalizedEntry = (normalizedType, entry.Multiplier.Trim());
+            if (index >= 0)
+                result[index] = normalizedEntry;
+            else
+                result.Add(normalizedEntry);
+        }
+
+        return result;
+    }
+
+    private static List<XElement> MergeProtoActionAdditionalElements(
+        IEnumerable<XElement>? tacticsElements,
+        IEnumerable<XElement> protoElements)
+    {
+        var merged = (tacticsElements ?? [])
+            .Select(x => new XElement(x))
+            .ToList();
+
+        foreach (var protoElement in protoElements)
+        {
+            merged.RemoveAll(existing => ProtoActionAdditionalElementOverrides(protoElement, existing));
+            merged.Add(new XElement(protoElement));
+        }
+
+        return merged;
+    }
+
+    private static bool ProtoActionAdditionalElementOverrides(XElement protoElement, XElement existingElement)
+    {
+        if (!protoElement.Name.LocalName.Equals(existingElement.Name.LocalName, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (protoElement.HasElements || existingElement.HasElements)
+            return true;
+
+        var definition = ProtoActionMetadataCatalog.GetFieldDefinition(protoElement.Name.LocalName);
+        if (definition.EditorKind != ProtoActionFieldEditorKind.StructuredList ||
+            !definition.IsRepeatable ||
+            definition.XmlAttributeNames == null ||
+            definition.XmlAttributeNames.Count == 0)
+        {
+            return true;
+        }
+
+        return ProtoActionAttributesMatch(protoElement, existingElement);
+    }
+
+    private static bool ProtoActionAttributesMatch(XElement left, XElement right)
+    {
+        var leftAttributes = left.Attributes()
+            .ToDictionary(x => x.Name.LocalName, x => x.Value?.Trim() ?? "", StringComparer.OrdinalIgnoreCase);
+        var rightAttributes = right.Attributes()
+            .ToDictionary(x => x.Name.LocalName, x => x.Value?.Trim() ?? "", StringComparer.OrdinalIgnoreCase);
+
+        if (leftAttributes.Count != rightAttributes.Count)
+            return false;
+
+        foreach (var attribute in leftAttributes)
+        {
+            if (!rightAttributes.TryGetValue(attribute.Key, out var value) ||
+                !string.Equals(attribute.Value, value, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static string ResolveProtoOverrideValue(string currentValue, string tacticsValue, string originalProtoValue)
+    {
+        var normalizedCurrent = currentValue?.Trim() ?? "";
+        var normalizedTactics = tacticsValue?.Trim() ?? "";
+        var normalizedOriginal = originalProtoValue?.Trim() ?? "";
+
+        if (string.Equals(normalizedCurrent, normalizedTactics, StringComparison.Ordinal))
+        {
+            return string.Equals(normalizedOriginal, normalizedCurrent, StringComparison.Ordinal)
+                ? normalizedCurrent
+                : "";
+        }
+
+        return normalizedCurrent;
+    }
+
+    private static bool StructuredFieldEntriesEqual(
+        IReadOnlyList<ProtoActionStructuredFieldEntry> left,
+        IReadOnlyList<ProtoActionStructuredFieldEntry> right)
+    {
+        if (left.Count != right.Count)
+            return false;
+
+        for (int i = 0; i < left.Count; i++)
+        {
+            if (!string.Equals(left[i].Value?.Trim() ?? "", right[i].Value?.Trim() ?? "", StringComparison.Ordinal))
+                return false;
+
+            if (left[i].Attributes.Count != right[i].Attributes.Count)
+                return false;
+
+            foreach (var attribute in left[i].Attributes)
+            {
+                if (!right[i].Attributes.TryGetValue(attribute.Key, out var value) ||
+                    !string.Equals(attribute.Value?.Trim() ?? "", value?.Trim() ?? "", StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static bool DamageEntriesEqual(
+        IReadOnlyList<(string DamageType, string Amount)> left,
+        IReadOnlyList<(string DamageType, string Amount)> right)
+    {
+        if (left.Count != right.Count)
+            return false;
+
+        for (int i = 0; i < left.Count; i++)
+        {
+            if (!string.Equals(left[i].DamageType?.Trim() ?? "", right[i].DamageType?.Trim() ?? "", StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(left[i].Amount?.Trim() ?? "", right[i].Amount?.Trim() ?? "", StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool DamageBonusEntriesEqual(
+        IReadOnlyList<(string UnitType, string Multiplier)> left,
+        IReadOnlyList<(string UnitType, string Multiplier)> right)
+    {
+        if (left.Count != right.Count)
+            return false;
+
+        for (int i = 0; i < left.Count; i++)
+        {
+            if (!string.Equals(left[i].UnitType?.Trim() ?? "", right[i].UnitType?.Trim() ?? "", StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(left[i].Multiplier?.Trim() ?? "", right[i].Multiplier?.Trim() ?? "", StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private List<string>? GetProtoActionStructuredAttributeSuggestions(string attributeName)
+    {
+        if (attributeName.Equals("type", StringComparison.OrdinalIgnoreCase) ||
+            attributeName.Equals("unittype", StringComparison.OrdinalIgnoreCase))
+        {
+            return GetAvailableBuildLimitTargets();
+        }
+
+        return null;
+    }
+
+    private List<string>? GetProtoActionValueSuggestions(string tag)
+    {
+        if (tag.Equals("anim", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("typedanim", StringComparison.OrdinalIgnoreCase))
+        {
+            return GetAvailableProtoActionAnimationNames();
+        }
+
+        if (tag.Equals("modifyabstracttype", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("modifyunittype", StringComparison.OrdinalIgnoreCase))
+        {
+            return GetAvailableBuildLimitTargets();
+        }
+
+        if (tag.Equals("modelattachmentbone", StringComparison.OrdinalIgnoreCase))
+            return GetAvailableProtoActionModelAttachmentBones();
+
+        return null;
+    }
+
+    private List<string> GetAvailableProtoActionAnimationNames()
+    {
+        if (_cachedProtoActionAnimationSuggestions != null)
+            return _cachedProtoActionAnimationSuggestions;
+
+        EnsureBarProtoActionSuggestionDataLoaded();
+
+        var values = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddIfPresent(string? value)
+        {
+            var normalized = value?.Trim() ?? "";
+            if (!string.IsNullOrWhiteSpace(normalized))
+                values.Add(normalized);
+        }
+
+        void AddFromRoot(XElement? root)
+        {
+            if (root == null)
+                return;
+
+            foreach (var value in root
+                .Descendants()
+                .Where(x =>
+                    (x.Name.LocalName.Equals("protoaction", StringComparison.OrdinalIgnoreCase) ||
+                     x.Name.LocalName.Equals("action", StringComparison.OrdinalIgnoreCase)))
+                .Elements()
+                .Where(x =>
+                    x.Name.LocalName.Equals("anim", StringComparison.OrdinalIgnoreCase) ||
+                    x.Name.LocalName.Equals("typedanim", StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.Value))
+            {
+                AddIfPresent(value);
+            }
+        }
+
+        values.UnionWith(_barProtoActionAnimationNames);
+        AddFromRoot(_barXmlRoot);
+        AddFromRoot(_modXmlRoot);
+
+        foreach (var action in _currentUnitTacticsActions.Values)
+            AddIfPresent(ProtoXmlHandler.GetProtoActionSimpleFieldValue(action, "anim"));
+
+        foreach (var tacticsActions in _tacticsActionCache.Values)
+        {
+            foreach (var action in tacticsActions.Values)
+                AddIfPresent(ProtoXmlHandler.GetProtoActionSimpleFieldValue(action, "anim"));
+        }
+
+        _cachedProtoActionAnimationSuggestions = values
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return _cachedProtoActionAnimationSuggestions;
+    }
+
+    private List<string> GetAvailableProtoActionModelAttachmentBones()
+    {
+        if (_cachedProtoActionModelAttachmentBoneSuggestions != null)
+            return _cachedProtoActionModelAttachmentBoneSuggestions;
+
+        EnsureBarProtoActionSuggestionDataLoaded();
+
+        var values = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddIfPresent(string? value)
+        {
+            var normalized = value?.Trim() ?? "";
+            if (!string.IsNullOrWhiteSpace(normalized))
+                values.Add(normalized);
+        }
+
+        void AddFromRoot(XElement? root)
+        {
+            if (root == null)
+                return;
+
+            foreach (var value in root
+                .Descendants()
+                .Where(x =>
+                    (x.Name.LocalName.Equals("protoaction", StringComparison.OrdinalIgnoreCase) ||
+                     x.Name.LocalName.Equals("action", StringComparison.OrdinalIgnoreCase)))
+                .Elements()
+                .Where(x => x.Name.LocalName.Equals("modelattachmentbone", StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.Value))
+            {
+                AddIfPresent(value);
+            }
+        }
+
+        values.UnionWith(_barProtoActionModelAttachmentBones);
+        AddFromRoot(_barXmlRoot);
+        AddFromRoot(_modXmlRoot);
+
+        foreach (var action in _currentUnitTacticsActions.Values)
+            AddIfPresent(ProtoXmlHandler.GetProtoActionSimpleFieldValue(action, "modelattachmentbone"));
+
+        foreach (var tacticsActions in _tacticsActionCache.Values)
+        {
+            foreach (var action in tacticsActions.Values)
+                AddIfPresent(ProtoXmlHandler.GetProtoActionSimpleFieldValue(action, "modelattachmentbone"));
+        }
+
+        _cachedProtoActionModelAttachmentBoneSuggestions = values
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return _cachedProtoActionModelAttachmentBoneSuggestions;
+    }
+
+    private static string GetProtoActionStructuredValueLabel(string tag)
+        => tag.Equals("typedanim", StringComparison.OrdinalIgnoreCase) ? "Animation:"
+         : tag.Equals("modifyabstracttype", StringComparison.OrdinalIgnoreCase) ? "Type:"
+         : "Value:";
+
+    private static bool ShouldShowProtoActionStructuredOtherAttributeButton(string actionType, string tag)
+    {
+        if (tag.Equals("rate", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return true;
+    }
+
+    private static readonly string[] OptionalModelAttachmentTags =
+    [
+        "modelattachment",
+        "modelattachmentbone",
+        "modelattachmenttimer",
+    ];
+
+    private static readonly HashSet<string> OptionalModelAttachmentActionTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "AutoBoost",
+        "AutoConvert",
+        "AutoRangedModify",
+        "Bolster",
+        "BurstHeal",
+        "ConditionalShield",
+        "Convert",
+        "DevoteMajor",
+        "DevoteMinor",
+        "Heal",
+        "JumpAttack",
+        "LikeBonus",
+        "Maintain",
+    };
+
+    private static bool SupportsOptionalModelAttachmentActionType(string actionType)
+        => !string.IsNullOrWhiteSpace(actionType) &&
+           OptionalModelAttachmentActionTypes.Contains(actionType.Trim());
+
+    private static bool ShouldShowOptionalModelAttachmentFields(
+        ProtoActionWidgetState state,
+        string actionType,
+        ProtoAction effectiveAction,
+        IReadOnlyDictionary<string, string>? currentSimpleValues = null)
+    {
+        if (!SupportsOptionalModelAttachmentActionType(actionType))
+            return false;
+
+        return OptionalModelAttachmentTags.Any(tag =>
+            state.ForcedVisibleFieldTags.Contains(tag) ||
+            (currentSimpleValues != null &&
+             currentSimpleValues.TryGetValue(tag, out var currentValue) &&
+             !string.IsNullOrWhiteSpace(currentValue)) ||
+            !string.IsNullOrWhiteSpace(ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, tag)));
+    }
+
+    private static string GetProtoActionDefaultSimpleValue(string tag, string currentValue)
+    {
+        if (!string.IsNullOrWhiteSpace(currentValue))
+            return currentValue;
+
+        if (tag.Equals("maxrange", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("devotiontime", StringComparison.OrdinalIgnoreCase))
+        {
+            return "0";
+        }
+
+        return currentValue;
+    }
+
+    private static List<string> GetDefaultVisibleProtoActionStructuredAttributeNames(string actionType, string tag)
+    {
+        if (tag.Equals("rate", StringComparison.OrdinalIgnoreCase) &&
+            (actionType.Equals("DropOff", StringComparison.OrdinalIgnoreCase) ||
+             actionType.Equals("SmartDropsite", StringComparison.OrdinalIgnoreCase)))
+        {
+            return [];
+        }
+
+        var defaults = new List<string>();
+        if (tag.Equals("rate", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("typedanim", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("typedmaxrange", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("typedminrange", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("minrate", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("damage", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("damagebonus", StringComparison.OrdinalIgnoreCase))
+        {
+            defaults.Add("type");
+        }
+
+        return defaults;
+    }
+
+    private List<(string Tag, string Label)> GetAvailableProtoActionAttributePickerOptions(ProtoActionWidgetState state)
+    {
+        var actionType = ResolveProtoActionType(state.NameAcb.Text?.Trim() ?? "", state.TypeAcb.Text?.Trim() ?? "");
+        var usedTags = new HashSet<string>(state.ForcedVisibleFieldTags, StringComparer.OrdinalIgnoreCase);
+        foreach (var tag in state.AdditionalFieldControls.Keys)
+            usedTags.Add(tag);
+        foreach (var tag in state.StructuredFieldRows.Keys)
+            usedTags.Add(tag);
+
+        return ProtoActionMetadataCatalog.GetKnownFieldDefinitions()
+            .Where(x => !ProtoActionAttributePickerExcludedTags.Contains(x.Tag))
+            .Where(x => ProtoActionMetadataCatalog.SupportsAutoRender(x.Tag))
+            .Where(x => x.EditorKind != ProtoActionFieldEditorKind.Toggle)
+            .Where(x => !IsKnownProtoActionFlagTag(x.Tag))
+            .Where(x => !IsManagedModelAttachmentFieldTag(actionType, x.Tag))
+            .Where(x => !x.Tag.Equals("modifyunittype", StringComparison.OrdinalIgnoreCase))
+            .Where(x => !usedTags.Contains(x.Tag))
+            .OrderBy(x => x.Label, StringComparer.OrdinalIgnoreCase)
+            .Select(x => (x.Tag, x.Label))
+            .ToList();
+    }
+
+    private bool ShouldShowProtoActionHardcodedField(ProtoActionWidgetState state, ProtoAction action, string actionType, string tag)
+    {
+        if (state.ForcedVisibleFieldTags.Contains(tag))
+            return true;
+
+        var editorProfile = ProtoActionMetadataCatalog.GetEditorProfile(actionType);
+        if (!editorProfile.HiddenByDefaultTags.Contains(tag))
+            return true;
+
+        return tag.ToLowerInvariant() switch
+        {
+            "rof" => !string.IsNullOrWhiteSpace(action.Rof),
+            "maxrange" => !string.IsNullOrWhiteSpace(action.MaxRange),
+            "damage" => action.Damages.Count > 0,
+            "damagebonus" => action.DamageBonuses.Count > 0,
+            _ => true,
+        };
+    }
+
+    private static bool IsUserAddedProtoActionField(ProtoActionWidgetState state, string tag)
+        => state.ForcedVisibleFieldTags.Contains(tag);
+
+    private static bool CanRemoveProtoActionAdditionalField(string actionType, string tag)
+        => !IsVisibleProtoActionFlagFieldTag(actionType, tag);
+
+    private void RenderProtoActionVisibility(ProtoActionWidgetState state)
+    {
+        var effectiveAction = CreateEffectiveProtoActionSnapshot(state);
+        var actionType = ResolveProtoActionType(state.NameAcb.Text?.Trim() ?? "", state.TypeAcb.Text?.Trim() ?? "");
+
+        var showRof = ShouldShowProtoActionHardcodedField(state, effectiveAction, actionType, "rof");
+        var showMaxRange = ShouldShowProtoActionHardcodedField(state, effectiveAction, actionType, "maxrange");
+        state.CoreFieldsGrid.IsVisible = showRof || showMaxRange;
+        state.RofLabel.IsVisible = showRof;
+        state.RofTb.IsVisible = showRof;
+        state.MaxRangeLabel.IsVisible = showMaxRange;
+        state.MaxRangeTb.IsVisible = showMaxRange;
+
+        state.DamageSectionContainer.IsVisible = ShouldShowProtoActionHardcodedField(state, effectiveAction, actionType, "damage");
+        state.BonusSectionContainer.IsVisible = ShouldShowProtoActionHardcodedField(state, effectiveAction, actionType, "damagebonus");
+    }
+
+    private void ConfigureStrictSuggestionAutoComplete(AutoCompleteBox autoCompleteBox, IEnumerable<string> suggestions, string initialValue)
+    {
+        var suggestionList = suggestions
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (!string.IsNullOrWhiteSpace(initialValue) &&
+            !suggestionList.Any(x => x.Equals(initialValue, StringComparison.OrdinalIgnoreCase)))
+        {
+            suggestionList.Add(initialValue);
+            suggestionList = suggestionList
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        autoCompleteBox.ItemsSource = suggestionList;
+        EnableDropdownAutoComplete(autoCompleteBox);
+
+        string lastValidValue = suggestionList.FirstOrDefault(x => x.Equals(initialValue, StringComparison.OrdinalIgnoreCase))
+            ?? initialValue.Trim();
+
+        autoCompleteBox.SelectionChanged += (s, e) =>
+        {
+            if (autoCompleteBox.SelectedItem is string selectedValue)
+            {
+                autoCompleteBox.Text = selectedValue;
+                lastValidValue = selectedValue;
+            }
+        };
+
+        autoCompleteBox.LostFocus += (s, e) =>
+        {
+            if (_isPopulating)
+                return;
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_isPopulating)
+                    return;
+
+                var input = autoCompleteBox.Text?.Trim() ?? "";
+                if (string.IsNullOrWhiteSpace(input))
+                    return;
+
+                var match = suggestionList.FirstOrDefault(x => x.Equals(input, StringComparison.OrdinalIgnoreCase));
+                if (!string.IsNullOrWhiteSpace(match))
+                {
+                    autoCompleteBox.Text = match;
+                    lastValidValue = match;
+                    return;
+                }
+
+                autoCompleteBox.Text = lastValidValue;
+            }, DispatcherPriority.Background);
+        };
+    }
+
+    private void RefreshProtoActionMetadataPanels(ProtoActionWidgetState state)
+    {
+        EnsureProtoActionDefaultFlags(state);
+        var currentSimpleValues = state.AdditionalFieldControls.ToDictionary(
+            kvp => kvp.Key,
+            kvp => ReadProtoActionFieldControlValue(kvp.Value, ProtoActionMetadataCatalog.GetFieldDefinition(kvp.Key)),
+            StringComparer.OrdinalIgnoreCase);
+        var currentStructuredValues = state.StructuredFieldRows.Keys
+            .ToDictionary(tag => tag, tag => CollectProtoActionStructuredFieldEntries(state, tag), StringComparer.OrdinalIgnoreCase);
+        RenderProtoActionVisibility(state);
+        RenderProtoActionAdditionalFields(state, currentSimpleValues);
+        RenderProtoActionStructuredFields(state, currentStructuredValues);
+        RenderProtoActionFlags(state);
+        RenderProtoActionOptionalFields(state, currentSimpleValues, currentStructuredValues);
+    }
+
+    private void EnsureProtoActionDefaultFlags(ProtoActionWidgetState state)
+    {
+        var actionType = ResolveProtoActionType(state.NameAcb.Text?.Trim() ?? "", state.TypeAcb.Text?.Trim() ?? "");
+        var editorProfile = ProtoActionMetadataCatalog.GetEditorProfile(actionType);
+        if (state.DefaultFlagsInitialized || editorProfile.DefaultFlagTags == null || editorProfile.DefaultFlagTags.Count == 0)
+            return;
+
+        var effectiveAction = CreateEffectiveProtoActionSnapshot(state);
+        foreach (var flagTag in editorProfile.DefaultFlagTags)
+        {
+            var flagValue = ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, flagTag);
+            if (!string.IsNullOrWhiteSpace(flagValue))
+                continue;
+
+            state.SelectedFlagTags.Add(flagTag);
+            ProtoXmlHandler.SetProtoActionSimpleFieldValue(state.Model, flagTag, "1");
+        }
+
+        state.DefaultFlagsInitialized = true;
+    }
+
+    private void RenderProtoActionAdditionalFields(ProtoActionWidgetState state, Dictionary<string, string> currentValues)
+    {
+        var effectiveAction = CreateEffectiveProtoActionSnapshot(state);
+        var actionType = ResolveProtoActionType(state.NameAcb.Text?.Trim() ?? "", state.TypeAcb.Text?.Trim() ?? "");
+        var showOptionalModelAttachmentFields = ShouldShowOptionalModelAttachmentFields(state, actionType, effectiveAction, currentValues);
+        var fieldTags = GetVisibleProtoActionSimpleFieldTags(state, effectiveAction, actionType)
+            .Where(tag => !(showOptionalModelAttachmentFields &&
+                            OptionalModelAttachmentTags.Contains(tag, StringComparer.OrdinalIgnoreCase)))
+            .ToList();
+        var suggestedFieldTags = GetSuggestedProtoActionSimpleFieldTags(actionType);
+        if (showOptionalModelAttachmentFields)
+        {
+            foreach (var tag in OptionalModelAttachmentTags)
+            {
+                if (!suggestedFieldTags.Contains(tag, StringComparer.OrdinalIgnoreCase))
+                    suggestedFieldTags.Add(tag);
+            }
+        }
+        var primaryFieldTags = fieldTags
+            .Where(x => suggestedFieldTags.Contains(x, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+
+        state.AdditionalFieldsContainer.Children.Clear();
+        state.AdditionalFieldControls.Clear();
+
+        if (primaryFieldTags.Count == 0 && _isReadOnly)
+            return;
+
+        void RenderFieldRow(string tag)
+        {
+            var definition = ProtoActionMetadataCatalog.GetFieldDefinition(tag);
+            var rawValue = currentValues.TryGetValue(tag, out var editedValue)
+                ? editedValue
+                : ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, tag);
+            var value = GetProtoActionDefaultSimpleValue(tag, rawValue);
+
+            var rowGrid = new Grid
+            {
+                ColumnDefinitions = !_isReadOnly && CanRemoveProtoActionAdditionalField(actionType, tag)
+                    ? new ColumnDefinitions("180, *, 32")
+                    : new ColumnDefinitions("180, *"),
+                Margin = new Thickness(0, 2, 0, 2),
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+
+            rowGrid.Children.Add(new TextBlock
+            {
+                Text = definition.Label + ":",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 4, 10, 4)
+            });
+
+            Control editor = definition.EditorKind switch
+            {
+                ProtoActionFieldEditorKind.Toggle => new CheckBox
+                {
+                    IsChecked = !string.IsNullOrWhiteSpace(value) && !value.Equals("0", StringComparison.OrdinalIgnoreCase),
+                    IsEnabled = !_isReadOnly,
+                    VerticalAlignment = VerticalAlignment.Center
+                },
+                _ => GetProtoActionValueSuggestions(tag) is List<string> suggestions
+                    ? new AutoCompleteBox
+                    {
+                        Text = value,
+                        FilterMode = AutoCompleteFilterMode.Contains,
+                        ItemsSource = suggestions,
+                        IsEnabled = !_isReadOnly
+                    }
+                    : new TextBox
+                    {
+                        Text = value,
+                        IsEnabled = !_isReadOnly
+                    }
+            };
+
+            if (editor is TextBox editorTextBox && definition.EditorKind == ProtoActionFieldEditorKind.Number)
+                AttachProtoActionDecimalBehavior(editorTextBox);
+            if (editor is AutoCompleteBox editorAcb)
+                EnableDropdownAutoComplete(editorAcb);
+
+            if (editor is TextBox additionalTb)
+            {
+                additionalTb.TextChanged += async (s, e) =>
+                {
+                    if (!_isPopulating)
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            MarkDirty();
+                        }
+                    }
+                };
+            }
+            else if (editor is AutoCompleteBox additionalAcb)
+            {
+                additionalAcb.TextChanged += async (s, e) =>
+                {
+                    if (!_isPopulating)
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            MarkDirty();
+                        }
+                    }
+                };
+            }
+            else if (editor is CheckBox additionalCb)
+            {
+                additionalCb.IsCheckedChanged += async (s, e) =>
+                {
+                    if (!_isPopulating)
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            if (IsKnownProtoActionFlagTag(tag))
+                            {
+                                if (additionalCb.IsChecked == true)
+                                    state.SelectedFlagTags.Add(tag);
+                                else
+                                    state.SelectedFlagTags.Remove(tag);
+                                RenderProtoActionFlags(state);
+                            }
+                            MarkDirty();
+                        }
+                    }
+                };
+            }
+
+            Grid.SetColumn(editor, 1);
+            rowGrid.Children.Add(editor);
+            state.AdditionalFieldControls[tag] = editor;
+
+            if (!_isReadOnly && CanRemoveProtoActionAdditionalField(actionType, tag))
+            {
+                var removeButton = new Button
+                {
+                    Content = "X",
+                    Background = Brush.Parse("#8b0000"),
+                    Width = 28,
+                    Height = 28,
+                    Padding = new Thickness(0),
+                    Margin = new Thickness(8, 0, 0, 0),
+                    HorizontalContentAlignment = HorizontalAlignment.Center,
+                    VerticalContentAlignment = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                removeButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        state.ForcedVisibleFieldTags.Remove(tag);
+                        state.AdditionalFieldControls.Remove(tag);
+                        ProtoXmlHandler.SetProtoActionSimpleFieldValue(state.Model, tag, "");
+                        MarkDirty();
+                        RefreshProtoActionMetadataPanels(state);
+                    }
+                };
+                Grid.SetColumn(removeButton, 2);
+                rowGrid.Children.Add(removeButton);
+            }
+
+            state.AdditionalFieldsContainer.Children.Add(rowGrid);
+        }
+
+        foreach (var tag in primaryFieldTags)
+            RenderFieldRow(tag);
+
+        state.CustomFlagControls.Clear();
+        if (IsAutoConvertActionType(actionType))
+        {
+            var convertPanel = new StackPanel { Spacing = 6, Margin = new Thickness(0, 8, 0, 2) };
+            convertPanel.Children.Add(new TextBlock
+            {
+                Text = "Can Convert Unit From",
+                FontWeight = FontWeight.SemiBold
+            });
+
+            var checkboxRow = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+            convertPanel.Children.Add(checkboxRow);
+
+            CheckBox CreateConvertCheckBox(string label, bool isChecked, bool isEnabled = true)
+                => new()
+                {
+                    Content = label,
+                    IsChecked = isChecked,
+                    IsEnabled = !_isReadOnly && isEnabled,
+                    Margin = new Thickness(0, 0, 16, 0),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+
+            var playerCheckBox = CreateConvertCheckBox("Player", true, false);
+            checkboxRow.Children.Add(playerCheckBox);
+
+            async void WireFlagCheckBox(CheckBox checkBox, string flagTag, bool checkedMeansPresent)
+            {
+                checkBox.IsCheckedChanged += async (_, _) =>
+                {
+                    if (_isPopulating)
+                        return;
+
+                    var proceed = await CheckStartLocalMod();
+                    if (!proceed)
+                        return;
+
+                    var shouldHaveFlag = checkedMeansPresent
+                        ? checkBox.IsChecked == true
+                        : checkBox.IsChecked != true;
+
+                    if (shouldHaveFlag)
+                        state.SelectedFlagTags.Add(flagTag);
+                    else
+                        state.SelectedFlagTags.Remove(flagTag);
+
+                    RenderProtoActionFlags(state);
+                    MarkDirty();
+                };
+            }
+
+            var alliesCheckBox = CreateConvertCheckBox(
+                "Allies",
+                !state.SelectedFlagTags.Contains("cannotbeconvertedbyallies"));
+            state.CustomFlagControls["cannotbeconvertedbyallies"] = alliesCheckBox;
+            checkboxRow.Children.Add(alliesCheckBox);
+            WireFlagCheckBox(alliesCheckBox, "cannotbeconvertedbyallies", checkedMeansPresent: false);
+
+            var enemiesCheckBox = CreateConvertCheckBox(
+                "Enemies",
+                !state.SelectedFlagTags.Contains("cannotbeconvertedbyenemies"));
+            state.CustomFlagControls["cannotbeconvertedbyenemies"] = enemiesCheckBox;
+            checkboxRow.Children.Add(enemiesCheckBox);
+            WireFlagCheckBox(enemiesCheckBox, "cannotbeconvertedbyenemies", checkedMeansPresent: false);
+
+            var natureCheckBox = CreateConvertCheckBox(
+                "Nature",
+                state.SelectedFlagTags.Contains("includenature"));
+            state.CustomFlagControls["includenature"] = natureCheckBox;
+            checkboxRow.Children.Add(natureCheckBox);
+            WireFlagCheckBox(natureCheckBox, "includenature", checkedMeansPresent: true);
+
+            state.AdditionalFieldsContainer.Children.Add(convertPanel);
+        }
+
+        if (showOptionalModelAttachmentFields)
+        {
+            async Task RemoveOptionalModelAttachmentAsync()
+            {
+                var proceed = await CheckStartLocalMod();
+                if (!proceed)
+                    return;
+
+                foreach (var tag in OptionalModelAttachmentTags)
+                {
+                    state.ForcedVisibleFieldTags.Remove(tag);
+                    state.AdditionalFieldControls.Remove(tag);
+                    ProtoXmlHandler.SetProtoActionSimpleFieldValue(state.Model, tag, "");
+                }
+
+                MarkDirty();
+                RefreshProtoActionMetadataPanels(state);
+            }
+
+            Control CreateAttachmentEditor(string tag, string valueOverride, double? width = null)
+            {
+                var definition = ProtoActionMetadataCatalog.GetFieldDefinition(tag);
+                Control editor = GetProtoActionValueSuggestions(tag) is List<string> suggestions
+                    ? new AutoCompleteBox
+                    {
+                        Text = valueOverride,
+                        FilterMode = AutoCompleteFilterMode.Contains,
+                        ItemsSource = suggestions,
+                        IsEnabled = !_isReadOnly,
+                        Width = width ?? double.NaN
+                    }
+                    : new TextBox
+                    {
+                        Text = valueOverride,
+                        IsEnabled = !_isReadOnly,
+                        Width = width ?? double.NaN
+                    };
+
+                if (editor is TextBox textBox && definition.EditorKind == ProtoActionFieldEditorKind.Number)
+                    AttachProtoActionDecimalBehavior(textBox);
+                if (editor is AutoCompleteBox autoCompleteBox)
+                    EnableDropdownAutoComplete(autoCompleteBox);
+
+                if (editor is TextBox textEditor)
+                {
+                    textEditor.TextChanged += async (_, _) =>
+                    {
+                        if (!_isPopulating)
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                                MarkDirty();
+                        }
+                    };
+                }
+                else if (editor is AutoCompleteBox autoEditor)
+                {
+                    autoEditor.TextChanged += async (_, _) =>
+                    {
+                        if (!_isPopulating)
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                                MarkDirty();
+                        }
+                    };
+                }
+
+                state.AdditionalFieldControls[tag] = editor;
+                return editor;
+            }
+
+            var modelAttachmentValue = GetProtoActionDefaultSimpleValue(
+                "modelattachment",
+                currentValues.TryGetValue("modelattachment", out var currentModelAttachment)
+                    ? currentModelAttachment
+                    : ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, "modelattachment"));
+            var modelAttachmentRow = new Grid
+            {
+                ColumnDefinitions = !_isReadOnly
+                    ? new ColumnDefinitions("180, *, 32")
+                    : new ColumnDefinitions("180, *"),
+                Margin = new Thickness(0, 2, 0, 2),
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            modelAttachmentRow.Children.Add(new TextBlock
+            {
+                Text = "Model Attachment:",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 4, 10, 4)
+            });
+            var modelAttachmentEditor = CreateAttachmentEditor("modelattachment", modelAttachmentValue);
+            Grid.SetColumn(modelAttachmentEditor, 1);
+            modelAttachmentRow.Children.Add(modelAttachmentEditor);
+
+            if (!_isReadOnly)
+            {
+                var removeButton = new Button
+                {
+                    Content = "X",
+                    Background = Brush.Parse("#8b0000"),
+                    Width = 28,
+                    Height = 28,
+                    Padding = new Thickness(0),
+                    Margin = new Thickness(8, 0, 0, 0),
+                    HorizontalContentAlignment = HorizontalAlignment.Center,
+                    VerticalContentAlignment = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                removeButton.Click += async (_, _) => await RemoveOptionalModelAttachmentAsync();
+                Grid.SetColumn(removeButton, 2);
+                modelAttachmentRow.Children.Add(removeButton);
+            }
+
+            state.AdditionalFieldsContainer.Children.Add(modelAttachmentRow);
+
+            var modelAttachmentDetailsRow = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("180, *, Auto, 120"),
+                Margin = new Thickness(0, 2, 0, 2),
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            modelAttachmentDetailsRow.Children.Add(new TextBlock
+            {
+                Text = "Model Attachment Bone:",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 4, 10, 4)
+            });
+            var modelAttachmentBoneValue = GetProtoActionDefaultSimpleValue(
+                "modelattachmentbone",
+                currentValues.TryGetValue("modelattachmentbone", out var currentBone)
+                    ? currentBone
+                    : ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, "modelattachmentbone"));
+            var modelAttachmentBoneEditor = CreateAttachmentEditor("modelattachmentbone", modelAttachmentBoneValue);
+            Grid.SetColumn(modelAttachmentBoneEditor, 1);
+            modelAttachmentDetailsRow.Children.Add(modelAttachmentBoneEditor);
+
+            var timerLabel = new TextBlock
+            {
+                Text = "Model Attachment Timer (ms):",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(12, 4, 10, 4)
+            };
+            Grid.SetColumn(timerLabel, 2);
+            modelAttachmentDetailsRow.Children.Add(timerLabel);
+
+            var modelAttachmentTimerValue = GetProtoActionDefaultSimpleValue(
+                "modelattachmenttimer",
+                currentValues.TryGetValue("modelattachmenttimer", out var currentTimer)
+                    ? currentTimer
+                    : ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, "modelattachmenttimer"));
+            var modelAttachmentTimerEditor = CreateAttachmentEditor("modelattachmenttimer", modelAttachmentTimerValue, 120);
+            Grid.SetColumn(modelAttachmentTimerEditor, 3);
+            modelAttachmentDetailsRow.Children.Add(modelAttachmentTimerEditor);
+            state.AdditionalFieldsContainer.Children.Add(modelAttachmentDetailsRow);
+        }
+
+        if (!_isReadOnly && SupportsOptionalModelAttachmentActionType(actionType) && !showOptionalModelAttachmentFields)
+        {
+            var addModelAttachmentButton = new Button
+            {
+                Content = "Add Model Attachment",
+                Background = Brush.Parse("#2b7a0b"),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(0, 4, 0, 2)
+            };
+            addModelAttachmentButton.Click += async (_, _) =>
+            {
+                var proceed = await CheckStartLocalMod();
+                if (!proceed)
+                    return;
+
+                foreach (var tag in OptionalModelAttachmentTags)
+                    state.ForcedVisibleFieldTags.Add(tag);
+
+                RefreshProtoActionMetadataPanels(state);
+                MarkDirty();
+            };
+            state.AdditionalFieldsContainer.Children.Add(addModelAttachmentButton);
+        }
+    }
+
+    private void RenderProtoActionStructuredFields(ProtoActionWidgetState state, Dictionary<string, List<ProtoActionStructuredFieldEntry>> currentValues)
+    {
+        var effectiveAction = CreateEffectiveProtoActionSnapshot(state);
+        var actionType = ResolveProtoActionType(state.NameAcb.Text?.Trim() ?? "", state.TypeAcb.Text?.Trim() ?? "");
+        var fieldTags = GetVisibleProtoActionStructuredFieldTags(state, effectiveAction, actionType);
+        var suggestedFieldTags = GetSuggestedProtoActionStructuredFieldTags(actionType);
+        var primaryFieldTags = fieldTags
+            .Where(x => suggestedFieldTags.Contains(x, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+
+        state.StructuredFieldsContainer.Children.Clear();
+        state.StructuredFieldRows.Clear();
+
+        if (primaryFieldTags.Count == 0)
+            return;
+
+        foreach (var tag in primaryFieldTags)
+        {
+            var definition = ProtoActionMetadataCatalog.GetFieldDefinition(tag);
+            var entries = currentValues.TryGetValue(tag, out var editedEntries)
+                ? editedEntries
+                : GetProtoActionStructuredFieldEntriesForEditor(effectiveAction, actionType, tag);
+
+            var section = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 0, 6) };
+            var sectionHeader = new Grid
+            {
+                ColumnDefinitions = !_isReadOnly && IsUserAddedProtoActionField(state, tag)
+                    ? new ColumnDefinitions("*, Auto")
+                    : new ColumnDefinitions("*")
+            };
+            sectionHeader.Children.Add(new TextBlock
+            {
+                Text = definition.Label + ":",
+                FontWeight = FontWeight.SemiBold
+            });
+            if (!_isReadOnly && IsUserAddedProtoActionField(state, tag))
+            {
+                var removeButton = new Button
+                {
+                    Content = "X",
+                    Background = Brush.Parse("#8b0000"),
+                    Margin = new Thickness(8, 0, 0, 0),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                removeButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        state.ForcedVisibleFieldTags.Remove(tag);
+                        state.StructuredFieldRows.Remove(tag);
+                        ProtoXmlHandler.SetProtoActionStructuredFieldEntries(state.Model, tag, []);
+                        MarkDirty();
+                        RefreshProtoActionMetadataPanels(state);
+                    }
+                };
+                Grid.SetColumn(removeButton, 1);
+                sectionHeader.Children.Add(removeButton);
+            }
+            section.Children.Add(sectionHeader);
+
+            var rowsContainer = new StackPanel { Spacing = 4 };
+            section.Children.Add(rowsContainer);
+            state.StructuredFieldRows[tag] = [];
+
+            void AddRow(ProtoActionStructuredFieldEntry? initialEntry = null)
+            {
+                var rowPanel = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 6
+                };
+
+                var rowState = new ProtoActionStructuredFieldRowState
+                {
+                    Tag = tag,
+                    RowPanel = rowPanel,
+                    ValueTb = GetProtoActionValueSuggestions(tag) is List<string> suggestions
+                        ? new AutoCompleteBox
+                        {
+                            Text = initialEntry?.Value ?? "",
+                            Width = 140,
+                            FilterMode = AutoCompleteFilterMode.Contains,
+                            ItemsSource = suggestions,
+                            IsEnabled = !_isReadOnly
+                        }
+                        : new TextBox
+                        {
+                            Text = initialEntry?.Value ?? "",
+                            Width = 100,
+                            IsEnabled = !_isReadOnly
+                        }
+                };
+                if (rowState.ValueTb is TextBox valueTextBox)
+                    AttachProtoActionDecimalBehavior(valueTextBox);
+                else if (rowState.ValueTb is AutoCompleteBox valueAutoCompleteBox)
+                    EnableDropdownAutoComplete(valueAutoCompleteBox);
+
+                if (rowState.ValueTb is TextBox rowValueTb)
+                {
+                    rowValueTb.TextChanged += async (s, e) =>
+                    {
+                        if (!_isPopulating)
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                            {
+                                MarkDirty();
+                            }
+                        }
+                    };
+                }
+                else if (rowState.ValueTb is AutoCompleteBox rowValueAcb)
+                {
+                    rowValueAcb.TextChanged += async (s, e) =>
+                    {
+                        if (!_isPopulating)
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                            {
+                                MarkDirty();
+                            }
+                        }
+                    };
+                }
+
+                var attributeNames = definition.XmlAttributeNames?.ToList() ?? [];
+                var orderedAttributeNames = new List<string>();
+                if (attributeNames.Any(x => x.Equals("type", StringComparison.OrdinalIgnoreCase)))
+                    orderedAttributeNames.Add(attributeNames.First(x => x.Equals("type", StringComparison.OrdinalIgnoreCase)));
+                orderedAttributeNames.AddRange(attributeNames.Where(x => !x.Equals("type", StringComparison.OrdinalIgnoreCase)));
+
+                var visibleAttributeNames = new HashSet<string>(
+                    GetDefaultVisibleProtoActionStructuredAttributeNames(actionType, tag),
+                    StringComparer.OrdinalIgnoreCase);
+                if (initialEntry != null)
+                {
+                    foreach (var attributeName in initialEntry.Attributes.Keys)
+                        visibleAttributeNames.Add(attributeName);
+                }
+
+                bool valueAdded = false;
+
+                void AddValueEditor()
+                {
+                    if (valueAdded)
+                        return;
+
+                    rowPanel.Children.Add(new TextBlock
+                    {
+                        Text = GetProtoActionStructuredValueLabel(tag),
+                        VerticalAlignment = VerticalAlignment.Center
+                    });
+                    rowPanel.Children.Add(rowState.ValueTb);
+                    valueAdded = true;
+                }
+
+                void AddAttributeEditor(string attributeName, Control? insertBefore = null)
+                {
+                    var attributeLabel = new TextBlock
+                    {
+                        Text = attributeName.Equals("type", StringComparison.OrdinalIgnoreCase) ? "Type:" : attributeName + ":",
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+
+                    var attributeValue = initialEntry != null && initialEntry.Attributes.TryGetValue(attributeName, out var existingAttributeValue)
+                        ? existingAttributeValue
+                        : "";
+                    var attributeSuggestions = GetProtoActionStructuredAttributeSuggestions(attributeName);
+                    Control attributeEditor;
+                    if (attributeSuggestions != null)
+                    {
+                        var attributeAcb = new AutoCompleteBox
+                        {
+                            Text = attributeValue,
+                            FilterMode = AutoCompleteFilterMode.Contains,
+                            Width = 150,
+                            IsEnabled = !_isReadOnly
+                        };
+                        ConfigureStrictSuggestionAutoComplete(attributeAcb, attributeSuggestions, attributeValue);
+                        attributeAcb.TextChanged += async (s, e) =>
+                        {
+                            if (!_isPopulating)
+                            {
+                                var proceed = await CheckStartLocalMod();
+                                if (proceed)
+                                {
+                                    MarkDirty();
+                                }
+                            }
+                        };
+                        attributeEditor = attributeAcb;
+                    }
+                    else
+                    {
+                        var attributeTextBox = new TextBox
+                        {
+                            Text = attributeValue,
+                            Width = 110,
+                            IsEnabled = !_isReadOnly
+                        };
+                        attributeTextBox.TextChanged += async (s, e) =>
+                        {
+                            if (!_isPopulating)
+                            {
+                                var proceed = await CheckStartLocalMod();
+                                if (proceed)
+                                {
+                                    MarkDirty();
+                                }
+                            }
+                        };
+                        attributeEditor = attributeTextBox;
+                    }
+
+                    rowState.AttributeEditors[attributeName] = attributeEditor;
+                    var insertIndex = insertBefore != null ? rowPanel.Children.IndexOf(insertBefore) : -1;
+                    if (insertIndex >= 0)
+                    {
+                        rowPanel.Children.Insert(insertIndex, attributeLabel);
+                        rowPanel.Children.Insert(insertIndex + 1, attributeEditor);
+                    }
+                    else
+                    {
+                        rowPanel.Children.Add(attributeLabel);
+                        rowPanel.Children.Add(attributeEditor);
+                    }
+
+                    if (attributeName.Equals("type", StringComparison.OrdinalIgnoreCase))
+                        AddValueEditor();
+                }
+
+                foreach (var attributeName in orderedAttributeNames.Where(x => visibleAttributeNames.Contains(x)))
+                    AddAttributeEditor(attributeName);
+
+                AddValueEditor();
+
+                if (!_isReadOnly && ShouldShowProtoActionStructuredOtherAttributeButton(actionType, tag))
+                {
+                    var hiddenAttributeNames = orderedAttributeNames
+                        .Where(x => !visibleAttributeNames.Contains(x))
+                        .ToList();
+                    if (hiddenAttributeNames.Count > 0)
+                    {
+                        var addOtherButton = new Button
+                        {
+                            Content = definition.Label.Equals("Rate", StringComparison.OrdinalIgnoreCase)
+                                ? "Other Rate Attribute"
+                                : $"Other {definition.Label} Attribute",
+                            Background = Brush.Parse("#2b7a0b"),
+                            VerticalAlignment = VerticalAlignment.Center
+                        };
+
+                        addOtherButton.Click += (s, e) =>
+                        {
+                            if (rowPanel.Children.Contains(addOtherButton))
+                                rowPanel.Children.Remove(addOtherButton);
+
+                            var pickerAcb = new AutoCompleteBox
+                            {
+                                FilterMode = AutoCompleteFilterMode.Contains,
+                                ItemsSource = hiddenAttributeNames
+                                    .Where(x => !rowState.AttributeEditors.ContainsKey(x))
+                                    .Select(x => x.Equals("type", StringComparison.OrdinalIgnoreCase) ? "Type" : x)
+                                    .ToList(),
+                                MinimumPrefixLength = 0,
+                                MinimumPopulateDelay = TimeSpan.Zero,
+                                Width = 170,
+                                IsEnabled = !_isReadOnly
+                            };
+                            EnableDropdownAutoComplete(pickerAcb);
+
+                            async void AddSelectedAttribute()
+                            {
+                                var input = pickerAcb.Text?.Trim() ?? "";
+                                var selectedAttributeName = hiddenAttributeNames.FirstOrDefault(x =>
+                                    x.Equals(input, StringComparison.OrdinalIgnoreCase) ||
+                                    (x.Equals("type", StringComparison.OrdinalIgnoreCase) && input.Equals("Type", StringComparison.OrdinalIgnoreCase)));
+                                if (string.IsNullOrWhiteSpace(selectedAttributeName) ||
+                                    rowState.AttributeEditors.ContainsKey(selectedAttributeName))
+                                {
+                                    return;
+                                }
+
+                                var proceed = await CheckStartLocalMod();
+                                if (!proceed)
+                                    return;
+
+                                var insertIndex = rowPanel.Children.IndexOf(pickerAcb);
+                                if (insertIndex < 0)
+                                    insertIndex = rowPanel.Children.Count;
+
+                                rowPanel.Children.Remove(pickerAcb);
+                                AddAttributeEditor(selectedAttributeName, addOtherButton);
+                                MarkDirty();
+                            }
+
+                            pickerAcb.SelectionChanged += (s, e) =>
+                            {
+                                if (pickerAcb.SelectedItem is string selected)
+                                {
+                                    pickerAcb.Text = selected;
+                                    AddSelectedAttribute();
+                                }
+                            };
+
+                            var insertAt = rowPanel.Children.IndexOf(addOtherButton);
+                            rowPanel.Children.Insert(insertAt, pickerAcb);
+                            Dispatcher.UIThread.Post(() => pickerAcb.IsDropDownOpen = true, DispatcherPriority.Background);
+                        };
+
+                        rowPanel.Children.Add(addOtherButton);
+                    }
+                }
+
+                if (!_isReadOnly)
+                {
+                    var deleteButton = new Button
+                    {
+                        Content = "X",
+                        Background = Brush.Parse("#8b0000"),
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+                    deleteButton.Click += async (s, e) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            state.StructuredFieldRows[tag].Remove(rowState);
+                            rowsContainer.Children.Remove(rowPanel);
+                            MarkDirty();
+                        }
+                    };
+                    rowPanel.Children.Add(deleteButton);
+                }
+
+                state.StructuredFieldRows[tag].Add(rowState);
+                rowsContainer.Children.Add(rowPanel);
+            }
+
+            foreach (var entry in entries)
+                AddRow(entry);
+
+            if (!_isReadOnly)
+            {
+                var addButton = new Button
+                {
+                    Content = "+ Add " + definition.Label,
+                    Background = Brush.Parse("#2b7a0b"),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                addButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        AddRow();
+                        MarkDirty();
+                    }
+                };
+                section.Children.Add(addButton);
+            }
+
+            state.StructuredFieldsContainer.Children.Add(section);
+        }
+    }
+
+    private void RenderProtoActionFlags(ProtoActionWidgetState state)
+    {
+        state.FlagsContainer.Children.Clear();
+
+        var actionType = ResolveProtoActionType(state.NameAcb.Text?.Trim() ?? "", state.TypeAcb.Text?.Trim() ?? "");
+        if (string.IsNullOrWhiteSpace(actionType) && state.SelectedFlagTags.Count == 0)
+            return;
+
+        state.FlagsContainer.Children.Add(new TextBlock
+        {
+            Text = "Flags",
+            FontWeight = FontWeight.Bold,
+            Margin = new Thickness(0, 6, 0, 2)
+        });
+
+        var flagsWrap = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 4) };
+        state.FlagsContainer.Children.Add(flagsWrap);
+
+        void SyncFlagCheckboxesFromFlags()
+        {
+            foreach (var (tag, control) in state.AdditionalFieldControls)
+            {
+                if (!IsKnownProtoActionFlagTag(tag) || control is not CheckBox checkBox)
+                    continue;
+
+                checkBox.IsChecked = state.SelectedFlagTags.Contains(tag);
+            }
+
+            if (state.CustomFlagControls.TryGetValue("cannotbeconvertedbyallies", out var alliesCheckBox))
+                alliesCheckBox.IsChecked = !state.SelectedFlagTags.Contains("cannotbeconvertedbyallies");
+            if (state.CustomFlagControls.TryGetValue("cannotbeconvertedbyenemies", out var enemiesCheckBox))
+                enemiesCheckBox.IsChecked = !state.SelectedFlagTags.Contains("cannotbeconvertedbyenemies");
+            if (state.CustomFlagControls.TryGetValue("includenature", out var natureCheckBox))
+                natureCheckBox.IsChecked = state.SelectedFlagTags.Contains("includenature");
+        }
+
+        void RefreshFlagsDisplay()
+        {
+            flagsWrap.Children.Clear();
+            foreach (var tag in state.SelectedFlagTags.OrderBy(x => ProtoActionMetadataCatalog.GetKnownFlagLabel(x), StringComparer.OrdinalIgnoreCase))
+            {
+                var chip = CreateChip(ProtoActionMetadataCatalog.GetKnownFlagLabel(tag), async () =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        state.SelectedFlagTags.Remove(tag);
+                        SyncFlagCheckboxesFromFlags();
+                        MarkDirty();
+                        RefreshFlagsDisplay();
+                    }
+                });
+                flagsWrap.Children.Add(chip);
+            }
+        }
+
+        RefreshFlagsDisplay();
+
+        if (_isReadOnly)
+            return;
+
+        var availableFlags = ProtoActionMetadataCatalog.GetKnownFlagTags()
+            .OrderBy(x => ProtoActionMetadataCatalog.GetKnownFlagLabel(x), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var addFlagGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("*, Auto"), Margin = new Thickness(0, 4, 0, 4) };
+        var acbAdd = new AutoCompleteBox
+        {
+            FilterMode = AutoCompleteFilterMode.Contains,
+            ItemsSource = availableFlags.Select(ProtoActionMetadataCatalog.GetKnownFlagLabel).ToList(),
+            Margin = new Thickness(0, 0, 10, 0)
+        };
+        EnableDropdownAutoComplete(acbAdd);
+        Grid.SetColumn(acbAdd, 0);
+        addFlagGrid.Children.Add(acbAdd);
+
+        async void PerformAddFlag()
+        {
+            var input = acbAdd.Text?.Trim() ?? "";
+            var matchLabel = availableFlags
+                .Select(ProtoActionMetadataCatalog.GetKnownFlagLabel)
+                .FirstOrDefault(x => x.Equals(input, StringComparison.OrdinalIgnoreCase));
+            if (string.IsNullOrWhiteSpace(matchLabel))
+                return;
+
+            var tag = availableFlags.FirstOrDefault(x => ProtoActionMetadataCatalog.GetKnownFlagLabel(x).Equals(matchLabel, StringComparison.OrdinalIgnoreCase));
+            if (string.IsNullOrWhiteSpace(tag) || state.SelectedFlagTags.Contains(tag))
+                return;
+
+            var proceed = await CheckStartLocalMod();
+            if (proceed)
+            {
+                state.SelectedFlagTags.Add(tag);
+                SyncFlagCheckboxesFromFlags();
+                acbAdd.Text = "";
+                MarkDirty();
+                RefreshFlagsDisplay();
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (acbAdd.IsEnabled && string.IsNullOrWhiteSpace(acbAdd.Text))
+                        acbAdd.IsDropDownOpen = true;
+                });
+            }
+        }
+
+        var btnAdd = new Button { Content = "+ Add", Background = Brush.Parse("#2b7a0b") };
+        btnAdd.Click += (s, e) => PerformAddFlag();
+        acbAdd.SelectionChanged += (s, e) =>
+        {
+            if (acbAdd.SelectedItem is string selected)
+            {
+                acbAdd.Text = selected;
+                PerformAddFlag();
+            }
+        };
+        Grid.SetColumn(btnAdd, 1);
+        addFlagGrid.Children.Add(btnAdd);
+        state.FlagsContainer.Children.Add(addFlagGrid);
+    }
+
+    private void RenderProtoActionOptionalFields(
+        ProtoActionWidgetState state,
+        Dictionary<string, string> currentSimpleValues,
+        Dictionary<string, List<ProtoActionStructuredFieldEntry>> currentStructuredValues)
+    {
+        var effectiveAction = CreateEffectiveProtoActionSnapshot(state);
+        var actionType = ResolveProtoActionType(state.NameAcb.Text?.Trim() ?? "", state.TypeAcb.Text?.Trim() ?? "");
+        var showOptionalModelAttachmentFields = ShouldShowOptionalModelAttachmentFields(state, actionType, effectiveAction, currentSimpleValues);
+        var visibleSimpleTags = GetVisibleProtoActionSimpleFieldTags(state, effectiveAction, actionType);
+        var visibleStructuredTags = GetVisibleProtoActionStructuredFieldTags(state, effectiveAction, actionType);
+        var suggestedSimpleTags = GetSuggestedProtoActionSimpleFieldTags(actionType);
+        var suggestedStructuredTags = GetSuggestedProtoActionStructuredFieldTags(actionType);
+        var additionalSimpleTags = visibleSimpleTags
+            .Where(x => !suggestedSimpleTags.Contains(x, StringComparer.OrdinalIgnoreCase))
+            .Where(x => !(showOptionalModelAttachmentFields &&
+                          OptionalModelAttachmentTags.Contains(x, StringComparer.OrdinalIgnoreCase)))
+            .ToList();
+        var additionalStructuredTags = visibleStructuredTags
+            .Where(x => !suggestedStructuredTags.Contains(x, StringComparer.OrdinalIgnoreCase))
+            .Where(x => !IsAutoConvertManagedStructuredFieldTag(actionType, x))
+            .ToList();
+        var pickerOptions = GetAvailableProtoActionAttributePickerOptions(state);
+
+        state.OptionalFieldsContainer.Children.Clear();
+
+        if (additionalSimpleTags.Count == 0 && additionalStructuredTags.Count == 0 && _isReadOnly)
+            return;
+
+        state.OptionalFieldsContainer.Children.Add(new TextBlock
+        {
+            Text = "Additional Attributes",
+            FontWeight = FontWeight.Bold,
+            Margin = new Thickness(0, 6, 0, 2)
+        });
+
+        if (!_isReadOnly)
+        {
+            var pickerHost = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 0, 6) };
+            var addButton = new Button
+            {
+                Content = "Add Attribute From Full List",
+                Background = Brush.Parse("#2b7a0b"),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            pickerHost.Children.Add(addButton);
+
+            string? selectedAttributeLabel = null;
+            addButton.Click += (s, e) =>
+            {
+                if (pickerHost.Children.Count > 1)
+                    return;
+
+                var pickerRow = new Grid { ColumnDefinitions = new ColumnDefinitions("260, Auto") };
+                var optionLabels = pickerOptions.Select(x => x.Label).ToList();
+                var pickerAcb = new AutoCompleteBox
+                {
+                    FilterMode = AutoCompleteFilterMode.Contains,
+                    ItemsSource = optionLabels,
+                    MinimumPrefixLength = 0,
+                    MinimumPopulateDelay = TimeSpan.Zero,
+                    IsEnabled = !_isReadOnly
+                };
+                EnableDropdownAutoComplete(pickerAcb);
+                Grid.SetColumn(pickerAcb, 0);
+                pickerRow.Children.Add(pickerAcb);
+
+                async void PerformAdd()
+                {
+                    var input = pickerAcb.Text?.Trim() ?? "";
+                    var match = optionLabels.FirstOrDefault(x => x.Equals(input, StringComparison.OrdinalIgnoreCase))
+                        ?? optionLabels.FirstOrDefault(x => x.Equals(selectedAttributeLabel, StringComparison.OrdinalIgnoreCase));
+                    if (string.IsNullOrWhiteSpace(match))
+                        return;
+
+                    var option = pickerOptions.FirstOrDefault(x => x.Label.Equals(match, StringComparison.OrdinalIgnoreCase));
+                    if (string.IsNullOrWhiteSpace(option.Tag))
+                        return;
+
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        state.ForcedVisibleFieldTags.Add(option.Tag);
+                        RefreshProtoActionMetadataPanels(state);
+                    }
+                }
+
+                pickerAcb.SelectionChanged += (s, e) =>
+                {
+                    if (pickerAcb.SelectedItem is string selected)
+                    {
+                        selectedAttributeLabel = selected;
+                        pickerAcb.Text = selected;
+                        PerformAdd();
+                    }
+                };
+
+                var closeButton = new Button
+                {
+                    Content = "X",
+                    Background = Brush.Parse("#8b0000"),
+                    Margin = new Thickness(8, 0, 0, 0)
+                };
+                closeButton.Click += (s, e) => pickerHost.Children.Remove(pickerRow);
+                Grid.SetColumn(closeButton, 1);
+                pickerRow.Children.Add(closeButton);
+                pickerHost.Children.Add(pickerRow);
+                Dispatcher.UIThread.Post(() => pickerAcb.IsDropDownOpen = true, DispatcherPriority.Background);
+            };
+
+            state.OptionalFieldsContainer.Children.Add(pickerHost);
+        }
+
+        foreach (var tag in additionalSimpleTags)
+        {
+            var definition = ProtoActionMetadataCatalog.GetFieldDefinition(tag);
+            var rawValue = currentSimpleValues.TryGetValue(tag, out var editedValue)
+                ? editedValue
+                : ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, tag);
+            var value = GetProtoActionDefaultSimpleValue(tag, rawValue);
+
+            var rowGrid = new Grid
+            {
+                ColumnDefinitions = !_isReadOnly && CanRemoveProtoActionAdditionalField(actionType, tag)
+                    ? new ColumnDefinitions("180, *, 32")
+                    : new ColumnDefinitions("180, *"),
+                Margin = new Thickness(0, 2, 0, 2),
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+
+            rowGrid.Children.Add(new TextBlock
+            {
+                Text = definition.Label + ":",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 4, 10, 4)
+            });
+
+            Control editor = GetProtoActionValueSuggestions(tag) is List<string> suggestions
+                ? new AutoCompleteBox
+                {
+                    Text = value,
+                    FilterMode = AutoCompleteFilterMode.Contains,
+                    ItemsSource = suggestions,
+                    IsEnabled = !_isReadOnly
+                }
+                : new TextBox
+                {
+                    Text = value,
+                    IsEnabled = !_isReadOnly
+                };
+            if (editor is TextBox editorTextBox && definition.EditorKind == ProtoActionFieldEditorKind.Number)
+                AttachProtoActionDecimalBehavior(editorTextBox);
+            if (editor is AutoCompleteBox editorAcb)
+                EnableDropdownAutoComplete(editorAcb);
+
+            if (editor is TextBox editorTb)
+            {
+                editorTb.TextChanged += async (s, e) =>
+                {
+                    if (!_isPopulating)
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed) MarkDirty();
+                    }
+                };
+            }
+            else if (editor is AutoCompleteBox editorAutoComplete)
+            {
+                editorAutoComplete.TextChanged += async (s, e) =>
+                {
+                    if (!_isPopulating)
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed) MarkDirty();
+                    }
+                };
+            }
+
+            Grid.SetColumn(editor, 1);
+            rowGrid.Children.Add(editor);
+            state.AdditionalFieldControls[tag] = editor;
+
+            if (!_isReadOnly && CanRemoveProtoActionAdditionalField(actionType, tag))
+            {
+                var removeButton = new Button
+                {
+                    Content = "X",
+                    Background = Brush.Parse("#8b0000"),
+                    Width = 28,
+                    Height = 28,
+                    Padding = new Thickness(0),
+                    Margin = new Thickness(8, 0, 0, 0),
+                    HorizontalContentAlignment = HorizontalAlignment.Center,
+                    VerticalContentAlignment = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                removeButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        state.ForcedVisibleFieldTags.Remove(tag);
+                        state.AdditionalFieldControls.Remove(tag);
+                        ProtoXmlHandler.SetProtoActionSimpleFieldValue(state.Model, tag, "");
+                        MarkDirty();
+                        RefreshProtoActionMetadataPanels(state);
+                    }
+                };
+                Grid.SetColumn(removeButton, 2);
+                rowGrid.Children.Add(removeButton);
+            }
+
+            state.OptionalFieldsContainer.Children.Add(rowGrid);
+        }
+
+        foreach (var tag in additionalStructuredTags)
+        {
+            var definition = ProtoActionMetadataCatalog.GetFieldDefinition(tag);
+            var entries = currentStructuredValues.TryGetValue(tag, out var editedEntries)
+                ? editedEntries
+                : GetProtoActionStructuredFieldEntriesForEditor(effectiveAction, actionType, tag);
+
+            var section = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 0, 6) };
+            var sectionHeader = new Grid
+            {
+                ColumnDefinitions = !_isReadOnly ? new ColumnDefinitions("*, Auto") : new ColumnDefinitions("*")
+            };
+            sectionHeader.Children.Add(new TextBlock
+            {
+                Text = definition.Label + ":",
+                FontWeight = FontWeight.SemiBold
+            });
+            if (!_isReadOnly)
+            {
+                var removeButton = new Button
+                {
+                    Content = "X",
+                    Background = Brush.Parse("#8b0000"),
+                    Margin = new Thickness(8, 0, 0, 0),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                removeButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        state.ForcedVisibleFieldTags.Remove(tag);
+                        state.StructuredFieldRows.Remove(tag);
+                        ProtoXmlHandler.SetProtoActionStructuredFieldEntries(state.Model, tag, []);
+                        MarkDirty();
+                        RefreshProtoActionMetadataPanels(state);
+                    }
+                };
+                Grid.SetColumn(removeButton, 1);
+                sectionHeader.Children.Add(removeButton);
+            }
+            section.Children.Add(sectionHeader);
+
+            var rowsContainer = new StackPanel { Spacing = 4 };
+            section.Children.Add(rowsContainer);
+            state.StructuredFieldRows[tag] = [];
+
+            void AddRow(ProtoActionStructuredFieldEntry? initialEntry = null)
+            {
+                var rowPanel = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 6
+                };
+
+                var rowState = new ProtoActionStructuredFieldRowState
+                {
+                    Tag = tag,
+                    RowPanel = rowPanel,
+                    ValueTb = GetProtoActionValueSuggestions(tag) is List<string> suggestions
+                        ? new AutoCompleteBox
+                        {
+                            Text = initialEntry?.Value ?? "",
+                            Width = 140,
+                            FilterMode = AutoCompleteFilterMode.Contains,
+                            ItemsSource = suggestions,
+                            IsEnabled = !_isReadOnly
+                        }
+                        : new TextBox
+                        {
+                            Text = initialEntry?.Value ?? "",
+                            Width = 100,
+                            IsEnabled = !_isReadOnly
+                        }
+                };
+                if (rowState.ValueTb is TextBox valueTextBox)
+                    AttachProtoActionDecimalBehavior(valueTextBox);
+                else if (rowState.ValueTb is AutoCompleteBox valueAutoCompleteBox)
+                    EnableDropdownAutoComplete(valueAutoCompleteBox);
+
+                if (rowState.ValueTb is TextBox rowValueTb)
+                {
+                    rowValueTb.TextChanged += async (s, e) =>
+                    {
+                        if (!_isPopulating)
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed) MarkDirty();
+                        }
+                    };
+                }
+                else if (rowState.ValueTb is AutoCompleteBox rowValueAcb)
+                {
+                    rowValueAcb.TextChanged += async (s, e) =>
+                    {
+                        if (!_isPopulating)
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed) MarkDirty();
+                        }
+                    };
+                }
+
+                var attributeNames = definition.XmlAttributeNames?.ToList() ?? [];
+                var orderedAttributeNames = new List<string>();
+                if (attributeNames.Any(x => x.Equals("type", StringComparison.OrdinalIgnoreCase)))
+                    orderedAttributeNames.Add(attributeNames.First(x => x.Equals("type", StringComparison.OrdinalIgnoreCase)));
+                orderedAttributeNames.AddRange(attributeNames.Where(x => !x.Equals("type", StringComparison.OrdinalIgnoreCase)));
+
+                bool valueAdded = false;
+                void AddValueEditor()
+                {
+                    if (valueAdded)
+                        return;
+
+                    rowPanel.Children.Add(new TextBlock { Text = GetProtoActionStructuredValueLabel(tag), VerticalAlignment = VerticalAlignment.Center });
+                    rowPanel.Children.Add(rowState.ValueTb);
+                    valueAdded = true;
+                }
+
+                foreach (var attributeName in orderedAttributeNames)
+                {
+                    rowPanel.Children.Add(new TextBlock
+                    {
+                        Text = attributeName.Equals("type", StringComparison.OrdinalIgnoreCase) ? "Type:" : attributeName + ":",
+                        VerticalAlignment = VerticalAlignment.Center
+                    });
+
+                    var attributeValue = initialEntry != null && initialEntry.Attributes.TryGetValue(attributeName, out var existingAttributeValue)
+                        ? existingAttributeValue
+                        : "";
+                    var attributeSuggestions = GetProtoActionStructuredAttributeSuggestions(attributeName);
+                    Control attributeEditor;
+                    if (attributeSuggestions != null)
+                    {
+                        var attributeAcb = new AutoCompleteBox
+                        {
+                            Text = attributeValue,
+                            FilterMode = AutoCompleteFilterMode.Contains,
+                            Width = 150,
+                            IsEnabled = !_isReadOnly
+                        };
+                        ConfigureStrictSuggestionAutoComplete(attributeAcb, attributeSuggestions, attributeValue);
+                        attributeAcb.TextChanged += async (s, e) =>
+                        {
+                            if (!_isPopulating)
+                            {
+                                var proceed = await CheckStartLocalMod();
+                                if (proceed) MarkDirty();
+                            }
+                        };
+                        attributeEditor = attributeAcb;
+                    }
+                    else
+                    {
+                        var attributeTextBox = new TextBox
+                        {
+                            Text = attributeValue,
+                            Width = 110,
+                            IsEnabled = !_isReadOnly
+                        };
+                        attributeTextBox.TextChanged += async (s, e) =>
+                        {
+                            if (!_isPopulating)
+                            {
+                                var proceed = await CheckStartLocalMod();
+                                if (proceed) MarkDirty();
+                            }
+                        };
+                        attributeEditor = attributeTextBox;
+                    }
+
+                    rowState.AttributeEditors[attributeName] = attributeEditor;
+                    rowPanel.Children.Add(attributeEditor);
+
+                    if (attributeName.Equals("type", StringComparison.OrdinalIgnoreCase))
+                        AddValueEditor();
+                }
+
+                AddValueEditor();
+
+                if (!_isReadOnly)
+                {
+                    var deleteButton = new Button
+                    {
+                        Content = "X",
+                        Background = Brush.Parse("#8b0000"),
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+                    deleteButton.Click += async (s, e) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                        {
+                            state.StructuredFieldRows[tag].Remove(rowState);
+                            rowsContainer.Children.Remove(rowPanel);
+                            MarkDirty();
+                        }
+                    };
+                    rowPanel.Children.Add(deleteButton);
+                }
+
+                state.StructuredFieldRows[tag].Add(rowState);
+                rowsContainer.Children.Add(rowPanel);
+            }
+
+            foreach (var entry in entries)
+                AddRow(entry);
+
+            if (!_isReadOnly)
+            {
+                var addButton = new Button
+                {
+                    Content = "+ Add " + definition.Label,
+                    Background = Brush.Parse("#2b7a0b"),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                addButton.Click += async (s, e) =>
+                {
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                    {
+                        AddRow();
+                        MarkDirty();
+                    }
+                };
+                section.Children.Add(addButton);
+            }
+
+            state.OptionalFieldsContainer.Children.Add(section);
+        }
     }
 
     private string ResolveProtoActionType(string actionName, string currentType = "")
@@ -2104,8 +4640,10 @@ public partial class ProtoEditorWindow : SimpleWindow
 
     private void RefreshCurrentUnitProtoActionMetadata(XElement unit)
     {
+        InvalidateProtoActionValueSuggestionCaches();
         _currentUnitProtoActionTypeMap.Clear();
         _currentUnitTacticsActionTypeMap.Clear();
+        _currentUnitTacticsActions.Clear();
 
         foreach (var action in ProtoXmlHandler.GetProtoActions(unit))
         {
@@ -2119,6 +4657,60 @@ public partial class ProtoEditorWindow : SimpleWindow
             if (!string.IsNullOrWhiteSpace(kvp.Key) && !string.IsNullOrWhiteSpace(kvp.Value))
                 _currentUnitTacticsActionTypeMap[kvp.Key.Trim()] = kvp.Value.Trim();
         }
+
+        foreach (var kvp in LoadProtoActionsForTactics(tacticsName))
+        {
+            if (!string.IsNullOrWhiteSpace(kvp.Key))
+                _currentUnitTacticsActions[kvp.Key.Trim()] = kvp.Value.Clone();
+        }
+    }
+
+    private Dictionary<string, ProtoAction> LoadProtoActionsForTactics(string tacticsName)
+    {
+        if (string.IsNullOrWhiteSpace(tacticsName))
+            return new Dictionary<string, ProtoAction>(StringComparer.OrdinalIgnoreCase);
+
+        var cacheKey = tacticsName.Trim();
+        if (_tacticsActionCache.TryGetValue(cacheKey, out var cached))
+            return cached;
+
+        var barResolved = LoadProtoActionsFromBarTactics(cacheKey);
+        if (barResolved.Count > 0)
+        {
+            _tacticsActionCache[cacheKey] = barResolved;
+            return barResolved;
+        }
+
+        foreach (var path in GetTacticsCandidatePaths(cacheKey))
+        {
+            if (!File.Exists(path))
+                continue;
+
+            try
+            {
+                var xml = path.EndsWith(".xmb", StringComparison.OrdinalIgnoreCase)
+                    ? BarFormatConverter.XMBtoFormattedXmlString(File.ReadAllBytes(path))
+                    : File.ReadAllText(path);
+
+                if (!string.IsNullOrWhiteSpace(xml))
+                {
+                    var parsed = ParseTacticsActions(xml);
+                    if (parsed.Count > 0)
+                    {
+                        _tacticsActionCache[cacheKey] = parsed;
+                        return parsed;
+                    }
+                }
+            }
+            catch
+            {
+                // Try the next candidate path.
+            }
+        }
+
+        var emptyResult = new Dictionary<string, ProtoAction>(StringComparer.OrdinalIgnoreCase);
+        _tacticsActionCache[cacheKey] = emptyResult;
+        return emptyResult;
     }
 
     private Dictionary<string, string> LoadProtoActionTypesForTactics(string tacticsName)
@@ -2129,6 +4721,13 @@ public partial class ProtoEditorWindow : SimpleWindow
         var cacheKey = tacticsName.Trim();
         if (_tacticsActionTypeCache.TryGetValue(cacheKey, out var cached))
             return cached;
+
+        var barResolved = LoadProtoActionTypesFromBarTactics(cacheKey);
+        if (barResolved.Count > 0)
+        {
+            _tacticsActionTypeCache[cacheKey] = barResolved;
+            return barResolved;
+        }
 
         foreach (var path in GetTacticsCandidatePaths(cacheKey))
         {
@@ -2157,24 +4756,14 @@ public partial class ProtoEditorWindow : SimpleWindow
             }
         }
 
-        var barResolved = LoadProtoActionTypesFromBarTactics(cacheKey);
-        _tacticsActionTypeCache[cacheKey] = barResolved;
-        return barResolved;
+        var emptyResult = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        _tacticsActionTypeCache[cacheKey] = emptyResult;
+        return emptyResult;
     }
 
     private IEnumerable<string> GetTacticsCandidatePaths(string tacticsName)
     {
         var relatives = BuildTacticsCandidateRelativePaths(tacticsName);
-
-        if (!string.IsNullOrWhiteSpace(_modFilePath))
-        {
-            var gameplayDir = Path.GetDirectoryName(_modFilePath);
-            if (!string.IsNullOrWhiteSpace(gameplayDir))
-            {
-                foreach (var relative in relatives)
-                    yield return Path.Combine(gameplayDir, "tactics", relative);
-            }
-        }
 
         var baseGameplayDir = ResolveBaseGameplayDirectory();
         if (!string.IsNullOrWhiteSpace(baseGameplayDir))
@@ -2238,6 +4827,11 @@ public partial class ProtoEditorWindow : SimpleWindow
             if (candidateFileNames.Count == 0)
                 return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+            if (_protoDataBarFile != null && !string.IsNullOrWhiteSpace(_protoDataBarPath))
+            {
+                return ExtractTacticsActionTypesFromBar(_protoDataBarFile, _protoDataBarPath, candidateFileNames);
+            }
+
             var barFile = _mainWindow.BarFile;
             var barStream = _mainWindow.BarFileStream;
             if (barFile != null && barStream != null &&
@@ -2261,6 +4855,49 @@ public partial class ProtoEditorWindow : SimpleWindow
         }
 
         return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private Dictionary<string, ProtoAction> LoadProtoActionsFromBarTactics(string tacticsName)
+    {
+        try
+        {
+            var candidateFileNames = BuildTacticsCandidateRelativePaths(tacticsName)
+                .Select(Path.GetFileName)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Cast<string>()
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            if (candidateFileNames.Count == 0)
+                return new Dictionary<string, ProtoAction>(StringComparer.OrdinalIgnoreCase);
+
+            if (_protoDataBarFile != null && !string.IsNullOrWhiteSpace(_protoDataBarPath))
+            {
+                return ExtractTacticsActionsFromBar(_protoDataBarFile, _protoDataBarPath, candidateFileNames);
+            }
+
+            var barFile = _mainWindow.BarFile;
+            var barStream = _mainWindow.BarFileStream;
+            if (barFile != null && barStream != null &&
+                Path.GetFileName(barStream.Name).Equals("Data.bar", StringComparison.OrdinalIgnoreCase))
+            {
+                return ExtractTacticsActionsFromBar(barFile, barStream.Name, candidateFileNames);
+            }
+
+            var dataBarPath = ResolveDataBarPath();
+            if (!string.IsNullOrWhiteSpace(dataBarPath) && File.Exists(dataBarPath))
+            {
+                using var stream = File.OpenRead(dataBarPath);
+                var file = new BarFile(stream);
+                if (file.Load(out _))
+                    return ExtractTacticsActionsFromBar(file, dataBarPath, candidateFileNames);
+            }
+        }
+        catch
+        {
+            // Fall through to an empty result if BAR lookup is unavailable.
+        }
+
+        return new Dictionary<string, ProtoAction>(StringComparer.OrdinalIgnoreCase);
     }
 
     private static Dictionary<string, string> ExtractTacticsActionTypesFromBar(BarFile barFile, string barPath, HashSet<string> candidateFileNames)
@@ -2302,6 +4939,13 @@ public partial class ProtoEditorWindow : SimpleWindow
         return result;
     }
 
+    private static Dictionary<string, ProtoAction> ParseTacticsActions(string xml)
+    {
+        var result = new Dictionary<string, ProtoAction>(StringComparer.OrdinalIgnoreCase);
+        MergeTacticsActions(result, xml);
+        return result;
+    }
+
     private static void MergeTacticsActionTypes(Dictionary<string, string> result, string xml)
     {
         var doc = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
@@ -2311,6 +4955,134 @@ public partial class ProtoEditorWindow : SimpleWindow
             var actionType = action.Element("type")?.Value?.Trim();
             if (!string.IsNullOrWhiteSpace(actionName) && !string.IsNullOrWhiteSpace(actionType))
                 result[actionName] = actionType;
+        }
+    }
+
+    private static Dictionary<string, ProtoAction> ExtractTacticsActionsFromBar(BarFile barFile, string barPath, HashSet<string> candidateFileNames)
+    {
+        var result = new Dictionary<string, ProtoAction>(StringComparer.OrdinalIgnoreCase);
+        var entries = barFile.Entries;
+        if (entries == null || candidateFileNames.Count == 0)
+            return result;
+
+        var tacticsEntries = entries
+            .Where(e => e.Name.Contains("tactics", StringComparison.OrdinalIgnoreCase)
+                     && e.Name.EndsWith(".xmb", StringComparison.OrdinalIgnoreCase)
+                     && candidateFileNames.Contains(Path.GetFileName(e.Name.Replace('/', '\\'))))
+            .ToList();
+
+        using var tempStream = File.OpenRead(barPath);
+        foreach (var entry in tacticsEntries)
+        {
+            int size = entry.IsCompressed ? entry.SizeUncompressed : entry.SizeInArchive;
+            byte[] decompressed = new byte[size];
+            int readBytes = entry.ReadDataDecompressed(tempStream, decompressed);
+            if (readBytes <= 0)
+                continue;
+
+            var xml = BarFormatConverter.XMBtoFormattedXmlString(decompressed.AsSpan(0, readBytes));
+            if (string.IsNullOrWhiteSpace(xml))
+                continue;
+
+            MergeTacticsActions(result, xml);
+        }
+
+        return result;
+    }
+
+    private void EnsureBarProtoActionSuggestionDataLoaded()
+    {
+        if (_barProtoActionSuggestionDataLoaded)
+            return;
+
+        try
+        {
+            if (_protoDataBarFile != null && !string.IsNullOrWhiteSpace(_protoDataBarPath))
+            {
+                (_barProtoActionAnimationNames, _barProtoActionModelAttachmentBones) =
+                    ExtractProtoActionSuggestionDataFromBar(_protoDataBarFile, _protoDataBarPath);
+            }
+        }
+        catch
+        {
+            // Leave the BAR-derived suggestion sets empty if the scan is unavailable.
+        }
+
+        _barProtoActionSuggestionDataLoaded = true;
+    }
+
+    private static (List<string> AnimationNames, List<string> ModelAttachmentBones) ExtractProtoActionSuggestionDataFromBar(BarFile barFile, string barPath)
+    {
+        var animationNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var modelAttachmentBones = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var entries = barFile.Entries;
+        if (entries == null)
+            return ([], []);
+
+        var candidateEntries = entries
+            .Where(e =>
+                e.Name.EndsWith(".xmb", StringComparison.OrdinalIgnoreCase) &&
+                (e.Name.Contains("proto", StringComparison.OrdinalIgnoreCase) ||
+                 e.Name.Contains("tactics", StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        using var tempStream = File.OpenRead(barPath);
+        foreach (var entry in candidateEntries)
+        {
+            try
+            {
+                int size = entry.IsCompressed ? entry.SizeUncompressed : entry.SizeInArchive;
+                byte[] decompressed = new byte[size];
+                int readBytes = entry.ReadDataDecompressed(tempStream, decompressed);
+                if (readBytes <= 0)
+                    continue;
+
+                var xml = BarFormatConverter.XMBtoFormattedXmlString(decompressed.AsSpan(0, readBytes));
+                if (string.IsNullOrWhiteSpace(xml))
+                    continue;
+
+                var doc = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
+                foreach (var element in doc
+                    .Descendants()
+                    .Where(x =>
+                        x.Name.LocalName.Equals("protoaction", StringComparison.OrdinalIgnoreCase) ||
+                        x.Name.LocalName.Equals("action", StringComparison.OrdinalIgnoreCase))
+                    .Elements())
+                {
+                    var value = element.Value?.Trim();
+                    if (string.IsNullOrWhiteSpace(value))
+                        continue;
+
+                    if (element.Name.LocalName.Equals("anim", StringComparison.OrdinalIgnoreCase) ||
+                        element.Name.LocalName.Equals("typedanim", StringComparison.OrdinalIgnoreCase))
+                    {
+                        animationNames.Add(value);
+                        continue;
+                    }
+
+                    if (element.Name.LocalName.Equals("modelattachmentbone", StringComparison.OrdinalIgnoreCase))
+                        modelAttachmentBones.Add(value);
+                }
+            }
+            catch
+            {
+                // Skip malformed or unsupported entries and keep scanning.
+            }
+        }
+
+        return (
+            animationNames.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList(),
+            modelAttachmentBones.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList());
+    }
+
+    private static void MergeTacticsActions(Dictionary<string, ProtoAction> result, string xml)
+    {
+        var doc = XDocument.Parse(xml, LoadOptions.PreserveWhitespace);
+        foreach (var actionElement in doc.Descendants("action"))
+        {
+            var parsed = ProtoXmlHandler.ParseProtoActionLikeElement(actionElement);
+            if (!string.IsNullOrWhiteSpace(parsed.Name))
+                result[parsed.Name.Trim()] = parsed;
         }
     }
 
@@ -5339,7 +8111,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             var noReturnOnDeleteCb = new CheckBox
             {
                 Content = "No Return on Delete",
-                IsChecked = currentFlags.Contains("DoApplyResourceReturnIfDeleted", StringComparer.OrdinalIgnoreCase),
+                IsChecked = currentFlags.Contains("DoNotApplyResourceReturnIfDeleted", StringComparer.OrdinalIgnoreCase),
                 IsEnabled = !_isReadOnly
             };
             noReturnOnDeleteCb.IsCheckedChanged += async (s, e) => await HandleOtherFieldChangedAsync();
@@ -5451,7 +8223,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             var noReturnOnDeleteCb = new CheckBox
             {
                 Content = "No Return on Delete",
-                IsChecked = currentFlags.Contains("DoApplyResourceReturnIfDeleted", StringComparer.OrdinalIgnoreCase),
+                IsChecked = currentFlags.Contains("DoNotApplyResourceReturnIfDeleted", StringComparer.OrdinalIgnoreCase),
                 IsEnabled = !_isReadOnly
             };
             noReturnOnDeleteCb.IsCheckedChanged += async (s, e) => await HandleOtherFieldChangedAsync();
@@ -8904,6 +11676,7 @@ public partial class ProtoEditorWindow : SimpleWindow
     {
         string resolvedType = ResolveProtoActionType(pa.Name, pa.Type);
         var typeOptions = GetProtoActionTypeOptions(resolvedType);
+        var effectiveAction = CreateEffectiveProtoActionSnapshot(pa, pa.Name, resolvedType);
 
         var border = new Border
         {
@@ -8959,12 +11732,27 @@ public partial class ProtoEditorWindow : SimpleWindow
 
         var state = new ProtoActionWidgetState
         {
+            Model = pa.Clone(),
             Container = mainStack,
             NameAcb = nameAcb,
             TypeAcb = typeAcb,
+            CoreFieldsGrid = null!,
+            RofLabel = null!,
             RofTb = null!,
-            MaxRangeTb = null!
+            MaxRangeLabel = null!,
+            MaxRangeTb = null!,
+            AdditionalFieldsContainer = new StackPanel { Spacing = 4 },
+            StructuredFieldsContainer = new StackPanel { Spacing = 4 },
+            FlagsContainer = new StackPanel { Spacing = 4 },
+            OptionalFieldsContainer = new StackPanel { Spacing = 4 },
+            DamageSectionContainer = new StackPanel { Spacing = 4 },
+            BonusSectionContainer = new StackPanel { Spacing = 4 }
         };
+        foreach (var flagTag in ProtoActionMetadataCatalog.GetKnownFlagTags())
+        {
+            if (!string.IsNullOrWhiteSpace(ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, flagTag)))
+                state.SelectedFlagTags.Add(flagTag);
+        }
         _protoActionWidgets.Add(state);
         UpdateProtoActionTypeEditor(typeAcb, pa.Name);
 
@@ -9011,6 +11799,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                     }
 
                     UpdateProtoActionTypeEditor(typeAcb, name);
+                    RefreshProtoActionMetadataPanels(state);
                     MarkDirty();
                 }
             }
@@ -9026,6 +11815,7 @@ public partial class ProtoEditorWindow : SimpleWindow
                     if (typeAcb.SelectedItem is string selectedType && !string.IsNullOrWhiteSpace(selectedType))
                         typeAcb.Text = selectedType;
 
+                    RefreshProtoActionMetadataPanels(state);
                     MarkDirty();
                 }
             }
@@ -9037,7 +11827,10 @@ public partial class ProtoEditorWindow : SimpleWindow
             {
                 var proceed = await CheckStartLocalMod();
                 if (proceed)
+                {
+                    RefreshProtoActionMetadataPanels(state);
                     MarkDirty();
+                }
             }
         };
 
@@ -9048,6 +11841,8 @@ public partial class ProtoEditorWindow : SimpleWindow
                 var matchedType = GetExactProtoActionTypeMatch(typeAcb.Text);
                 if (!string.IsNullOrWhiteSpace(matchedType))
                     typeAcb.Text = matchedType;
+
+                RefreshProtoActionMetadataPanels(state);
             }
         };
 
@@ -9056,13 +11851,15 @@ public partial class ProtoEditorWindow : SimpleWindow
             ColumnDefinitions = new ColumnDefinitions("Auto, 80, Auto, 80"),
             Margin = new Thickness(0, 4, 0, 4)
         };
+        state.CoreFieldsGrid = fieldsGrid;
         mainStack.Children.Add(fieldsGrid);
 
         var rofLabel = new TextBlock { Text = "Rate of Fire:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
+        state.RofLabel = rofLabel;
         Grid.SetColumn(rofLabel, 0);
         fieldsGrid.Children.Add(rofLabel);
 
-        var rofTb = new TextBox { Text = pa.Rof, IsEnabled = !_isReadOnly, Margin = new Thickness(0, 0, 10, 0) };
+        var rofTb = new TextBox { Text = effectiveAction.Rof, IsEnabled = !_isReadOnly, Margin = new Thickness(0, 0, 10, 0) };
         rofTb.TextChanged += async (s, e) =>
         {
             if (!_isPopulating)
@@ -9076,10 +11873,11 @@ public partial class ProtoEditorWindow : SimpleWindow
         state.RofTb = rofTb;
 
         var mrLabel = new TextBlock { Text = "Max Range:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 10, 0) };
+        state.MaxRangeLabel = mrLabel;
         Grid.SetColumn(mrLabel, 2);
         fieldsGrid.Children.Add(mrLabel);
 
-        var mrTb = new TextBox { Text = pa.MaxRange, IsEnabled = !_isReadOnly };
+        var mrTb = new TextBox { Text = GetProtoActionDefaultSimpleValue("maxrange", effectiveAction.MaxRange), IsEnabled = !_isReadOnly };
         mrTb.TextChanged += async (s, e) =>
         {
             if (!_isPopulating)
@@ -9092,11 +11890,13 @@ public partial class ProtoEditorWindow : SimpleWindow
         fieldsGrid.Children.Add(mrTb);
         state.MaxRangeTb = mrTb;
 
+        mainStack.Children.Add(state.DamageSectionContainer);
+
         var dmgLabel = new TextBlock { Text = "Damage:", FontWeight = FontWeight.Bold, Margin = new Thickness(0, 6, 0, 2) };
-        mainStack.Children.Add(dmgLabel);
+        state.DamageSectionContainer.Children.Add(dmgLabel);
 
         var dmgContainer = new StackPanel { Spacing = 4 };
-        mainStack.Children.Add(dmgContainer);
+        state.DamageSectionContainer.Children.Add(dmgContainer);
 
         void AddDamageRow(string dtype, string dval)
         {
@@ -9152,7 +11952,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             dmgContainer.Children.Add(rowPanel);
         }
 
-        foreach (var dmg in pa.Damages)
+        foreach (var dmg in effectiveAction.Damages)
         {
             AddDamageRow(dmg.DamageType, dmg.Amount);
         }
@@ -9169,14 +11969,20 @@ public partial class ProtoEditorWindow : SimpleWindow
                     MarkDirty();
                 }
             };
-            mainStack.Children.Add(btnAddDmg);
+            state.DamageSectionContainer.Children.Add(btnAddDmg);
         }
 
+        mainStack.Children.Add(state.BonusSectionContainer);
+        mainStack.Children.Add(state.AdditionalFieldsContainer);
+        mainStack.Children.Add(state.StructuredFieldsContainer);
+        mainStack.Children.Add(state.FlagsContainer);
+        mainStack.Children.Add(state.OptionalFieldsContainer);
+
         var bonusLabel = new TextBlock { Text = "Damage Bonuses:", FontWeight = FontWeight.Bold, Margin = new Thickness(0, 6, 0, 2) };
-        mainStack.Children.Add(bonusLabel);
+        state.BonusSectionContainer.Children.Add(bonusLabel);
 
         var bonusContainer = new StackPanel { Spacing = 4 };
-        mainStack.Children.Add(bonusContainer);
+        state.BonusSectionContainer.Children.Add(bonusContainer);
 
         void AddBonusRow(string btype, string bval)
         {
@@ -9233,7 +12039,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             bonusContainer.Children.Add(rowPanel);
         }
 
-        foreach (var db in pa.DamageBonuses)
+        foreach (var db in effectiveAction.DamageBonuses)
         {
             AddBonusRow(db.UnitType, db.Multiplier);
         }
@@ -9250,8 +12056,10 @@ public partial class ProtoEditorWindow : SimpleWindow
                     MarkDirty();
                 }
             };
-            mainStack.Children.Add(btnAddBonus);
+            state.BonusSectionContainer.Children.Add(btnAddBonus);
         }
+
+        RefreshProtoActionMetadataPanels(state);
 
         return border;
     }
@@ -9674,9 +12482,9 @@ public partial class ProtoEditorWindow : SimpleWindow
                  noReturnRateOnDeleteCb.IsChecked == true);
 
             if (shouldDisableDeleteReturn)
-                _currentFlags.Add("DoApplyResourceReturnIfDeleted");
+                _currentFlags.Add("DoNotApplyResourceReturnIfDeleted");
             else
-                _currentFlags.Remove("DoApplyResourceReturnIfDeleted");
+                _currentFlags.Remove("DoNotApplyResourceReturnIfDeleted");
 
             if (_fieldControls.TryGetValue("resourcereturnrate:totalcostbased", out var totalCostBasedCtrl) &&
                 totalCostBasedCtrl is CheckBox totalCostBasedCb &&
@@ -10580,34 +13388,120 @@ public partial class ProtoEditorWindow : SimpleWindow
         var actionsList = new List<ProtoAction>();
         foreach (var pw in _protoActionWidgets)
         {
-            var pa = new ProtoAction
-            {
-                Name = pw.NameAcb.Text?.Trim() ?? "",
-                Type = TryResolveProtoActionType(pw.NameAcb.Text?.Trim() ?? "", out var resolvedType)
-                    ? resolvedType
-                    : GetExactProtoActionTypeMatch(pw.TypeAcb.Text),
-                Rof = pw.RofTb.Text?.Trim() ?? "",
-                MaxRange = pw.MaxRangeTb.Text?.Trim() ?? ""
-            };
+            var pa = pw.Model.Clone();
+            pa.Name = pw.NameAcb.Text?.Trim() ?? "";
+            pa.Type = TryResolveProtoActionType(pw.NameAcb.Text?.Trim() ?? "", out var resolvedType)
+                ? resolvedType
+                : GetExactProtoActionTypeMatch(pw.TypeAcb.Text);
+            ProtoAction? tacticsAction = TryGetCurrentUnitTacticsAction(pa.Name, out var matchedTacticsAction)
+                ? matchedTacticsAction
+                : null;
 
+            pa.Rof = ResolveProtoOverrideValue(
+                pw.RofTb.Text?.Trim() ?? "",
+                tacticsAction?.Rof ?? "",
+                pw.Model.Rof);
+            pa.Damages.Clear();
+            pa.DamageBonuses.Clear();
+            var currentActionType = pa.Type?.Trim() ?? "";
+            var effectiveAction = CreateEffectiveProtoActionSnapshot(
+                pw.Model,
+                pa.Name,
+                currentActionType);
+            var showMaxRange = ShouldShowProtoActionHardcodedField(pw, effectiveAction, currentActionType, "maxrange");
+            pa.MaxRange = showMaxRange
+                ? ResolveProtoOverrideValue(
+                    pw.MaxRangeTb.Text?.Trim() ?? "",
+                    tacticsAction?.MaxRange ?? "",
+                    pw.Model.MaxRange)
+                : ResolveProtoOverrideValue(
+                    "",
+                    tacticsAction?.MaxRange ?? "",
+                    pw.Model.MaxRange);
+
+            foreach (var kvp in pw.AdditionalFieldControls)
+            {
+                var definition = ProtoActionMetadataCatalog.GetFieldDefinition(kvp.Key);
+                var currentValue = ReadProtoActionFieldControlValue(kvp.Value, definition);
+                var tacticsValue = tacticsAction != null
+                    ? ProtoXmlHandler.GetProtoActionSimpleFieldValue(tacticsAction, kvp.Key)
+                    : "";
+                var originalProtoValue = ProtoXmlHandler.GetProtoActionSimpleFieldValue(pw.Model, kvp.Key);
+                var protoValue = ResolveProtoOverrideValue(currentValue, tacticsValue, originalProtoValue);
+                ProtoXmlHandler.SetProtoActionSimpleFieldValue(pa, kvp.Key, protoValue);
+            }
+
+            foreach (var flagTag in ProtoActionMetadataCatalog.GetKnownFlagTags())
+            {
+                var currentValue = pw.SelectedFlagTags.Contains(flagTag) ? "1" : "";
+                var tacticsValue = tacticsAction != null
+                    ? ProtoXmlHandler.GetProtoActionSimpleFieldValue(tacticsAction, flagTag)
+                    : "";
+                var originalProtoValue = ProtoXmlHandler.GetProtoActionSimpleFieldValue(pw.Model, flagTag);
+                var protoValue = ResolveProtoOverrideValue(currentValue, tacticsValue, originalProtoValue);
+                ProtoXmlHandler.SetProtoActionSimpleFieldValue(pa, flagTag, protoValue);
+            }
+
+            foreach (var kvp in pw.StructuredFieldRows)
+            {
+                if (IsCombinedProtoActionModifyTypeTag(currentActionType, kvp.Key))
+                {
+                    SaveCombinedProtoActionModifyTypeEntries(pw, pa, tacticsAction);
+                    continue;
+                }
+
+                var currentEntries = CollectProtoActionStructuredFieldEntries(pw, kvp.Key);
+                var tacticsEntries = tacticsAction != null
+                    ? ProtoXmlHandler.GetProtoActionStructuredFieldEntries(tacticsAction, kvp.Key)
+                    : [];
+                var originalProtoEntries = ProtoXmlHandler.GetProtoActionStructuredFieldEntries(pw.Model, kvp.Key);
+                var protoEntries = StructuredFieldEntriesEqual(currentEntries, tacticsEntries) &&
+                                  !StructuredFieldEntriesEqual(originalProtoEntries, currentEntries)
+                    ? []
+                    : currentEntries;
+                ProtoXmlHandler.SetProtoActionStructuredFieldEntries(pa, kvp.Key, protoEntries);
+            }
+
+            var currentDamageEntries = new List<(string DamageType, string Amount)>();
             foreach (var dr in pw.DamageRows)
             {
                 string dtype = dr.TypeCb.SelectedItem as string ?? dr.TypeCb.Text ?? "";
                 string dval = dr.ValTb.Text?.Trim() ?? "0";
                 if (!string.IsNullOrEmpty(dtype))
                 {
-                    pa.Damages.Add((dtype, dval));
+                    currentDamageEntries.Add((dtype, dval));
                 }
             }
 
+            var tacticsDamageEntries = tacticsAction?.Damages.ToList() ?? [];
+            var originalProtoDamageEntries = pw.Model.Damages.ToList();
+            foreach (var damageEntry in DamageEntriesEqual(currentDamageEntries, tacticsDamageEntries) &&
+                                        !DamageEntriesEqual(originalProtoDamageEntries, currentDamageEntries)
+                ? []
+                : currentDamageEntries)
+            {
+                pa.Damages.Add(damageEntry);
+            }
+
+            var currentBonusEntries = new List<(string UnitType, string Multiplier)>();
             foreach (var br in pw.BonusRows)
             {
                 string btype = br.TypeAcb.Text?.Trim() ?? "";
                 string bval = br.ValTb.Text?.Trim() ?? "0";
                 if (!string.IsNullOrEmpty(btype))
                 {
-                    pa.DamageBonuses.Add((btype, bval));
+                    currentBonusEntries.Add((btype, bval));
                 }
+            }
+
+            var tacticsBonusEntries = tacticsAction?.DamageBonuses.ToList() ?? [];
+            var originalProtoBonusEntries = pw.Model.DamageBonuses.ToList();
+            foreach (var bonusEntry in DamageBonusEntriesEqual(currentBonusEntries, tacticsBonusEntries) &&
+                                       !DamageBonusEntriesEqual(originalProtoBonusEntries, currentBonusEntries)
+                ? []
+                : currentBonusEntries)
+            {
+                pa.DamageBonuses.Add(bonusEntry);
             }
 
             actionsList.Add(pa);
