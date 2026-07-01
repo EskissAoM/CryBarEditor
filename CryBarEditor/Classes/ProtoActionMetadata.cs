@@ -77,6 +77,12 @@ public static class ProtoActionMetadataCatalog
         ["modifytype"] = 170,
         ["modifyamount"] = 180,
         ["modifyduration"] = 190,
+        ["decayrate"] = 200,
+        ["minresource"] = 210,
+        ["minscale"] = 220,
+        ["reductionend"] = 230,
+        ["reductionstart"] = 240,
+        ["scaleincrement"] = 250,
     };
 
     private static readonly Dictionary<string, ProtoActionFieldDefinition> Definitions = new(StringComparer.OrdinalIgnoreCase)
@@ -122,23 +128,119 @@ public static class ProtoActionMetadataCatalog
         ["persistent"] = new("persistent", "Persistent", ProtoActionFieldEditorKind.Toggle),
         ["singleuse"] = new("singleuse", "Single Use", ProtoActionFieldEditorKind.Toggle),
         ["targetground"] = new("targetground", "Target Ground", ProtoActionFieldEditorKind.Toggle),
+        ["dropsitegathering"] = new("dropsitegathering", "Dropsite Gathering", ProtoActionFieldEditorKind.Toggle),
         ["modifytype"] = new("modifytype", "Modify Type", ProtoActionFieldEditorKind.Text),
         ["modifyamount"] = new("modifyamount", "Modify Amount", ProtoActionFieldEditorKind.Number),
-        ["modifyduration"] = new("modifyduration", "Modify Duration", ProtoActionFieldEditorKind.Number),
+        ["modifymultiplier"] = new("modifymultiplier", "Modify Multiplier", ProtoActionFieldEditorKind.Number),
+        ["modifyduration"] = new("modifyduration", "Modify Duration (ms)", ProtoActionFieldEditorKind.Number),
         ["modifyexponent"] = new("modifyexponent", "Modify Exponent", ProtoActionFieldEditorKind.Number),
         ["modifyself"] = new("modifyself", "Modify Self", ProtoActionFieldEditorKind.Toggle),
         ["modifyabstracttype"] = new("modifyabstracttype", "Modify Type", ProtoActionFieldEditorKind.StructuredList, true),
         ["modifyunittype"] = new("modifyunittype", "Modify Unit Type", ProtoActionFieldEditorKind.StructuredList, true),
         ["modifyprotoid"] = new("modifyprotoid", "Modify Proto ID", ProtoActionFieldEditorKind.StructuredList, true),
         ["modifytargetlimit"] = new("modifytargetlimit", "Modify Target Limit", ProtoActionFieldEditorKind.Number),
+        ["decayrate"] = new("decayrate", "Decay Rate", ProtoActionFieldEditorKind.Number),
+        ["minresource"] = new("minresource", "Min Resource", ProtoActionFieldEditorKind.Number),
+        ["minscale"] = new("minscale", "Min Scale", ProtoActionFieldEditorKind.Number),
+        ["reductionend"] = new("reductionend", "Reduction End", ProtoActionFieldEditorKind.Number),
+        ["reductionstart"] = new("reductionstart", "Reduction Start", ProtoActionFieldEditorKind.Number),
+        ["scaleincrement"] = new("scaleincrement", "Scale Increment", ProtoActionFieldEditorKind.Number),
         ["charged"] = new("charged", "Charged", ProtoActionFieldEditorKind.StructuredList),
         ["chargedmodify"] = new("chargedmodify", "Charged Modify", ProtoActionFieldEditorKind.StructuredList, true, ["modifytype", "applytype"]),
         ["activationtype"] = new("activationtype", "Activation Type", ProtoActionFieldEditorKind.Text),
         ["conversionprotoid"] = new("conversionprotoid", "Conversion Proto ID", ProtoActionFieldEditorKind.StructuredList, true, ["srctype"]),
+        ["trailprotounit"] = new("trailprotounit", "Trail Proto Unit", ProtoActionFieldEditorKind.StructuredList, true, ["frequency"]),
         ["typedduration"] = new("typedduration", "Typed Duration", ProtoActionFieldEditorKind.StructuredList, true, ["type"]),
         ["typedstunduration"] = new("typedstunduration", "Typed Stun Duration", ProtoActionFieldEditorKind.StructuredList, true, ["type"]),
         ["typedanim"] = new("typedanim", "Typed Animation", ProtoActionFieldEditorKind.StructuredList, true, ["type"]),
         ["sizeclassanim"] = new("sizeclassanim", "Size Class Animation", ProtoActionFieldEditorKind.StructuredList, true, ["class"]),
+    };
+
+    private static readonly Dictionary<string, ProtoActionFieldDefinition> SupplementalDefinitions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["maxheight"] = new("maxheight", "Max Height", ProtoActionFieldEditorKind.Number),
+        ["numberbounces"] = new("numberbounces", "Number Bounces", ProtoActionFieldEditorKind.Number),
+        ["damagefactorcap"] = new("damagefactorcap", "Damage Factor Cap", ProtoActionFieldEditorKind.Number),
+        ["accuracyreductionfactor"] = new("accuracyreductionfactor", "Accuracy Reduction Factor", ProtoActionFieldEditorKind.Number),
+        ["spreadfactor"] = new("spreadfactor", "Spread Factor", ProtoActionFieldEditorKind.Number),
+        ["unintentionaldamagemultiplier"] = new("unintentionaldamagemultiplier", "Unintentional Damage Multiplier", ProtoActionFieldEditorKind.Number),
+        ["numberprojectiles"] = new("numberprojectiles", "Number Projectiles", ProtoActionFieldEditorKind.Number),
+        ["displayednumberprojectiles"] = new("displayednumberprojectiles", "Displayed Number Projectiles", ProtoActionFieldEditorKind.Number),
+        ["launchpoint"] = new("launchpoint", "Launch Point", ProtoActionFieldEditorKind.Text),
+        ["timer"] = new("timer", "Timer", ProtoActionFieldEditorKind.Number),
+        ["areasortmode"] = new("areasortmode", "Area Sort Mode", ProtoActionFieldEditorKind.Text),
+        ["modifydamagetype"] = new("modifydamagetype", "Modify Damage Type", ProtoActionFieldEditorKind.Text),
+        ["modifyprotopower"] = new("modifyprotopower", "Modify Proto Power", ProtoActionFieldEditorKind.Text),
+        ["modifybase"] = new("modifybase", "Modify Base", ProtoActionFieldEditorKind.Number),
+        ["forbidabstracttype"] = new("forbidabstracttype", "Forbid Abstract Type", ProtoActionFieldEditorKind.Text),
+        ["forbidunittype"] = new("forbidunittype", "Forbid Unit Type", ProtoActionFieldEditorKind.Text),
+        ["modifystacklimit"] = new("modifystacklimit", "Modify Stack Limit", ProtoActionFieldEditorKind.Number),
+        ["modifydecay"] = new("modifydecay", "Modify Decay", ProtoActionFieldEditorKind.Number),
+        ["modifyratecap"] = new("modifyratecap", "Modify Rate Cap", ProtoActionFieldEditorKind.Number),
+        ["slowhealmultiplier"] = new("slowhealmultiplier", "Slow Heal Multiplier", ProtoActionFieldEditorKind.Number),
+        ["modifyresourcesubtype"] = new("modifyresourcesubtype", "Modify Resource Sub Type", ProtoActionFieldEditorKind.Text),
+        ["empoweredmodifymultiplier"] = new("empoweredmodifymultiplier", "Empowered Modify Multiplier", ProtoActionFieldEditorKind.Number),
+        ["restrictempowertype"] = new("restrictempowertype", "Restrict Empower Type", ProtoActionFieldEditorKind.Text),
+        ["transformduration"] = new("transformduration", "Transform Duration", ProtoActionFieldEditorKind.Number),
+        ["modifyamountbytier"] = new("modifyamountbytier", "Modify Amount By Tier", ProtoActionFieldEditorKind.Number),
+        ["infectionchance"] = new("infectionchance", "Infection Chance", ProtoActionFieldEditorKind.Number),
+        ["infectionrof"] = new("infectionrof", "Infection ROF", ProtoActionFieldEditorKind.Number),
+        ["infectionduration"] = new("infectionduration", "Infection Duration", ProtoActionFieldEditorKind.Number),
+        ["infectionrange"] = new("infectionrange", "Infection Range", ProtoActionFieldEditorKind.Number),
+        ["infectionattachment"] = new("infectionattachment", "Infection Attachment", ProtoActionFieldEditorKind.Text),
+        ["infectionattachmentbone"] = new("infectionattachmentbone", "Infection Attachment Bone", ProtoActionFieldEditorKind.Text),
+        ["scalebycontainedunittype"] = new("scalebycontainedunittype", "Scale By Contained Unit Type", ProtoActionFieldEditorKind.Text),
+        ["attachprotounit"] = new("attachprotounit", "Attach Proto Unit", ProtoActionFieldEditorKind.Text),
+        ["castpower"] = new("castpower", "Cast Power", ProtoActionFieldEditorKind.Text),
+        ["castpowertargettype"] = new("castpowertargettype", "Cast Power Target Type", ProtoActionFieldEditorKind.Text),
+        ["afteraction"] = new("afteraction", "After Action", ProtoActionFieldEditorKind.Text),
+        ["areaprotoaction"] = new("areaprotoaction", "Area Proto Action", ProtoActionFieldEditorKind.Text),
+        ["fullcapacitymultiplier"] = new("fullcapacitymultiplier", "Full Capacity Multiplier", ProtoActionFieldEditorKind.Number),
+        ["gatheringmultiplier"] = new("gatheringmultiplier", "Gathering Multiplier", ProtoActionFieldEditorKind.Number),
+        ["maintainworkratemultiplier"] = new("maintainworkratemultiplier", "Maintain Work Rate Multiplier", ProtoActionFieldEditorKind.Number),
+        ["autocastdistance"] = new("autocastdistance", "Auto Cast Distance", ProtoActionFieldEditorKind.Number),
+        ["donotautogatherunlessgatheringtypes"] = new("donotautogatherunlessgatheringtypes", "Do Not Auto Gather Unless Gathering Types", ProtoActionFieldEditorKind.Text),
+        ["maintaintrainpoints"] = new("maintaintrainpoints", "Maintain Train Points", ProtoActionFieldEditorKind.Number),
+        ["maintainallowoverpopcap"] = new("maintainallowoverpopcap", "Maintain Allow Over Pop Cap", ProtoActionFieldEditorKind.Number),
+        ["stunduration"] = new("stunduration", "Stun Duration", ProtoActionFieldEditorKind.Number),
+        ["directionaldamagerefangle"] = new("directionaldamagerefangle", "Directional Damage Ref Angle", ProtoActionFieldEditorKind.Number),
+        ["coneareaangle"] = new("coneareaangle", "Cone Area Angle", ProtoActionFieldEditorKind.Number),
+        ["maxsizeclass"] = new("maxsizeclass", "Max Size Class", ProtoActionFieldEditorKind.Number),
+        ["throwdistancemin"] = new("throwdistancemin", "Throw Distance Min", ProtoActionFieldEditorKind.Number),
+        ["throwdistancemax"] = new("throwdistancemax", "Throw Distance Max", ProtoActionFieldEditorKind.Number),
+        ["throwmaxheight"] = new("throwmaxheight", "Throw Max Height", ProtoActionFieldEditorKind.Number),
+        ["throwvelocity"] = new("throwvelocity", "Throw Velocity", ProtoActionFieldEditorKind.Number),
+        ["hitpointsratiothreshold"] = new("hitpointsratiothreshold", "Hitpoints Ratio Threshold", ProtoActionFieldEditorKind.Number),
+        ["thrownumbounces"] = new("thrownumbounces", "Throw Num Bounces", ProtoActionFieldEditorKind.Number),
+        ["allydamagemultiplier"] = new("allydamagemultiplier", "Ally Damage Multiplier", ProtoActionFieldEditorKind.Number),
+        ["modifytargetdoingaction"] = new("modifytargetdoingaction", "Modify Target Doing Action", ProtoActionFieldEditorKind.Text),
+        ["modifyciv"] = new("modifyciv", "Modify Civ", ProtoActionFieldEditorKind.Text),
+        ["modifyupdateinterval"] = new("modifyupdateinterval", "Modify Update Interval", ProtoActionFieldEditorKind.Number),
+        ["workingrangeslack"] = new("workingrangeslack", "Working Range Slack", ProtoActionFieldEditorKind.Number),
+        ["targetedspeedmultiplier"] = new("targetedspeedmultiplier", "Targeted Speed Multiplier", ProtoActionFieldEditorKind.Number),
+        ["wateranim"] = new("wateranim", "Water Animation", ProtoActionFieldEditorKind.Text),
+        ["landanim"] = new("landanim", "Land Animation", ProtoActionFieldEditorKind.Text),
+        ["extraratepertargethp"] = new("extraratepertargethp", "Extra Rate Per Target HP", ProtoActionFieldEditorKind.Number),
+        ["modifydamagetargettype"] = new("modifydamagetargettype", "Modify Damage Target Type", ProtoActionFieldEditorKind.Text),
+        ["projectilechainbouncereduction"] = new("projectilechainbouncereduction", "Projectile Chain Bounce Reduction", ProtoActionFieldEditorKind.Number),
+        ["projectilechainbouncerange"] = new("projectilechainbouncerange", "Projectile Chain Bounce Range", ProtoActionFieldEditorKind.Number),
+        ["devotionfavorreward"] = new("devotionfavorreward", "Devotion Favor Reward", ProtoActionFieldEditorKind.Number),
+        ["devotioncombatxpreward"] = new("devotioncombatxpreward", "Devotion Combat XP Reward", ProtoActionFieldEditorKind.Number),
+        ["devotionfavortrickle"] = new("devotionfavortrickle", "Devotion Favor Trickle", ProtoActionFieldEditorKind.Number),
+        ["devotionhealthdraineachsecond"] = new("devotionhealthdraineachsecond", "Devotion Health Drain Each Second", ProtoActionFieldEditorKind.Number),
+        ["devotionhealthdrainlimit"] = new("devotionhealthdrainlimit", "Devotion Health Drain Limit", ProtoActionFieldEditorKind.Number),
+        ["devotionscaleatminimumhealth"] = new("devotionscaleatminimumhealth", "Devotion Scale At Minimum Health", ProtoActionFieldEditorKind.Number),
+        ["devotionpower"] = new("devotionpower", "Devotion Power", ProtoActionFieldEditorKind.Text),
+        ["activevfxproto"] = new("activevfxproto", "Active VFX Proto", ProtoActionFieldEditorKind.Text),
+        ["revealarearadius"] = new("revealarearadius", "Reveal Area Radius", ProtoActionFieldEditorKind.Number),
+        ["soundsetenter"] = new("soundsetenter", "Soundset Enter", ProtoActionFieldEditorKind.Text),
+        ["soundsetupdate"] = new("soundsetupdate", "Soundset Update", ProtoActionFieldEditorKind.Text),
+        ["soundsetexit"] = new("soundsetexit", "Soundset Exit", ProtoActionFieldEditorKind.Text),
+        ["ambushrange"] = new("ambushrange", "Ambush Range", ProtoActionFieldEditorKind.Number),
+        ["shieldpoints"] = new("shieldpoints", "Shield Points", ProtoActionFieldEditorKind.Number),
+        ["shielddecayrate"] = new("shielddecayrate", "Shield Decay Rate", ProtoActionFieldEditorKind.Number),
+        ["maximumduration"] = new("maximumduration", "Maximum Duration", ProtoActionFieldEditorKind.Number),
+        ["affectedradius"] = new("affectedradius", "Affected Radius", ProtoActionFieldEditorKind.Number),
     };
 
     private static readonly string[] KnownFlagTags =
@@ -306,12 +408,16 @@ public static class ProtoActionMetadataCatalog
         ["targetspeedboost"] = "TargetSpeedBoost",
         ["persistent"] = "Persistent",
         ["singleuse"] = "SingleUse",
+        ["dropsitegathering"] = "DropsiteGathering",
         ["isabductdrop"] = "IsAbductDrop",
         ["targetenemy"] = "TargetEnemy",
+        ["mustfinishanimation"] = "MustFinishAnimation",
         ["addresourcestoinventory"] = "AddResourcesToInventory",
         ["defaultattack"] = "DefaultAttack",
         ["forceareaattacktarget"] = "ForceAreaAttackTarget",
         ["forceareaattackcenter"] = "ForceAreaAttackCenter",
+        ["reflecthandattacks"] = "ReflectHandAttacks",
+        ["reflectrangedattacks"] = "ReflectRangedAttacks",
     };
 
     private static readonly Dictionary<string, ProtoActionTypeEditorProfile> EditorProfiles = new(StringComparer.OrdinalIgnoreCase)
@@ -329,6 +435,9 @@ public static class ProtoActionMetadataCatalog
         ["DevoteMajor"] = new ProtoActionTypeEditorProfile(
             DefaultVisibleTags: ["anim", "devotiontime", "maxrange", "modelattachment", "modelattachmentbone"],
             HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase)),
+        ["DevoteMinor"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["anim", "maxrange", "devotioncombatxpreward", "devotionfavorreward", "devotiontime", "rate", "reductionstart", "reductionend", "minscale", "modelattachment", "modelattachmentbone", "soundsetenter", "devotionpower", "devotionfavortrickle", "devotionhealthdraineachsecond", "devotionhealthdrainlimit", "devotionscaleatminimumhealth"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase)),
         ["DropOff"] = new ProtoActionTypeEditorProfile(
             DefaultVisibleTags: ["maxrange", "rate"],
             HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase)),
@@ -338,9 +447,23 @@ public static class ProtoActionMetadataCatalog
         ["Pickup"] = new ProtoActionTypeEditorProfile(
             DefaultVisibleTags: ["maxrange", "rate"],
             HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase)),
+        ["Eat"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["maxrange", "rate"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase)),
+        ["SwitchTactics"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["anim"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase)),
+        ["Abduct"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["damage", "maxrange", "rate", "rof"],
+            HiddenByDefaultTags: new HashSet<string>(["damagebonus"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["attackaction", "exclusive"]),
         ["Hunting"] = new ProtoActionTypeEditorProfile(
             DefaultVisibleTags: ["maxrange", "rate", "typedmaxrange"],
             HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase)),
+        ["Gather"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["dropsitegathering", "anim", "maxrange", "rate", "typedanim", "typedmaxrange"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["dropsitegathering"]),
         ["Attaching"] = new ProtoActionTypeEditorProfile(
             DefaultVisibleTags: ["damage", "maxrange", "rate", "rof", "singleuse"],
             HiddenByDefaultTags: new HashSet<string>(["damagebonus"], StringComparer.OrdinalIgnoreCase)),
@@ -360,6 +483,56 @@ public static class ProtoActionMetadataCatalog
             DefaultVisibleTags: [],
             HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
             DefaultFlagTags: ["persistent", "targetenemy"]),
+        ["Trail"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["persistent", "trailprotounit"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["persistent"]),
+        ["StackControl"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["persistent"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["persistent"]),
+        ["ModifyGather"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["rate", "modifyresourcesubtype", "persistent"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["persistent"]),
+        ["ReflectAttack"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["damage", "damagebonus"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "rate"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["attackaction"]),
+        ["WaterTornado"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["maxrange", "minrange", "maxspread", "spreadfactor", "persistent"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus", "rate"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["persistent"]),
+        ["Empower"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["anim", "maxrange"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus", "rate"], StringComparer.OrdinalIgnoreCase)),
+        ["Bolster"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["modifyamount", "anim", "maxrange", "rate", "projectile"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["attackaction"]),
+        ["ResourceDecay"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["decayrate", "minresource", "minscale", "reductionend", "reductionstart", "scaleincrement"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "damage", "damagebonus", "rate"], StringComparer.OrdinalIgnoreCase)),
+        ["SelfModify"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["modifytype", "modifyamount", "persistent"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "damage", "damagebonus", "rate"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["persistent"]),
+        ["ReleaseSkyLantern"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["anim", "maxrange", "rate", "modifyduration", "timer"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["autocastbyself"]),
+        ["IdleStatBonus"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["persistent", "modifytype", "modifyamount", "modifyratecap", "modifybase", "modifydecay"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "damage", "damagebonus", "rate"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["persistent"]),
+        ["DrainResurrection"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["anim", "projectile", "rate", "maxrange", "damageflags", "modifyamount", "modifytargetlimit", "modifyduration", "timer"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["mustfinishanimation", "attackaction"]),
+        ["DistanceModify"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["persistent", "maxrange", "minrange", "minrate", "modifytype", "modifyamount", "modifybase"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus", "rate"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["persistent"]),
         ["NoWork"] = new ProtoActionTypeEditorProfile(
             DefaultVisibleTags: ["maxrange", "rate", "typedmaxrange"],
             HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase)),
@@ -369,6 +542,9 @@ public static class ProtoActionMetadataCatalog
     {
         if (Definitions.TryGetValue(tag, out var definition))
             return definition;
+
+        if (SupplementalDefinitions.TryGetValue(tag, out var supplementalDefinition))
+            return supplementalDefinition;
 
         return new ProtoActionFieldDefinition(tag, HumanizeTag(tag), InferEditorKind(tag));
     }
@@ -409,7 +585,11 @@ public static class ProtoActionMetadataCatalog
     }
 
     public static IReadOnlyList<ProtoActionFieldDefinition> GetKnownFieldDefinitions()
-        => Definitions.Values.ToList();
+        => Definitions.Values
+            .Concat(SupplementalDefinitions.Values)
+            .GroupBy(x => x.Tag, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.First())
+            .ToList();
 
     public static ProtoActionTypeProfile BuildTypeProfile(ProtoBarData data, string actionType)
     {
