@@ -194,11 +194,17 @@ public partial class ProtoEditorWindow : SimpleWindow
         public string DefaultFlagsInitializedForType { get; set; } = "";
     }
 
+    private const string ProtoActionActiveExplicitStateKey = "protoaction.active.explicit";
+    private const string ProtoActionActiveValueStateKey = "protoaction.active.value";
+    private const string MaintainPausableValueStateKey = "maintain.pausable.value";
+    private const string MaintainShowQueueWhileWaitingValueStateKey = "maintain.showqueuewhilewaiting.value";
+
     private class ProtoActionStructuredFieldRowState
     {
         public required string Tag { get; set; }
         public required Panel RowPanel { get; set; }
         public required Control ValueTb { get; set; }
+        public bool IncludeInSerialization { get; set; } = true;
         public Dictionary<string, Control> AttributeEditors { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
@@ -2173,6 +2179,10 @@ public partial class ProtoEditorWindow : SimpleWindow
         => !string.IsNullOrWhiteSpace(tag) &&
            ProtoActionMetadataCatalog.GetKnownFlagTags().Contains(tag.Trim(), StringComparer.OrdinalIgnoreCase);
 
+    private static bool IsProtoActionFlagEnabledValue(string? value)
+        => !string.IsNullOrWhiteSpace(value) &&
+           !value.Trim().Equals("0", StringComparison.OrdinalIgnoreCase);
+
     private static bool IsAutoConvertActionType(string actionType)
         => actionType.Equals("AutoConvert", StringComparison.OrdinalIgnoreCase);
 
@@ -2191,6 +2201,15 @@ public partial class ProtoEditorWindow : SimpleWindow
     private static bool IsReleaseSkyLanternActionType(string actionType)
         => actionType.Equals("ReleaseSkyLantern", StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsHealActionType(string actionType)
+        => actionType.Equals("Heal", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsConditionalTransformActionType(string actionType)
+        => actionType.Equals("ConditionalTransform", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsDelayedTransformActionType(string actionType)
+        => actionType.Equals("DelayedTransform", StringComparison.OrdinalIgnoreCase);
+
     private static bool IsGatherActionType(string actionType)
         => actionType.Equals("Gather", StringComparison.OrdinalIgnoreCase);
 
@@ -2205,6 +2224,15 @@ public partial class ProtoEditorWindow : SimpleWindow
 
     private static bool IsDevoteMinorActionType(string actionType)
         => actionType.Equals("DevoteMinor", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsMaintainActionType(string actionType)
+        => actionType.Equals("Maintain", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsAutoGatherActionType(string actionType)
+        => actionType.Equals("AutoGather", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsConvertActionType(string actionType)
+        => actionType.Equals("Convert", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsCombinedProtoActionModifyTypeTag(string actionType, string tag)
         => IsAutoConvertActionType(actionType) &&
@@ -2258,6 +2286,58 @@ public partial class ProtoEditorWindow : SimpleWindow
            (tag.Equals("modifyduration", StringComparison.OrdinalIgnoreCase) ||
             tag.Equals("timer", StringComparison.OrdinalIgnoreCase));
 
+    private static bool IsManagedHealFieldTag(string actionType, string tag)
+        => IsHealActionType(actionType) &&
+           (tag.Equals("slowhealmultiplier", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("modifyamount", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("modifytargetlimit", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("outerdamageareadistance", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsManagedConditionalTransformFieldTag(string actionType, string tag)
+        => IsConditionalTransformActionType(actionType) &&
+           (tag.Equals("persistent", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("mustfinishanimation", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsManagedDelayedTransformFieldTag(string actionType, string tag)
+        => IsDelayedTransformActionType(actionType) &&
+           (tag.Equals("anim", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("modifyduration", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("transformduration", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("attackaction", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("mustfinishanimation", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsManagedMaintainFieldTag(string actionType, string tag)
+        => IsMaintainActionType(actionType) &&
+           (tag.Equals("persistent", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("maintaintrainpoints", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("modifybase", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("modifytargetlimit", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("maxrange", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("randomtrainunit", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("killontrain", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("pausable", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("showqueuewhilewaiting", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("hidefromglobalqueue", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsManagedAutoGatherFieldTag(string actionType, string tag)
+        => IsAutoGatherActionType(actionType) &&
+           (tag.Equals("persistent", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("modifybase", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("modifymultiplier", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("modifyratecap", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("addresourcestoinventory", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("autogatherscalebygatherrate", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("donotautogatherifgathered", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsManagedConvertFieldTag(string actionType, string tag)
+        => IsConvertActionType(actionType) &&
+           (tag.Equals("maxrange", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("anim", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("charmedconvert", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("extraratepertargethp", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("attachprotounit", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("workingrangeslack", StringComparison.OrdinalIgnoreCase));
+
     private static bool IsManagedIdleStatBonusFieldTag(string actionType, string tag)
         => IsIdleStatBonusActionType(actionType) &&
            (tag.Equals("modifytype", StringComparison.OrdinalIgnoreCase) ||
@@ -2290,6 +2370,38 @@ public partial class ProtoEditorWindow : SimpleWindow
     private static bool IsManagedDevoteMinorStructuredFieldTag(string actionType, string tag)
         => IsDevoteMinorActionType(actionType) &&
            tag.Equals("rate", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsManagedHealStructuredFieldTag(string actionType, string tag)
+        => IsHealActionType(actionType) &&
+           tag.Equals("rate", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsManagedConditionalTransformStructuredFieldTag(string actionType, string tag)
+        => IsConditionalTransformActionType(actionType) &&
+           (tag.Equals("conditionaltransformrule", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("modifyprotoid", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("rate", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsManagedDelayedTransformStructuredFieldTag(string actionType, string tag)
+        => IsDelayedTransformActionType(actionType) &&
+           (tag.Equals("modifyprotoid", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("rate", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsManagedMaintainStructuredFieldTag(string actionType, string tag)
+        => IsMaintainActionType(actionType) &&
+           tag.Equals("rate", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsManagedAutoGatherStructuredFieldTag(string actionType, string tag)
+        => IsAutoGatherActionType(actionType) &&
+           (tag.Equals("rate", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("donotautogatherunlessgatheringtypes", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsManagedConvertStructuredFieldTag(string actionType, string tag)
+        => IsConvertActionType(actionType) &&
+           (tag.Equals("rate", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("minrate", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("conversionprotoid", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("typedduration", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("typedstunduration", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsAutoConvertManagedStructuredFieldTag(string actionType, string tag)
         => IsAutoConvertActionType(actionType) &&
@@ -2330,6 +2442,18 @@ public partial class ProtoEditorWindow : SimpleWindow
              if (IsManagedSelfModifyFieldTag(actionType, normalized))
                  return;
              if (IsManagedReleaseSkyLanternFieldTag(actionType, normalized))
+                 return;
+             if (IsManagedHealFieldTag(actionType, normalized))
+                 return;
+             if (IsManagedConditionalTransformFieldTag(actionType, normalized))
+                 return;
+             if (IsManagedDelayedTransformFieldTag(actionType, normalized))
+                 return;
+             if (IsManagedMaintainFieldTag(actionType, normalized))
+                 return;
+             if (IsManagedAutoGatherFieldTag(actionType, normalized))
+                 return;
+             if (IsManagedConvertFieldTag(actionType, normalized))
                  return;
              if (IsManagedIdleStatBonusFieldTag(actionType, normalized))
                  return;
@@ -2380,6 +2504,12 @@ public partial class ProtoEditorWindow : SimpleWindow
                  IsManagedChargedFieldTag(actionType, normalized) ||
                  IsManagedSelfModifyFieldTag(actionType, normalized) ||
                  IsManagedReleaseSkyLanternFieldTag(actionType, normalized) ||
+                 IsManagedHealFieldTag(actionType, normalized) ||
+                 IsManagedConditionalTransformFieldTag(actionType, normalized) ||
+                 IsManagedDelayedTransformFieldTag(actionType, normalized) ||
+                 IsManagedMaintainFieldTag(actionType, normalized) ||
+                 IsManagedAutoGatherFieldTag(actionType, normalized) ||
+                 IsManagedConvertFieldTag(actionType, normalized) ||
                  IsManagedIdleStatBonusFieldTag(actionType, normalized) ||
                  IsManagedDevoteMinorFieldTag(actionType, normalized) ||
                  IsManagedDistanceModifyFieldTag(actionType, normalized) ||
@@ -2419,6 +2549,18 @@ public partial class ProtoEditorWindow : SimpleWindow
              if (IsManagedSelfModifyFieldTag(actionType, normalized))
                  continue;
              if (IsManagedReleaseSkyLanternFieldTag(actionType, normalized))
+                 continue;
+             if (IsManagedHealFieldTag(actionType, normalized))
+                 continue;
+             if (IsManagedConditionalTransformFieldTag(actionType, normalized))
+                 continue;
+             if (IsManagedDelayedTransformFieldTag(actionType, normalized))
+                 continue;
+             if (IsManagedMaintainFieldTag(actionType, normalized))
+                 continue;
+             if (IsManagedAutoGatherFieldTag(actionType, normalized))
+                 continue;
+             if (IsManagedConvertFieldTag(actionType, normalized))
                  continue;
              if (IsManagedIdleStatBonusFieldTag(actionType, normalized))
                  continue;
@@ -2463,6 +2605,18 @@ public partial class ProtoEditorWindow : SimpleWindow
               if (IsManagedBolsterStructuredFieldTag(actionType, normalized))
                   return;
               if (IsManagedDrainResurrectionStructuredFieldTag(actionType, normalized))
+                  return;
+              if (IsManagedHealStructuredFieldTag(actionType, normalized))
+                  return;
+              if (IsManagedConditionalTransformStructuredFieldTag(actionType, normalized))
+                  return;
+              if (IsManagedDelayedTransformStructuredFieldTag(actionType, normalized))
+                  return;
+              if (IsManagedMaintainStructuredFieldTag(actionType, normalized))
+                  return;
+              if (IsManagedAutoGatherStructuredFieldTag(actionType, normalized))
+                  return;
+              if (IsManagedConvertStructuredFieldTag(actionType, normalized))
                   return;
               if (IsManagedDevoteMinorStructuredFieldTag(actionType, normalized))
                   return;
@@ -2510,6 +2664,12 @@ public partial class ProtoEditorWindow : SimpleWindow
               if (HardcodedProtoActionFieldTags.Contains(normalized) ||
                  IsManagedBolsterStructuredFieldTag(actionType, normalized) ||
                  IsManagedDrainResurrectionStructuredFieldTag(actionType, normalized) ||
+                 IsManagedHealStructuredFieldTag(actionType, normalized) ||
+                 IsManagedConditionalTransformStructuredFieldTag(actionType, normalized) ||
+                 IsManagedDelayedTransformStructuredFieldTag(actionType, normalized) ||
+                 IsManagedMaintainStructuredFieldTag(actionType, normalized) ||
+                 IsManagedAutoGatherStructuredFieldTag(actionType, normalized) ||
+                 IsManagedConvertStructuredFieldTag(actionType, normalized) ||
                  IsManagedDevoteMinorStructuredFieldTag(actionType, normalized) ||
                  IsManagedDistanceModifyStructuredFieldTag(actionType, normalized) ||
                  IsManagedChargedFieldTag(actionType, normalized) ||
@@ -2544,6 +2704,18 @@ public partial class ProtoEditorWindow : SimpleWindow
                 continue;
             if (IsManagedDrainResurrectionStructuredFieldTag(actionType, normalized))
                 continue;
+            if (IsManagedHealStructuredFieldTag(actionType, normalized))
+                continue;
+            if (IsManagedConditionalTransformStructuredFieldTag(actionType, normalized))
+                continue;
+            if (IsManagedDelayedTransformStructuredFieldTag(actionType, normalized))
+                continue;
+            if (IsManagedMaintainStructuredFieldTag(actionType, normalized))
+                continue;
+            if (IsManagedAutoGatherStructuredFieldTag(actionType, normalized))
+                continue;
+            if (IsManagedConvertStructuredFieldTag(actionType, normalized))
+                continue;
             if (IsManagedDevoteMinorStructuredFieldTag(actionType, normalized))
                 continue;
             if (IsManagedDistanceModifyStructuredFieldTag(actionType, normalized))
@@ -2571,6 +2743,7 @@ public partial class ProtoEditorWindow : SimpleWindow
         return definition.EditorKind switch
         {
             ProtoActionFieldEditorKind.Toggle when control is CheckBox checkBox => checkBox.IsChecked == true ? "1" : "",
+            _ when control is ComboBox comboBox => comboBox.SelectedItem as string ?? "",
             _ when control is AutoCompleteBox autoCompleteBox => autoCompleteBox.Text?.Trim() ?? "",
             _ when control is TextBox textBox => textBox.Text?.Trim() ?? "",
             _ => "",
@@ -2580,6 +2753,7 @@ public partial class ProtoEditorWindow : SimpleWindow
     private static string ReadTextLikeControlValue(Control control)
         => control switch
         {
+            ComboBox comboBox => comboBox.SelectedItem as string ?? "",
             AutoCompleteBox autoCompleteBox => autoCompleteBox.Text?.Trim() ?? "",
             TextBox textBox => textBox.Text?.Trim() ?? "",
             _ => "",
@@ -2607,6 +2781,7 @@ public partial class ProtoEditorWindow : SimpleWindow
     {
         return control switch
         {
+            ComboBox comboBox => comboBox.SelectedItem as string ?? "",
             AutoCompleteBox autoCompleteBox => autoCompleteBox.Text?.Trim() ?? "",
             TextBox textBox => textBox.Text?.Trim() ?? "",
             _ => "",
@@ -2659,6 +2834,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             return [];
 
         return rows
+            .Where(row => row.IncludeInSerialization)
             .Select(row =>
             {
                 var entry = new ProtoActionStructuredFieldEntry
@@ -3017,6 +3193,9 @@ public partial class ProtoEditorWindow : SimpleWindow
         if (tag.Equals("trailprotounit", StringComparison.OrdinalIgnoreCase))
             return GetAvailableTrainUnitNames();
 
+        if (tag.Equals("attachprotounit", StringComparison.OrdinalIgnoreCase))
+            return GetAvailableTrainUnitNames();
+
         if (tag.Equals("modelattachmentbone", StringComparison.OrdinalIgnoreCase))
             return GetAvailableProtoActionModelAttachmentBones();
 
@@ -3254,7 +3433,11 @@ public partial class ProtoEditorWindow : SimpleWindow
         if (!SupportsOptionalModelAttachmentActionType(actionType))
             return false;
 
-        return OptionalModelAttachmentTags.Any(tag =>
+        var editorProfile = ProtoActionMetadataCatalog.GetEditorProfile(actionType);
+        var showByDefault = editorProfile.DefaultVisibleTags.Any(tag =>
+            OptionalModelAttachmentTags.Contains(tag, StringComparer.OrdinalIgnoreCase));
+
+        return showByDefault || OptionalModelAttachmentTags.Any(tag =>
             state.ForcedVisibleFieldTags.Contains(tag) ||
             (currentSimpleValues != null &&
              currentSimpleValues.TryGetValue(tag, out var currentValue) &&
@@ -3554,6 +3737,12 @@ public partial class ProtoEditorWindow : SimpleWindow
             IsDevoteMinorActionType(actionType) ||
             IsSelfModifyActionType(actionType) ||
             IsReleaseSkyLanternActionType(actionType) ||
+            IsHealActionType(actionType) ||
+            IsConditionalTransformActionType(actionType) ||
+            IsDelayedTransformActionType(actionType) ||
+            IsMaintainActionType(actionType) ||
+            IsAutoGatherActionType(actionType) ||
+            IsConvertActionType(actionType) ||
             IsGatherActionType(actionType) ||
             IsIdleStatBonusActionType(actionType) ||
             IsDrainResurrectionActionType(actionType) ||
@@ -4633,6 +4822,2748 @@ public partial class ProtoEditorWindow : SimpleWindow
                 Grid.SetColumn(timerEditor, 3);
                 timingRow.Children.Add(timerEditor);
                 state.AdditionalFieldsContainer.Children.Add(timingRow);
+            }
+            else if (IsHealActionType(actionType))
+            {
+                state.CoreFieldsGrid.IsVisible = false;
+                state.MaxRangeLabel.IsVisible = false;
+                state.MaxRangeTb.IsVisible = false;
+
+                var areaHealVisible =
+                    state.ForcedVisibleFieldTags.Contains("modifyamount") ||
+                    state.ForcedVisibleFieldTags.Contains("modifytargetlimit") ||
+                    state.ForcedVisibleFieldTags.Contains("outerdamageareadistance") ||
+                    !string.IsNullOrWhiteSpace(currentValues.TryGetValue("modifyamount", out var currentModifyAmount) ? currentModifyAmount : ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, "modifyamount")) ||
+                    !string.IsNullOrWhiteSpace(currentValues.TryGetValue("modifytargetlimit", out var currentTargetLimit) ? currentTargetLimit : ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, "modifytargetlimit")) ||
+                    !string.IsNullOrWhiteSpace(currentValues.TryGetValue("outerdamageareadistance", out var currentRadius) ? currentRadius : ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, "outerdamageareadistance"));
+
+                var maxRangeMirror = new TextBox
+                {
+                    Text = state.MaxRangeTb.Text,
+                    IsEnabled = !_isReadOnly,
+                    Width = 140
+                };
+                AttachProtoActionDecimalBehavior(maxRangeMirror);
+                maxRangeMirror.TextChanged += async (_, _) =>
+                {
+                    state.MaxRangeTb.Text = maxRangeMirror.Text;
+                    if (_isPopulating)
+                        return;
+
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                        MarkDirty();
+                };
+
+                var topRow = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("120, 140, 120, *"),
+                    Margin = new Thickness(0, 2, 0, 2),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                topRow.Children.Add(new TextBlock
+                {
+                    Text = "Max Range:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                });
+                Grid.SetColumn(maxRangeMirror, 1);
+                topRow.Children.Add(maxRangeMirror);
+                var areaHealLabel = new TextBlock
+                {
+                    Text = "Area Heal:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(12, 4, 10, 4)
+                };
+                Grid.SetColumn(areaHealLabel, 2);
+                topRow.Children.Add(areaHealLabel);
+                var areaHealCheckBox = new CheckBox
+                {
+                    IsChecked = areaHealVisible,
+                    IsEnabled = !_isReadOnly,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                areaHealCheckBox.IsCheckedChanged += async (_, _) =>
+                {
+                    if (_isPopulating)
+                        return;
+
+                    var proceed = await CheckStartLocalMod();
+                    if (!proceed)
+                        return;
+
+                    if (areaHealCheckBox.IsChecked == true)
+                    {
+                        state.ForcedVisibleFieldTags.Add("modifyamount");
+                        state.ForcedVisibleFieldTags.Add("modifytargetlimit");
+                        state.ForcedVisibleFieldTags.Add("outerdamageareadistance");
+                    }
+                    else
+                    {
+                        foreach (var tag in new[] { "modifyamount", "modifytargetlimit", "outerdamageareadistance" })
+                        {
+                            state.ForcedVisibleFieldTags.Remove(tag);
+                            state.AdditionalFieldControls.Remove(tag);
+                            ProtoXmlHandler.SetProtoActionSimpleFieldValue(state.Model, tag, "");
+                        }
+                    }
+
+                    MarkDirty();
+                    RefreshProtoActionMetadataPanels(state);
+                };
+                Grid.SetColumn(areaHealCheckBox, 3);
+                topRow.Children.Add(areaHealCheckBox);
+                state.AdditionalFieldsContainer.Children.Add(topRow);
+
+                var animEditor = CreateSimpleEditor("anim");
+                var animRow = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("180, *"),
+                    Margin = new Thickness(0, 2, 0, 2),
+                    HorizontalAlignment = HorizontalAlignment.Stretch
+                };
+                animRow.Children.Add(new TextBlock
+                {
+                    Text = "Animation:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                });
+                Grid.SetColumn(animEditor, 1);
+                animRow.Children.Add(animEditor);
+                state.AdditionalFieldsContainer.Children.Add(animRow);
+
+                var rateEntries = GetProtoActionStructuredFieldEntriesForEditor(effectiveAction, actionType, "rate");
+                state.StructuredFieldRows["rate"] = [];
+                var currentRateEntry = rateEntries.FirstOrDefault() ?? new ProtoActionStructuredFieldEntry();
+                var rateTypeAcb = new AutoCompleteBox
+                {
+                    Text = currentRateEntry.Attributes.TryGetValue("type", out var currentRateType) ? currentRateType : "",
+                    Width = 180,
+                    FilterMode = AutoCompleteFilterMode.Contains,
+                    ItemsSource = GetAvailableBuildLimitTargets(),
+                    IsEnabled = !_isReadOnly
+                };
+                EnableDropdownAutoComplete(rateTypeAcb);
+                rateTypeAcb.TextChanged += async (_, _) =>
+                {
+                    if (_isPopulating)
+                        return;
+
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                        MarkDirty();
+                };
+                var rateValueTb = new TextBox
+                {
+                    Text = currentRateEntry.Value ?? "",
+                    Width = 100,
+                    IsEnabled = !_isReadOnly
+                };
+                AttachProtoActionDecimalBehavior(rateValueTb);
+                rateValueTb.TextChanged += async (_, _) =>
+                {
+                    if (_isPopulating)
+                        return;
+
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                        MarkDirty();
+                };
+                var rateRowState = new ProtoActionStructuredFieldRowState
+                {
+                    Tag = "rate",
+                    RowPanel = new StackPanel(),
+                    ValueTb = rateValueTb
+                };
+                rateRowState.AttributeEditors["type"] = rateTypeAcb;
+                state.StructuredFieldRows["rate"].Add(rateRowState);
+
+                var rateSlowHealRow = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("60, 360, 190, 110"),
+                    Margin = new Thickness(0, 2, 0, 2),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                rateSlowHealRow.Children.Add(new TextBlock
+                {
+                    Text = "Rate:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                });
+                var ratePanel = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 6
+                };
+                ratePanel.Children.Add(new TextBlock { Text = "Type:", VerticalAlignment = VerticalAlignment.Center });
+                ratePanel.Children.Add(rateTypeAcb);
+                ratePanel.Children.Add(new TextBlock { Text = "Value:", VerticalAlignment = VerticalAlignment.Center });
+                ratePanel.Children.Add(rateValueTb);
+                Grid.SetColumn(ratePanel, 1);
+                rateSlowHealRow.Children.Add(ratePanel);
+                var slowHealLabel = new TextBlock
+                {
+                    Text = "Slow Heal Multiplier:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(12, 4, 10, 4)
+                };
+                Grid.SetColumn(slowHealLabel, 2);
+                rateSlowHealRow.Children.Add(slowHealLabel);
+                var slowHealEditor = CreateSimpleEditor("slowhealmultiplier");
+                Grid.SetColumn(slowHealEditor, 3);
+                rateSlowHealRow.Children.Add(slowHealEditor);
+                state.AdditionalFieldsContainer.Children.Add(rateSlowHealRow);
+
+                if (areaHealVisible)
+                {
+                    TextBox CreateAreaHealTextBox(string tag, string defaultValue, double width)
+                    {
+                        var rawValue = currentValues.TryGetValue(tag, out var editedValue)
+                            ? editedValue
+                            : ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, tag);
+                        var textBox = new TextBox
+                        {
+                            Text = string.IsNullOrWhiteSpace(rawValue) ? defaultValue : rawValue,
+                            Width = width,
+                            IsEnabled = !_isReadOnly
+                        };
+                        AttachProtoActionDecimalBehavior(textBox);
+                        textBox.TextChanged += async (_, _) =>
+                        {
+                            if (_isPopulating)
+                                return;
+
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                                MarkDirty();
+                        };
+                        state.AdditionalFieldControls[tag] = textBox;
+                        return textBox;
+                    }
+
+                    var areaHealValuesRow = new Grid
+                    {
+                        ColumnDefinitions = new ColumnDefinitions("120, 100, 100, 80, 80, 80"),
+                        Margin = new Thickness(0, 2, 0, 2),
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
+                    areaHealValuesRow.Children.Add(new TextBlock
+                    {
+                        Text = "Efficency factor:",
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin = new Thickness(0, 4, 10, 4)
+                    });
+                    var efficiencyEditor = CreateAreaHealTextBox("modifyamount", "1.0", 100);
+                    Grid.SetColumn(efficiencyEditor, 1);
+                    areaHealValuesRow.Children.Add(efficiencyEditor);
+
+                    var targetLimitLabel = new TextBlock
+                    {
+                        Text = "Target Limit:",
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin = new Thickness(12, 4, 10, 4)
+                    };
+                    Grid.SetColumn(targetLimitLabel, 2);
+                    areaHealValuesRow.Children.Add(targetLimitLabel);
+                    var targetLimitEditor = CreateAreaHealTextBox("modifytargetlimit", "1", 80);
+                    Grid.SetColumn(targetLimitEditor, 3);
+                    areaHealValuesRow.Children.Add(targetLimitEditor);
+
+                    var radiusLabel = new TextBlock
+                    {
+                        Text = "Radius:",
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin = new Thickness(12, 4, 10, 4)
+                    };
+                    Grid.SetColumn(radiusLabel, 4);
+                    areaHealValuesRow.Children.Add(radiusLabel);
+                    var radiusEditor = CreateAreaHealTextBox("outerdamageareadistance", "0", 80);
+                    Grid.SetColumn(radiusEditor, 5);
+                    areaHealValuesRow.Children.Add(radiusEditor);
+
+                    state.AdditionalFieldsContainer.Children.Add(areaHealValuesRow);
+                }
+            }
+            else if (IsConditionalTransformActionType(actionType))
+            {
+                state.CoreFieldsGrid.IsVisible = false;
+                state.RofLabel.IsVisible = false;
+                state.RofTb.IsVisible = false;
+                state.MaxRangeLabel.IsVisible = false;
+                state.MaxRangeTb.IsVisible = false;
+
+                var flagsRow = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("180, Auto, 220, Auto"),
+                    Margin = new Thickness(0, 2, 0, 2),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                flagsRow.Children.Add(new TextBlock
+                {
+                    Text = "Persistent:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                });
+                var persistentEditor = CreateSimpleEditor("persistent");
+                Grid.SetColumn(persistentEditor, 1);
+                flagsRow.Children.Add(persistentEditor);
+                var mustFinishLabel = new TextBlock
+                {
+                    Text = "Must Finish Animation:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(18, 4, 10, 4)
+                };
+                Grid.SetColumn(mustFinishLabel, 2);
+                flagsRow.Children.Add(mustFinishLabel);
+                var mustFinishEditor = new CheckBox
+                {
+                    IsChecked = state.SelectedFlagTags.Contains("mustfinishanimation"),
+                    IsEnabled = !_isReadOnly,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                mustFinishEditor.IsCheckedChanged += async (_, _) =>
+                {
+                    if (_isPopulating)
+                        return;
+
+                    var proceed = await CheckStartLocalMod();
+                    if (!proceed)
+                        return;
+
+                    if (mustFinishEditor.IsChecked == true)
+                        state.SelectedFlagTags.Add("mustfinishanimation");
+                    else
+                        state.SelectedFlagTags.Remove("mustfinishanimation");
+
+                    MarkDirty();
+                    RenderProtoActionFlags(state);
+                };
+                Grid.SetColumn(mustFinishEditor, 3);
+                flagsRow.Children.Add(mustFinishEditor);
+                state.AdditionalFieldsContainer.Children.Add(flagsRow);
+
+                var conditionalTransformRuleTypes = new[]
+                {
+                    "DamageDealt",
+                    "NoDamageDealt",
+                    "DamageTaken",
+                    "NoDamageTaken",
+                    "NotIdle",
+                    "Idle",
+                    "EnemyInRange",
+                    "OnAction",
+                    "OnNoAction"
+                };
+
+                var ruleEntries = GetProtoActionStructuredFieldEntriesForEditor(effectiveAction, actionType, "conditionaltransformrule");
+                state.StructuredFieldRows["conditionaltransformrule"] = [];
+                var currentRuleEntry = ruleEntries.FirstOrDefault() ?? new ProtoActionStructuredFieldEntry();
+                var ruleTypeCb = new ComboBox
+                {
+                    SelectedItem = conditionalTransformRuleTypes.FirstOrDefault(x =>
+                        x.Equals(currentRuleEntry.Attributes.TryGetValue("type", out var currentRuleType) ? currentRuleType : "", StringComparison.OrdinalIgnoreCase))
+                        ?? conditionalTransformRuleTypes.FirstOrDefault(),
+                    Width = 180,
+                    ItemsSource = conditionalTransformRuleTypes,
+                    IsEnabled = !_isReadOnly
+                };
+                var ruleValueTb = new TextBox
+                {
+                    Text = !string.IsNullOrWhiteSpace(currentRuleEntry.Value) ? currentRuleEntry.Value : "1.0",
+                    Width = 100,
+                    IsEnabled = !_isReadOnly
+                };
+                AttachProtoActionDecimalBehavior(ruleValueTb);
+                var ruleActionTypeAcb = new AutoCompleteBox
+                {
+                    Text = currentRuleEntry.Attributes.TryGetValue("actiontype", out var currentActionTypeValue) ? currentActionTypeValue : "",
+                    Width = 180,
+                    FilterMode = AutoCompleteFilterMode.Contains,
+                    ItemsSource = GetProtoActionTypeOptions(),
+                    IsEnabled = !_isReadOnly
+                };
+                EnableDropdownAutoComplete(ruleActionTypeAcb);
+                var ruleActionTypeLabel = new TextBlock
+                {
+                    Text = "Action Type:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(12, 4, 10, 4),
+                    IsVisible = string.Equals(ruleTypeCb.SelectedItem as string, "OnAction", StringComparison.OrdinalIgnoreCase)
+                };
+                var ruleRowState = new ProtoActionStructuredFieldRowState
+                {
+                    Tag = "conditionaltransformrule",
+                    RowPanel = new Grid(),
+                    ValueTb = ruleValueTb
+                };
+                ruleRowState.AttributeEditors["type"] = ruleTypeCb;
+                ruleRowState.AttributeEditors["actiontype"] = ruleActionTypeAcb;
+                state.StructuredFieldRows["conditionaltransformrule"].Add(ruleRowState);
+
+                async Task HandleConditionalTransformRuleChangedAsync()
+                {
+                    if (_isPopulating)
+                        return;
+
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                        MarkDirty();
+                }
+
+                ruleTypeCb.SelectionChanged += async (_, _) =>
+                {
+                    ruleActionTypeLabel.IsVisible = ruleActionTypeAcb.IsVisible =
+                        string.Equals(ruleTypeCb.SelectedItem as string, "OnAction", StringComparison.OrdinalIgnoreCase);
+                    await HandleConditionalTransformRuleChangedAsync();
+                };
+                ruleValueTb.TextChanged += async (_, _) => await HandleConditionalTransformRuleChangedAsync();
+                ruleActionTypeAcb.TextChanged += async (_, _) => await HandleConditionalTransformRuleChangedAsync();
+
+                var conditionalTransformRuleRow = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("220, 220, 80, 100, 100, 180"),
+                    Margin = new Thickness(0, 2, 0, 2),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                conditionalTransformRuleRow.Children.Add(new TextBlock
+                {
+                    Text = "Conditional Transform Rule:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                });
+                Grid.SetColumn(ruleTypeCb, 1);
+                conditionalTransformRuleRow.Children.Add(ruleTypeCb);
+                var ruleValueLabel = new TextBlock
+                {
+                    Text = "Value:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(12, 4, 10, 4)
+                };
+                Grid.SetColumn(ruleValueLabel, 2);
+                conditionalTransformRuleRow.Children.Add(ruleValueLabel);
+                Grid.SetColumn(ruleValueTb, 3);
+                conditionalTransformRuleRow.Children.Add(ruleValueTb);
+                Grid.SetColumn(ruleActionTypeLabel, 4);
+                conditionalTransformRuleRow.Children.Add(ruleActionTypeLabel);
+                ruleActionTypeAcb.IsVisible = ruleActionTypeLabel.IsVisible;
+                Grid.SetColumn(ruleActionTypeAcb, 5);
+                conditionalTransformRuleRow.Children.Add(ruleActionTypeAcb);
+                state.AdditionalFieldsContainer.Children.Add(conditionalTransformRuleRow);
+
+                var modifyProtoEntries = GetProtoActionStructuredFieldEntriesForEditor(effectiveAction, actionType, "modifyprotoid");
+                state.StructuredFieldRows["modifyprotoid"] = [];
+                var currentModifyProtoEntry = modifyProtoEntries.FirstOrDefault() ?? new ProtoActionStructuredFieldEntry();
+                var modifyProtoAcb = new AutoCompleteBox
+                {
+                    Text = currentModifyProtoEntry.Value ?? "",
+                    Width = 220,
+                    FilterMode = AutoCompleteFilterMode.Contains,
+                    ItemsSource = GetAvailableTrainUnitNames(),
+                    IsEnabled = !_isReadOnly
+                };
+                EnableDropdownAutoComplete(modifyProtoAcb);
+                modifyProtoAcb.TextChanged += async (_, _) =>
+                {
+                    if (_isPopulating)
+                        return;
+
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                        MarkDirty();
+                };
+                var modifyProtoRowState = new ProtoActionStructuredFieldRowState
+                {
+                    Tag = "modifyprotoid",
+                    RowPanel = new StackPanel(),
+                    ValueTb = modifyProtoAcb
+                };
+                state.StructuredFieldRows["modifyprotoid"].Add(modifyProtoRowState);
+
+                var modifyProtoRow = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("180, 220"),
+                    Margin = new Thickness(0, 2, 0, 2),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                modifyProtoRow.Children.Add(new TextBlock
+                {
+                    Text = "Modify Proto ID:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                });
+                Grid.SetColumn(modifyProtoAcb, 1);
+                modifyProtoRow.Children.Add(modifyProtoAcb);
+                state.AdditionalFieldsContainer.Children.Add(modifyProtoRow);
+
+                var rateEntries = GetProtoActionStructuredFieldEntriesForEditor(effectiveAction, actionType, "rate");
+                state.StructuredFieldRows["rate"] = [];
+                var rateSection = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 0, 6) };
+                var ratesContainer = new StackPanel { Spacing = 4 };
+                rateSection.Children.Add(ratesContainer);
+
+                void AddConditionalTransformRateRow(ProtoActionStructuredFieldEntry? initialEntry = null)
+                {
+                    var rowPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+                    var typeAcb = new AutoCompleteBox
+                    {
+                        Text = initialEntry?.Attributes.TryGetValue("type", out var typeValue) == true ? typeValue : "",
+                        Width = 180,
+                        FilterMode = AutoCompleteFilterMode.Contains,
+                        ItemsSource = GetAvailableBuildLimitTargets(),
+                        IsEnabled = !_isReadOnly
+                    };
+                    EnableDropdownAutoComplete(typeAcb);
+                    typeAcb.TextChanged += async (_, _) =>
+                    {
+                        if (_isPopulating)
+                            return;
+
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                            MarkDirty();
+                    };
+
+                    var valueTb = new TextBox
+                    {
+                        Text = initialEntry?.Value ?? "",
+                        Width = 100,
+                        IsEnabled = !_isReadOnly
+                    };
+                    AttachProtoActionDecimalBehavior(valueTb);
+                    valueTb.TextChanged += async (_, _) =>
+                    {
+                        if (_isPopulating)
+                            return;
+
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                            MarkDirty();
+                    };
+
+                    var rowState = new ProtoActionStructuredFieldRowState
+                    {
+                        Tag = "rate",
+                        RowPanel = rowPanel,
+                        ValueTb = valueTb
+                    };
+                    rowState.AttributeEditors["type"] = typeAcb;
+                    state.StructuredFieldRows["rate"].Add(rowState);
+
+                    rowPanel.Children.Add(new TextBlock { Text = "Rate:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+                    rowPanel.Children.Add(new TextBlock { Text = "Type:", VerticalAlignment = VerticalAlignment.Center });
+                    rowPanel.Children.Add(typeAcb);
+                    rowPanel.Children.Add(new TextBlock { Text = "Value:", VerticalAlignment = VerticalAlignment.Center });
+                    rowPanel.Children.Add(valueTb);
+
+                    if (!_isReadOnly)
+                    {
+                        var removeButton = new Button
+                        {
+                            Content = "X",
+                            Background = Brush.Parse("#8b0000"),
+                            Width = 28,
+                            Height = 28,
+                            Padding = new Thickness(0),
+                            HorizontalContentAlignment = HorizontalAlignment.Center,
+                            VerticalContentAlignment = VerticalAlignment.Center
+                        };
+                        removeButton.Click += async (_, _) =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (!proceed)
+                                return;
+
+                            ratesContainer.Children.Remove(rowPanel);
+                            state.StructuredFieldRows["rate"].Remove(rowState);
+                            MarkDirty();
+                        };
+                        rowPanel.Children.Add(removeButton);
+                    }
+
+                    ratesContainer.Children.Add(rowPanel);
+                }
+
+                foreach (var entry in rateEntries)
+                    AddConditionalTransformRateRow(entry);
+
+                if (!_isReadOnly)
+                {
+                    var addRateButton = new Button
+                    {
+                        Content = "+ Add Rate",
+                        Background = Brush.Parse("#2b7a0b"),
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
+                    addRateButton.Click += async (_, _) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (!proceed)
+                            return;
+
+                        AddConditionalTransformRateRow();
+                        MarkDirty();
+                    };
+                    rateSection.Children.Add(addRateButton);
+                }
+
+                if (rateEntries.Count > 0 || !_isReadOnly)
+                    state.AdditionalFieldsContainer.Children.Add(rateSection);
+            }
+            else if (IsDelayedTransformActionType(actionType))
+            {
+                state.CoreFieldsGrid.IsVisible = false;
+                state.RofLabel.IsVisible = false;
+                state.RofTb.IsVisible = false;
+                state.MaxRangeLabel.IsVisible = false;
+                state.MaxRangeTb.IsVisible = false;
+
+                bool HasSelectedFlag(string tag) => state.SelectedFlagTags.Contains(tag);
+
+                var animRow = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("180, *"),
+                    Margin = new Thickness(0, 2, 0, 2),
+                    HorizontalAlignment = HorizontalAlignment.Stretch
+                };
+                animRow.Children.Add(new TextBlock
+                {
+                    Text = "Animation:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                });
+                var animEditor = CreateSimpleEditor("anim");
+                Grid.SetColumn(animEditor, 1);
+                animRow.Children.Add(animEditor);
+                state.AdditionalFieldsContainer.Children.Add(animRow);
+
+                var modifyProtoEntries = GetProtoActionStructuredFieldEntriesForEditor(effectiveAction, actionType, "modifyprotoid");
+                state.StructuredFieldRows["modifyprotoid"] = [];
+                var currentModifyProtoEntry = modifyProtoEntries.FirstOrDefault() ?? new ProtoActionStructuredFieldEntry();
+                var modifyProtoAcb = new AutoCompleteBox
+                {
+                    Text = currentModifyProtoEntry.Value ?? "",
+                    Width = _isReadOnly ? GetCompactReadOnlyEditorWidth(currentModifyProtoEntry.Value ?? "") : 220,
+                    FilterMode = AutoCompleteFilterMode.Contains,
+                    ItemsSource = GetAvailableTrainUnitNames(),
+                    IsEnabled = !_isReadOnly,
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                EnableDropdownAutoComplete(modifyProtoAcb);
+                modifyProtoAcb.TextChanged += async (_, _) =>
+                {
+                    if (_isPopulating)
+                        return;
+
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                        MarkDirty();
+                };
+                var modifyProtoRowState = new ProtoActionStructuredFieldRowState
+                {
+                    Tag = "modifyprotoid",
+                    RowPanel = new StackPanel(),
+                    ValueTb = modifyProtoAcb
+                };
+                state.StructuredFieldRows["modifyprotoid"].Add(modifyProtoRowState);
+
+                var modifyProtoRow = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("180, Auto"),
+                    Margin = new Thickness(0, 2, 0, 2),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                modifyProtoRow.Children.Add(new TextBlock
+                {
+                    Text = "Modify Proto ID:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                });
+                Grid.SetColumn(modifyProtoAcb, 1);
+                modifyProtoRow.Children.Add(modifyProtoAcb);
+                state.AdditionalFieldsContainer.Children.Add(modifyProtoRow);
+
+                var showTransformDuration =
+                    state.ForcedVisibleFieldTags.Contains("transformduration") ||
+                    !string.IsNullOrWhiteSpace(
+                        currentValues.TryGetValue("transformduration", out var currentTransformDuration)
+                            ? currentTransformDuration
+                            : ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, "transformduration"));
+
+                var durationRow = new Grid
+                {
+                    ColumnDefinitions = showTransformDuration
+                        ? new ColumnDefinitions("180, 120, 180, 120, Auto")
+                        : new ColumnDefinitions("180, 120, Auto"),
+                    Margin = new Thickness(0, 2, 0, 2),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                durationRow.Children.Add(new TextBlock
+                {
+                    Text = "Modify Duration (ms):",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                });
+                var modifyDurationEditor = CreateSimpleEditor("modifyduration");
+                Grid.SetColumn(modifyDurationEditor, 1);
+                durationRow.Children.Add(modifyDurationEditor);
+
+                void RefreshDelayedTransformPanels()
+                {
+                    MarkDirty();
+                    RefreshProtoActionMetadataPanels(state);
+                }
+
+                if (showTransformDuration)
+                {
+                    var transformDurationLabel = new TextBlock
+                    {
+                        Text = "Transform Duration (ms):",
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin = new Thickness(28, 4, 10, 4)
+                    };
+                    Grid.SetColumn(transformDurationLabel, 2);
+                    durationRow.Children.Add(transformDurationLabel);
+                    var transformDurationEditor = CreateSimpleEditor("transformduration");
+                    Grid.SetColumn(transformDurationEditor, 3);
+                    durationRow.Children.Add(transformDurationEditor);
+
+                    if (!_isReadOnly)
+                    {
+                        var removeTransformDurationButton = new Button
+                        {
+                            Content = "X",
+                            Background = Brush.Parse("#8b0000"),
+                            Width = 28,
+                            Height = 28,
+                            Padding = new Thickness(0),
+                            HorizontalContentAlignment = HorizontalAlignment.Center,
+                            VerticalContentAlignment = VerticalAlignment.Center,
+                            Margin = new Thickness(8, 0, 0, 0)
+                        };
+                        removeTransformDurationButton.Click += async (_, _) =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (!proceed)
+                                return;
+
+                            state.ForcedVisibleFieldTags.Remove("transformduration");
+                            state.AdditionalFieldControls.Remove("transformduration");
+                            ProtoXmlHandler.SetProtoActionSimpleFieldValue(state.Model, "transformduration", "");
+                            RefreshDelayedTransformPanels();
+                        };
+                        Grid.SetColumn(removeTransformDurationButton, 4);
+                        durationRow.Children.Add(removeTransformDurationButton);
+                    }
+                }
+                else if (!_isReadOnly)
+                {
+                    var addTransformDurationButton = new Button
+                    {
+                        Content = "Transform Duration",
+                        Background = Brush.Parse("#2b7a0b"),
+                        HorizontalAlignment = HorizontalAlignment.Left,
+                        Margin = new Thickness(18, 0, 0, 0)
+                    };
+                    addTransformDurationButton.Click += async (_, _) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (!proceed)
+                            return;
+
+                        state.ForcedVisibleFieldTags.Add("transformduration");
+                        RefreshDelayedTransformPanels();
+                    };
+                    Grid.SetColumn(addTransformDurationButton, 2);
+                    durationRow.Children.Add(addTransformDurationButton);
+                }
+                state.AdditionalFieldsContainer.Children.Add(durationRow);
+
+                var toggleRow = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("180, Auto, 180, Auto"),
+                    Margin = new Thickness(0, 2, 0, 2),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                toggleRow.Children.Add(new TextBlock
+                {
+                    Text = "Transform On Attack:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                });
+                var transformOnAttackCheckBox = new CheckBox
+                {
+                    IsChecked = HasSelectedFlag("attackaction"),
+                    IsEnabled = !_isReadOnly,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                transformOnAttackCheckBox.IsCheckedChanged += async (_, _) =>
+                {
+                    if (_isPopulating)
+                        return;
+
+                    var proceed = await CheckStartLocalMod();
+                    if (!proceed)
+                        return;
+
+                    if (transformOnAttackCheckBox.IsChecked == true)
+                    {
+                        state.SelectedFlagTags.Add("attackaction");
+                    }
+                    else
+                    {
+                        state.SelectedFlagTags.Remove("attackaction");
+                        state.StructuredFieldRows.Remove("rate");
+                        ProtoXmlHandler.SetProtoActionStructuredFieldEntries(state.Model, "rate", []);
+                    }
+
+                    RefreshDelayedTransformPanels();
+                };
+                Grid.SetColumn(transformOnAttackCheckBox, 1);
+                toggleRow.Children.Add(transformOnAttackCheckBox);
+
+                var mustFinishLabel = new TextBlock
+                {
+                    Text = "Must Finish Animation:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(18, 4, 10, 4)
+                };
+                Grid.SetColumn(mustFinishLabel, 2);
+                toggleRow.Children.Add(mustFinishLabel);
+                var mustFinishCheckBox = new CheckBox
+                {
+                    IsChecked = HasSelectedFlag("mustfinishanimation"),
+                    IsEnabled = !_isReadOnly,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                mustFinishCheckBox.IsCheckedChanged += async (_, _) =>
+                {
+                    if (_isPopulating)
+                        return;
+
+                    var proceed = await CheckStartLocalMod();
+                    if (!proceed)
+                        return;
+
+                    if (mustFinishCheckBox.IsChecked == true)
+                        state.SelectedFlagTags.Add("mustfinishanimation");
+                    else
+                        state.SelectedFlagTags.Remove("mustfinishanimation");
+
+                    MarkDirty();
+                    RenderProtoActionFlags(state);
+                };
+                Grid.SetColumn(mustFinishCheckBox, 3);
+                toggleRow.Children.Add(mustFinishCheckBox);
+                state.AdditionalFieldsContainer.Children.Add(toggleRow);
+
+                var rateEntries = GetProtoActionStructuredFieldEntriesForEditor(effectiveAction, actionType, "rate");
+                state.StructuredFieldRows["rate"] = [];
+                if (HasSelectedFlag("attackaction") || rateEntries.Count > 0)
+                {
+                    var rateSection = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 0, 6) };
+                    var ratesContainer = new StackPanel { Spacing = 4 };
+                    rateSection.Children.Add(ratesContainer);
+
+                    void AddDelayedTransformRateRow(ProtoActionStructuredFieldEntry? initialEntry = null)
+                    {
+                        var rowPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+                        var typeAcb = new AutoCompleteBox
+                        {
+                            Text = initialEntry?.Attributes.TryGetValue("type", out var typeValue) == true ? typeValue : "",
+                            Width = 180,
+                            FilterMode = AutoCompleteFilterMode.Contains,
+                            ItemsSource = GetAvailableBuildLimitTargets(),
+                            IsEnabled = !_isReadOnly
+                        };
+                        EnableDropdownAutoComplete(typeAcb);
+                        typeAcb.TextChanged += async (_, _) =>
+                        {
+                            if (_isPopulating)
+                                return;
+
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                                MarkDirty();
+                        };
+
+                        var valueTb = new TextBox
+                        {
+                            Text = initialEntry?.Value ?? "",
+                            Width = 100,
+                            IsEnabled = !_isReadOnly
+                        };
+                        AttachProtoActionDecimalBehavior(valueTb);
+                        valueTb.TextChanged += async (_, _) =>
+                        {
+                            if (_isPopulating)
+                                return;
+
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                                MarkDirty();
+                        };
+
+                        var rowState = new ProtoActionStructuredFieldRowState
+                        {
+                            Tag = "rate",
+                            RowPanel = rowPanel,
+                            ValueTb = valueTb
+                        };
+                        rowState.AttributeEditors["type"] = typeAcb;
+                        state.StructuredFieldRows["rate"].Add(rowState);
+
+                        rowPanel.Children.Add(new TextBlock { Text = "Rate:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+                        rowPanel.Children.Add(new TextBlock { Text = "Type:", VerticalAlignment = VerticalAlignment.Center });
+                        rowPanel.Children.Add(typeAcb);
+                        rowPanel.Children.Add(new TextBlock { Text = "Value:", VerticalAlignment = VerticalAlignment.Center });
+                        rowPanel.Children.Add(valueTb);
+
+                        if (!_isReadOnly)
+                        {
+                            var removeButton = new Button
+                            {
+                                Content = "X",
+                                Background = Brush.Parse("#8b0000"),
+                                Width = 28,
+                                Height = 28,
+                                Padding = new Thickness(0),
+                                HorizontalContentAlignment = HorizontalAlignment.Center,
+                                VerticalContentAlignment = VerticalAlignment.Center
+                            };
+                            removeButton.Click += async (_, _) =>
+                            {
+                                var proceed = await CheckStartLocalMod();
+                                if (!proceed)
+                                    return;
+
+                                ratesContainer.Children.Remove(rowPanel);
+                                state.StructuredFieldRows["rate"].Remove(rowState);
+                                MarkDirty();
+                            };
+                            rowPanel.Children.Add(removeButton);
+                        }
+
+                        ratesContainer.Children.Add(rowPanel);
+                    }
+
+                    foreach (var entry in rateEntries)
+                        AddDelayedTransformRateRow(entry);
+
+                    if (!_isReadOnly)
+                    {
+                        var addRateButton = new Button
+                        {
+                            Content = "+ Add Rate",
+                            Background = Brush.Parse("#2b7a0b"),
+                            HorizontalAlignment = HorizontalAlignment.Left
+                        };
+                        addRateButton.Click += async (_, _) =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (!proceed)
+                                return;
+
+                            AddDelayedTransformRateRow();
+                            MarkDirty();
+                        };
+                        rateSection.Children.Add(addRateButton);
+                    }
+
+                    state.AdditionalFieldsContainer.Children.Add(rateSection);
+                }
+            }
+            else if (IsMaintainActionType(actionType))
+            {
+                const string MaintainTrainPointsHiddenStateKey = "maintain.hidden.maintaintrainpoints";
+
+                state.CoreFieldsGrid.IsVisible = false;
+                state.RofLabel.IsVisible = false;
+                state.RofTb.IsVisible = false;
+                state.MaxRangeLabel.IsVisible = false;
+                state.MaxRangeTb.IsVisible = false;
+
+                bool ShouldShowMaintainOptionalField(string tag)
+                    => state.ForcedVisibleFieldTags.Contains(tag) ||
+                       !string.IsNullOrWhiteSpace(
+                           currentValues.TryGetValue(tag, out var currentValue)
+                               ? currentValue
+                               : ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, tag));
+
+                bool ShouldShowMaintainSpawnRange()
+                    => state.ForcedVisibleFieldTags.Contains("maxrange") ||
+                       !string.IsNullOrWhiteSpace(
+                           currentValues.TryGetValue("maxrange", out var currentSpawnRange)
+                               ? currentSpawnRange
+                                : effectiveAction.MaxRange);
+
+                bool IsNewMaintainAction()
+                    => state.Model.SourceElement == null &&
+                       string.IsNullOrWhiteSpace(state.Model.Type) &&
+                       string.IsNullOrWhiteSpace(ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, "maintaintrainpoints"));
+
+                bool ShouldShowMaintainTrainPoints()
+                    => !string.Equals(state.CustomValues.GetValueOrDefault(MaintainTrainPointsHiddenStateKey), "1", StringComparison.OrdinalIgnoreCase) &&
+                       (state.ForcedVisibleFieldTags.Contains("maintaintrainpoints") ||
+                        !string.IsNullOrWhiteSpace(
+                            currentValues.TryGetValue("maintaintrainpoints", out var currentMaintainTrainPoints)
+                                ? currentMaintainTrainPoints
+                                : ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, "maintaintrainpoints")) ||
+                        IsNewMaintainAction());
+
+                if (!state.CustomValues.ContainsKey(MaintainPausableValueStateKey))
+                {
+                    var rawPausableValue = ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, "pausable");
+                    state.CustomValues[MaintainPausableValueStateKey] = (!string.IsNullOrWhiteSpace(rawPausableValue)
+                        ? IsProtoActionFlagEnabledValue(rawPausableValue)
+                        : true)
+                        ? "1"
+                        : "0";
+                }
+
+                if (state.CustomValues.GetValueOrDefault(MaintainPausableValueStateKey, "1").Equals("1", StringComparison.OrdinalIgnoreCase))
+                    state.SelectedFlagTags.Add("pausable");
+                else
+                    state.SelectedFlagTags.Remove("pausable");
+
+                if (!state.CustomValues.ContainsKey(MaintainShowQueueWhileWaitingValueStateKey))
+                {
+                    var rawShowQueueWhileWaitingValue = ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, "showqueuewhilewaiting");
+                    state.CustomValues[MaintainShowQueueWhileWaitingValueStateKey] = (!string.IsNullOrWhiteSpace(rawShowQueueWhileWaitingValue)
+                        ? IsProtoActionFlagEnabledValue(rawShowQueueWhileWaitingValue)
+                        : true)
+                        ? "1"
+                        : "0";
+                }
+
+                if (state.CustomValues.GetValueOrDefault(MaintainShowQueueWhileWaitingValueStateKey, "1").Equals("1", StringComparison.OrdinalIgnoreCase))
+                    state.SelectedFlagTags.Add("showqueuewhilewaiting");
+                else
+                    state.SelectedFlagTags.Remove("showqueuewhilewaiting");
+
+                var persistentRow = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("180, Auto"),
+                    Margin = new Thickness(0, 2, 0, 2),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                persistentRow.Children.Add(new TextBlock
+                {
+                    Text = "Persistent:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                });
+                var persistentEditor = CreateSimpleEditor("persistent");
+                Grid.SetColumn(persistentEditor, 1);
+                persistentRow.Children.Add(persistentEditor);
+                state.AdditionalFieldsContainer.Children.Add(persistentRow);
+
+                if (ShouldShowMaintainTrainPoints())
+                {
+                    var maintainPointsRow = new Grid
+                    {
+                        ColumnDefinitions = !_isReadOnly
+                            ? new ColumnDefinitions("180, 140, 32")
+                            : new ColumnDefinitions("180, 140"),
+                        Margin = new Thickness(0, 2, 0, 2),
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
+                    maintainPointsRow.Children.Add(new TextBlock
+                    {
+                        Text = "Maintain Train Points:",
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin = new Thickness(0, 4, 10, 4)
+                    });
+                    var maintainPointsEditor = CreateSimpleEditor("maintaintrainpoints");
+                    if (maintainPointsEditor is TextBox maintainPointsTb)
+                        maintainPointsTb.Width = 140;
+                    Grid.SetColumn(maintainPointsEditor, 1);
+                    maintainPointsRow.Children.Add(maintainPointsEditor);
+
+                    if (!_isReadOnly)
+                    {
+                        var removeButton = new Button
+                        {
+                            Content = "X",
+                            Background = Brush.Parse("#8b0000"),
+                            Width = 28,
+                            Height = 28,
+                            Padding = new Thickness(0),
+                            HorizontalContentAlignment = HorizontalAlignment.Center,
+                            VerticalContentAlignment = VerticalAlignment.Center,
+                            Margin = new Thickness(8, 0, 0, 0)
+                        };
+                        removeButton.Click += async (_, _) =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (!proceed)
+                                return;
+
+                            state.CustomValues[MaintainTrainPointsHiddenStateKey] = "1";
+                            state.ForcedVisibleFieldTags.Remove("maintaintrainpoints");
+                            state.AdditionalFieldControls.Remove("maintaintrainpoints");
+                            ProtoXmlHandler.SetProtoActionSimpleFieldValue(state.Model, "maintaintrainpoints", "");
+                            MarkDirty();
+                            RefreshProtoActionMetadataPanels(state);
+                        };
+                        Grid.SetColumn(removeButton, 2);
+                        maintainPointsRow.Children.Add(removeButton);
+                    }
+
+                    state.AdditionalFieldsContainer.Children.Add(maintainPointsRow);
+                }
+                else if (!_isReadOnly)
+                {
+                    var addMaintainTrainPointsButton = new Button
+                    {
+                        Content = "Maintain Train Points",
+                        Background = Brush.Parse("#2b7a0b"),
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
+                    addMaintainTrainPointsButton.Click += async (_, _) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (!proceed)
+                            return;
+
+                        state.CustomValues.Remove(MaintainTrainPointsHiddenStateKey);
+                        state.ForcedVisibleFieldTags.Add("maintaintrainpoints");
+                        MarkDirty();
+                        RefreshProtoActionMetadataPanels(state);
+                    };
+                    state.AdditionalFieldsContainer.Children.Add(addMaintainTrainPointsButton);
+                }
+
+                var optionalSpawnRow = new WrapPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Margin = new Thickness(0, 2, 0, 6)
+                };
+
+                void AddMaintainOptionalCell(
+                    string tag,
+                    string label,
+                    bool isVisible,
+                    Control? editor,
+                    Action? onRemove,
+                    Action? onAdd)
+                {
+                    if (isVisible)
+                    {
+                        var cell = new StackPanel
+                        {
+                            Orientation = Orientation.Horizontal,
+                            Spacing = 6,
+                            Margin = new Thickness(0, 0, 14, 0)
+                        };
+                        cell.Children.Add(new TextBlock
+                        {
+                            Text = label + ":",
+                            VerticalAlignment = VerticalAlignment.Center,
+                            Margin = new Thickness(0, 4, 10, 4)
+                        });
+                        if (editor != null)
+                            cell.Children.Add(editor);
+
+                        if (!_isReadOnly && onRemove != null)
+                        {
+                            var removeButton = new Button
+                            {
+                                Content = "X",
+                                Background = Brush.Parse("#8b0000"),
+                                Width = 28,
+                                Height = 28,
+                                Padding = new Thickness(0),
+                                HorizontalContentAlignment = HorizontalAlignment.Center,
+                                VerticalContentAlignment = VerticalAlignment.Center,
+                                Margin = new Thickness(2, 0, 0, 0)
+                            };
+                            removeButton.Click += async (_, _) =>
+                            {
+                                var proceed = await CheckStartLocalMod();
+                                if (!proceed)
+                                    return;
+
+                                onRemove();
+                                MarkDirty();
+                                RefreshProtoActionMetadataPanels(state);
+                            };
+                            cell.Children.Add(removeButton);
+                        }
+
+                        optionalSpawnRow.Children.Add(cell);
+                    }
+                    else if (!_isReadOnly && onAdd != null)
+                    {
+                        var addButton = new Button
+                        {
+                            Content = label,
+                            Background = Brush.Parse("#2b7a0b"),
+                            HorizontalAlignment = HorizontalAlignment.Left,
+                            Margin = new Thickness(0, 0, 12, 0)
+                        };
+                        addButton.Click += async (_, _) =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (!proceed)
+                                return;
+
+                            onAdd();
+                            MarkDirty();
+                            RefreshProtoActionMetadataPanels(state);
+                        };
+                        optionalSpawnRow.Children.Add(addButton);
+                    }
+                }
+
+                var spawnRangeVisible = ShouldShowMaintainSpawnRange();
+                var spawnRangeEditor = new TextBox
+                {
+                    Text = GetProtoActionDefaultSimpleValue(
+                        "maxrange",
+                        currentValues.TryGetValue("maxrange", out var currentSpawnRange)
+                            ? currentSpawnRange
+                            : state.MaxRangeTb.Text ?? ""),
+                    Width = 90,
+                    IsEnabled = !_isReadOnly
+                };
+                AttachProtoActionDecimalBehavior(spawnRangeEditor);
+                spawnRangeEditor.TextChanged += async (_, _) =>
+                {
+                    state.MaxRangeTb.Text = spawnRangeEditor.Text;
+                    if (_isPopulating)
+                        return;
+
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                        MarkDirty();
+                };
+
+                void RemoveMaintainSimpleField(string tag)
+                {
+                    state.ForcedVisibleFieldTags.Remove(tag);
+                    state.AdditionalFieldControls.Remove(tag);
+                    ProtoXmlHandler.SetProtoActionSimpleFieldValue(state.Model, tag, "");
+                }
+
+                AddMaintainOptionalCell(
+                    "maxrange",
+                    "Spawn Range",
+                    spawnRangeVisible,
+                    spawnRangeEditor,
+                    onRemove: () =>
+                    {
+                        state.ForcedVisibleFieldTags.Remove("maxrange");
+                        state.MaxRangeTb.Text = "";
+                        state.Model.MaxRange = "";
+                    },
+                    onAdd: () => state.ForcedVisibleFieldTags.Add("maxrange"));
+
+                Control? CreateMaintainSimpleEditor(string tag, double width = 90)
+                {
+                    if (!ShouldShowMaintainOptionalField(tag))
+                        return null;
+
+                    var editor = CreateSimpleEditor(tag);
+                    if (editor is TextBox tb)
+                        tb.Width = width;
+                    else if (editor is AutoCompleteBox acb)
+                        acb.Width = width;
+                    return editor;
+                }
+
+                AddMaintainOptionalCell(
+                    "modifybase",
+                    "Base Spawn Number",
+                    ShouldShowMaintainOptionalField("modifybase"),
+                    CreateMaintainSimpleEditor("modifybase"),
+                    onRemove: () => RemoveMaintainSimpleField("modifybase"),
+                    onAdd: () => state.ForcedVisibleFieldTags.Add("modifybase"));
+
+                AddMaintainOptionalCell(
+                    "modifytargetlimit",
+                    "Max Spawn In Range",
+                    ShouldShowMaintainOptionalField("modifytargetlimit"),
+                    CreateMaintainSimpleEditor("modifytargetlimit"),
+                    onRemove: () => RemoveMaintainSimpleField("modifytargetlimit"),
+                    onAdd: () => state.ForcedVisibleFieldTags.Add("modifytargetlimit"));
+
+                if (optionalSpawnRow.Children.Count > 0)
+                    state.AdditionalFieldsContainer.Children.Add(optionalSpawnRow);
+
+                var rateEntries = GetProtoActionStructuredFieldEntriesForEditor(effectiveAction, actionType, "rate");
+                state.StructuredFieldRows["rate"] = [];
+                var rateSection = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 0, 6) };
+                var ratesContainer = new StackPanel { Spacing = 4 };
+                rateSection.Children.Add(new TextBlock
+                {
+                    Text = "Rate",
+                    FontWeight = FontWeight.Bold
+                });
+                rateSection.Children.Add(ratesContainer);
+
+                void AddMaintainRateRow(ProtoActionStructuredFieldEntry? initialEntry = null)
+                {
+                    var rowPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+                    var typeAcb = new AutoCompleteBox
+                    {
+                        Text = initialEntry?.Attributes.TryGetValue("type", out var typeValue) == true ? typeValue : "",
+                        Width = 180,
+                        FilterMode = AutoCompleteFilterMode.Contains,
+                        ItemsSource = GetAvailableTrainUnitNames(),
+                        IsEnabled = !_isReadOnly
+                    };
+                    EnableDropdownAutoComplete(typeAcb);
+                    typeAcb.TextChanged += async (_, _) =>
+                    {
+                        if (_isPopulating)
+                            return;
+
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                            MarkDirty();
+                    };
+
+                    var valueTb = new TextBox
+                    {
+                        Text = initialEntry?.Value ?? "1.0",
+                        Width = 100,
+                        IsEnabled = !_isReadOnly
+                    };
+                    AttachProtoActionDecimalBehavior(valueTb);
+                    valueTb.TextChanged += async (_, _) =>
+                    {
+                        if (_isPopulating)
+                            return;
+
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                            MarkDirty();
+                    };
+
+                    var rowState = new ProtoActionStructuredFieldRowState
+                    {
+                        Tag = "rate",
+                        RowPanel = rowPanel,
+                        ValueTb = valueTb
+                    };
+                    rowState.AttributeEditors["type"] = typeAcb;
+                    state.StructuredFieldRows["rate"].Add(rowState);
+
+                    rowPanel.Children.Add(new TextBlock { Text = "Type:", VerticalAlignment = VerticalAlignment.Center });
+                    rowPanel.Children.Add(typeAcb);
+                    rowPanel.Children.Add(new TextBlock { Text = "Value:", VerticalAlignment = VerticalAlignment.Center });
+                    rowPanel.Children.Add(valueTb);
+
+                    if (!_isReadOnly)
+                    {
+                        var removeButton = new Button
+                        {
+                            Content = "X",
+                            Background = Brush.Parse("#8b0000"),
+                            Width = 28,
+                            Height = 28,
+                            Padding = new Thickness(0),
+                            HorizontalContentAlignment = HorizontalAlignment.Center,
+                            VerticalContentAlignment = VerticalAlignment.Center
+                        };
+                        removeButton.Click += async (_, _) =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (!proceed)
+                                return;
+
+                            ratesContainer.Children.Remove(rowPanel);
+                            state.StructuredFieldRows["rate"].Remove(rowState);
+                            MarkDirty();
+                        };
+                        rowPanel.Children.Add(removeButton);
+                    }
+
+                    ratesContainer.Children.Add(rowPanel);
+                }
+
+                if (rateEntries.Count == 0 && !_isReadOnly)
+                    AddMaintainRateRow();
+                else
+                {
+                    foreach (var entry in rateEntries)
+                        AddMaintainRateRow(entry);
+                }
+
+                if (!_isReadOnly)
+                {
+                    var addRateButton = new Button
+                    {
+                        Content = "+ Add Rate",
+                        Background = Brush.Parse("#2b7a0b"),
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
+                    addRateButton.Click += async (_, _) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (!proceed)
+                            return;
+
+                        AddMaintainRateRow();
+                        MarkDirty();
+                    };
+                    rateSection.Children.Add(addRateButton);
+                }
+
+                state.AdditionalFieldsContainer.Children.Add(rateSection);
+
+                var flagsPanel = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 2) };
+                flagsPanel.Children.Add(new TextBlock
+                {
+                    Text = "Optional Flags",
+                    FontWeight = FontWeight.Bold
+                });
+                var optionalFlagsRow = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+                flagsPanel.Children.Add(optionalFlagsRow);
+
+                CheckBox CreateMaintainCheckBox(string tag, string label)
+                {
+                    var checkBox = new CheckBox
+                    {
+                        Content = label,
+                        IsChecked = tag.Equals("pausable", StringComparison.OrdinalIgnoreCase)
+                            ? state.CustomValues.GetValueOrDefault(MaintainPausableValueStateKey, "1").Equals("1", StringComparison.OrdinalIgnoreCase)
+                            : tag.Equals("showqueuewhilewaiting", StringComparison.OrdinalIgnoreCase)
+                                ? state.CustomValues.GetValueOrDefault(MaintainShowQueueWhileWaitingValueStateKey, "1").Equals("1", StringComparison.OrdinalIgnoreCase)
+                                : state.SelectedFlagTags.Contains(tag),
+                        IsEnabled = !_isReadOnly,
+                        Margin = new Thickness(0, 0, 16, 0),
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+                    checkBox.IsCheckedChanged += async (_, _) =>
+                    {
+                        if (_isPopulating)
+                            return;
+
+                        var proceed = await CheckStartLocalMod();
+                        if (!proceed)
+                            return;
+
+                        if (tag.Equals("pausable", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var isChecked = checkBox.IsChecked == true;
+                            state.CustomValues[MaintainPausableValueStateKey] = isChecked ? "1" : "0";
+                            if (isChecked)
+                                state.SelectedFlagTags.Add(tag);
+                            else
+                                state.SelectedFlagTags.Remove(tag);
+                        }
+                        else if (tag.Equals("showqueuewhilewaiting", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var isChecked = checkBox.IsChecked == true;
+                            state.CustomValues[MaintainShowQueueWhileWaitingValueStateKey] = isChecked ? "1" : "0";
+                            if (isChecked)
+                                state.SelectedFlagTags.Add(tag);
+                            else
+                                state.SelectedFlagTags.Remove(tag);
+                        }
+                        else if (checkBox.IsChecked == true)
+                            state.SelectedFlagTags.Add(tag);
+                        else
+                            state.SelectedFlagTags.Remove(tag);
+
+                        RenderProtoActionFlags(state);
+                        MarkDirty();
+                    };
+                    return checkBox;
+                }
+
+                optionalFlagsRow.Children.Add(CreateMaintainCheckBox("randomtrainunit", "Random Train Unit"));
+                optionalFlagsRow.Children.Add(CreateMaintainCheckBox("killontrain", "Kill On Train"));
+                state.AdditionalFieldsContainer.Children.Add(flagsPanel);
+
+                var queuePanel = new StackPanel { Spacing = 4, Margin = new Thickness(0, 6, 0, 2) };
+                queuePanel.Children.Add(new TextBlock
+                {
+                    Text = "Queue",
+                    FontWeight = FontWeight.Bold
+                });
+                var queueRow = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+                queueRow.Children.Add(CreateMaintainCheckBox("pausable", "Pausable"));
+                queueRow.Children.Add(CreateMaintainCheckBox("showqueuewhilewaiting", "Show Queue While Waiting"));
+                queueRow.Children.Add(CreateMaintainCheckBox("hidefromglobalqueue", "Hide From Global Queue"));
+                queuePanel.Children.Add(queueRow);
+                state.AdditionalFieldsContainer.Children.Add(queuePanel);
+            }
+            else if (IsAutoGatherActionType(actionType))
+            {
+                state.CoreFieldsGrid.IsVisible = false;
+                state.RofLabel.IsVisible = false;
+                state.RofTb.IsVisible = false;
+                state.MaxRangeLabel.IsVisible = false;
+                state.MaxRangeTb.IsVisible = false;
+
+                bool ShouldShowAutoGatherOptionalField(string tag)
+                    => state.ForcedVisibleFieldTags.Contains(tag) ||
+                       !string.IsNullOrWhiteSpace(
+                           currentValues.TryGetValue(tag, out var currentValue)
+                               ? currentValue
+                               : ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, tag));
+
+                var persistentRow = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("180, Auto"),
+                    Margin = new Thickness(0, 2, 0, 2),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                persistentRow.Children.Add(new TextBlock
+                {
+                    Text = "Persistent:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                });
+                var persistentEditor = CreateSimpleEditor("persistent");
+                Grid.SetColumn(persistentEditor, 1);
+                persistentRow.Children.Add(persistentEditor);
+                state.AdditionalFieldsContainer.Children.Add(persistentRow);
+
+                var rateEntries = GetProtoActionStructuredFieldEntriesForEditor(effectiveAction, actionType, "rate");
+                state.StructuredFieldRows["rate"] = [];
+                var rateSection = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 0, 6) };
+                var ratesContainer = new StackPanel { Spacing = 4 };
+                rateSection.Children.Add(new TextBlock
+                {
+                    Text = "Rate",
+                    FontWeight = FontWeight.Bold
+                });
+                rateSection.Children.Add(ratesContainer);
+
+                void AddAutoGatherRateRow(ProtoActionStructuredFieldEntry? initialEntry = null)
+                {
+                    var rowPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+                    var typeAcb = new AutoCompleteBox
+                    {
+                        Text = initialEntry?.Attributes.TryGetValue("type", out var typeValue) == true ? typeValue : "",
+                        Width = 140,
+                        FilterMode = AutoCompleteFilterMode.Contains,
+                        ItemsSource = ProtoConstants.KnownResourceTypes,
+                        IsEnabled = !_isReadOnly
+                    };
+                    EnableDropdownAutoComplete(typeAcb);
+                    typeAcb.TextChanged += async (_, _) =>
+                    {
+                        if (_isPopulating)
+                            return;
+
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                            MarkDirty();
+                    };
+
+                    var valueTb = new TextBox
+                    {
+                        Text = initialEntry?.Value ?? "1.0",
+                        Width = 100,
+                        IsEnabled = !_isReadOnly
+                    };
+                    AttachProtoActionDecimalBehavior(valueTb);
+                    valueTb.TextChanged += async (_, _) =>
+                    {
+                        if (_isPopulating)
+                            return;
+
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                            MarkDirty();
+                    };
+
+                    var rowState = new ProtoActionStructuredFieldRowState
+                    {
+                        Tag = "rate",
+                        RowPanel = rowPanel,
+                        ValueTb = valueTb
+                    };
+                    rowState.AttributeEditors["type"] = typeAcb;
+                    state.StructuredFieldRows["rate"].Add(rowState);
+
+                    rowPanel.Children.Add(new TextBlock { Text = "Resource:", VerticalAlignment = VerticalAlignment.Center });
+                    rowPanel.Children.Add(typeAcb);
+                    rowPanel.Children.Add(new TextBlock { Text = "Value:", VerticalAlignment = VerticalAlignment.Center });
+                    rowPanel.Children.Add(valueTb);
+
+                    if (!_isReadOnly)
+                    {
+                        var removeButton = new Button
+                        {
+                            Content = "X",
+                            Background = Brush.Parse("#8b0000"),
+                            Width = 28,
+                            Height = 28,
+                            Padding = new Thickness(0),
+                            HorizontalContentAlignment = HorizontalAlignment.Center,
+                            VerticalContentAlignment = VerticalAlignment.Center
+                        };
+                        removeButton.Click += async (_, _) =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (!proceed)
+                                return;
+
+                            ratesContainer.Children.Remove(rowPanel);
+                            state.StructuredFieldRows["rate"].Remove(rowState);
+                            MarkDirty();
+                        };
+                        rowPanel.Children.Add(removeButton);
+                    }
+
+                    ratesContainer.Children.Add(rowPanel);
+                }
+
+                if (rateEntries.Count == 0 && !_isReadOnly)
+                    AddAutoGatherRateRow();
+                else
+                {
+                    foreach (var entry in rateEntries)
+                        AddAutoGatherRateRow(entry);
+                }
+
+                if (!_isReadOnly)
+                {
+                    var addRateButton = new Button
+                    {
+                        Content = "+ Add Rate",
+                        Background = Brush.Parse("#2b7a0b"),
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
+                    addRateButton.Click += async (_, _) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (!proceed)
+                            return;
+
+                        AddAutoGatherRateRow();
+                        MarkDirty();
+                    };
+                    rateSection.Children.Add(addRateButton);
+                }
+
+                state.AdditionalFieldsContainer.Children.Add(rateSection);
+
+                var optionalFlagsPanel = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 2) };
+                optionalFlagsPanel.Children.Add(new TextBlock
+                {
+                    Text = "Optional Flags",
+                    FontWeight = FontWeight.Bold
+                });
+                var optionalFlagsRow = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+                optionalFlagsPanel.Children.Add(optionalFlagsRow);
+
+                CheckBox CreateAutoGatherFlagCheckBox(string tag, string label)
+                {
+                    var checkBox = new CheckBox
+                    {
+                        Content = label,
+                        IsChecked = state.SelectedFlagTags.Contains(tag),
+                        IsEnabled = !_isReadOnly,
+                        Margin = new Thickness(0, 0, 16, 0),
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+                    checkBox.IsCheckedChanged += async (_, _) =>
+                    {
+                        if (_isPopulating)
+                            return;
+
+                        var proceed = await CheckStartLocalMod();
+                        if (!proceed)
+                            return;
+
+                        if (checkBox.IsChecked == true)
+                            state.SelectedFlagTags.Add(tag);
+                        else
+                            state.SelectedFlagTags.Remove(tag);
+
+                        RenderProtoActionFlags(state);
+                        MarkDirty();
+                    };
+                    return checkBox;
+                }
+
+                optionalFlagsRow.Children.Add(CreateAutoGatherFlagCheckBox("addresourcestoinventory", "Add Resources To Inventory"));
+                optionalFlagsRow.Children.Add(CreateAutoGatherFlagCheckBox("autogatherscalebygatherrate", "Auto Gather Scale By Gather Rate"));
+                optionalFlagsRow.Children.Add(CreateAutoGatherFlagCheckBox("donotautogatherifgathered", "Do Not Auto Gather If Gathered"));
+                state.AdditionalFieldsContainer.Children.Add(optionalFlagsPanel);
+
+                var gatheringTypes = state.StructuredFieldRows.TryGetValue("donotautogatherunlessgatheringtypes", out var existingGatheringTypeRows)
+                    ? existingGatheringTypeRows
+                        .Select(x => ReadTextLikeControlValue(x.ValueTb))
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList()
+                    : GetProtoActionNestedUnitTypeValues(effectiveAction, "donotautogatherunlessgatheringtypes");
+                state.StructuredFieldRows["donotautogatherunlessgatheringtypes"] = [];
+                var showGatheringTypes = gatheringTypes.Count > 0 || state.ForcedVisibleFieldTags.Contains("donotautogatherunlessgatheringtypes");
+                if (showGatheringTypes || !_isReadOnly)
+                {
+                    var gatheringTypesSection = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 6) };
+                    gatheringTypesSection.Children.Add(new TextBlock
+                    {
+                        Text = "Do Not Auto Gather Unless Gathering Types",
+                        FontWeight = FontWeight.Bold
+                    });
+                    var gatheringTypesContainer = new StackPanel { Spacing = 4 };
+                    gatheringTypesSection.Children.Add(gatheringTypesContainer);
+
+                    void AddGatheringTypeRow(string initialValue = "")
+                    {
+                        var rowPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+                        var typeAcb = new AutoCompleteBox
+                        {
+                            Text = initialValue,
+                            Width = 180,
+                            FilterMode = AutoCompleteFilterMode.Contains,
+                            ItemsSource = GetAvailableBuildLimitTargets(),
+                            IsEnabled = !_isReadOnly
+                        };
+                        EnableDropdownAutoComplete(typeAcb);
+                        typeAcb.TextChanged += async (_, _) =>
+                        {
+                            if (_isPopulating)
+                                return;
+
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                                MarkDirty();
+                        };
+
+                        var rowState = new ProtoActionStructuredFieldRowState
+                        {
+                            Tag = "donotautogatherunlessgatheringtypes",
+                            RowPanel = rowPanel,
+                            ValueTb = typeAcb
+                        };
+                        state.StructuredFieldRows["donotautogatherunlessgatheringtypes"].Add(rowState);
+
+                        rowPanel.Children.Add(new TextBlock { Text = "Unit Type:", VerticalAlignment = VerticalAlignment.Center });
+                        rowPanel.Children.Add(typeAcb);
+
+                        if (!_isReadOnly)
+                        {
+                            var removeButton = new Button
+                            {
+                                Content = "X",
+                                Background = Brush.Parse("#8b0000"),
+                                Width = 28,
+                                Height = 28,
+                                Padding = new Thickness(0),
+                                HorizontalContentAlignment = HorizontalAlignment.Center,
+                                VerticalContentAlignment = VerticalAlignment.Center
+                            };
+                            removeButton.Click += async (_, _) =>
+                            {
+                                var proceed = await CheckStartLocalMod();
+                                if (!proceed)
+                                    return;
+
+                                gatheringTypesContainer.Children.Remove(rowPanel);
+                                state.StructuredFieldRows["donotautogatherunlessgatheringtypes"].Remove(rowState);
+                                if (state.StructuredFieldRows["donotautogatherunlessgatheringtypes"].Count == 0)
+                                    state.ForcedVisibleFieldTags.Remove("donotautogatherunlessgatheringtypes");
+                                MarkDirty();
+                                RefreshProtoActionMetadataPanels(state);
+                            };
+                            rowPanel.Children.Add(removeButton);
+                        }
+
+                        gatheringTypesContainer.Children.Add(rowPanel);
+                    }
+
+                    foreach (var gatheringType in gatheringTypes)
+                        AddGatheringTypeRow(gatheringType);
+
+                    if (!_isReadOnly)
+                    {
+                        var addTypeButton = new Button
+                        {
+                            Content = "+ Add Gathering Type",
+                            Background = Brush.Parse("#2b7a0b"),
+                            HorizontalAlignment = HorizontalAlignment.Left
+                        };
+                        addTypeButton.Click += async (_, _) =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (!proceed)
+                                return;
+
+                            state.ForcedVisibleFieldTags.Add("donotautogatherunlessgatheringtypes");
+                            AddGatheringTypeRow();
+                            MarkDirty();
+                        };
+                        gatheringTypesSection.Children.Add(addTypeButton);
+                    }
+
+                    state.AdditionalFieldsContainer.Children.Add(gatheringTypesSection);
+                }
+
+                var modifyRow = new WrapPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Margin = new Thickness(0, 2, 0, 2)
+                };
+
+                void AddAutoGatherOptionalCell(string tag, string label)
+                {
+                    var isVisible = ShouldShowAutoGatherOptionalField(tag);
+                    if (isVisible)
+                    {
+                        var cell = new StackPanel
+                        {
+                            Orientation = Orientation.Horizontal,
+                            Spacing = 6,
+                            Margin = new Thickness(0, 0, 14, 0)
+                        };
+                        cell.Children.Add(new TextBlock
+                        {
+                            Text = label + ":",
+                            VerticalAlignment = VerticalAlignment.Center,
+                            Margin = new Thickness(0, 4, 10, 4)
+                        });
+                        var editor = CreateSimpleEditor(tag);
+                        if (editor is TextBox tb)
+                            tb.Width = 90;
+                        cell.Children.Add(editor);
+                        if (!_isReadOnly)
+                        {
+                            var removeButton = new Button
+                            {
+                                Content = "X",
+                                Background = Brush.Parse("#8b0000"),
+                                Width = 28,
+                                Height = 28,
+                                Padding = new Thickness(0),
+                                HorizontalContentAlignment = HorizontalAlignment.Center,
+                                VerticalContentAlignment = VerticalAlignment.Center
+                            };
+                            removeButton.Click += async (_, _) =>
+                            {
+                                var proceed = await CheckStartLocalMod();
+                                if (!proceed)
+                                    return;
+
+                                state.ForcedVisibleFieldTags.Remove(tag);
+                                state.AdditionalFieldControls.Remove(tag);
+                                ProtoXmlHandler.SetProtoActionSimpleFieldValue(state.Model, tag, "");
+                                MarkDirty();
+                                RefreshProtoActionMetadataPanels(state);
+                            };
+                            cell.Children.Add(removeButton);
+                        }
+                        modifyRow.Children.Add(cell);
+                    }
+                    else if (!_isReadOnly)
+                    {
+                        var addButton = new Button
+                        {
+                            Content = label,
+                            Background = Brush.Parse("#2b7a0b"),
+                            HorizontalAlignment = HorizontalAlignment.Left,
+                            Margin = new Thickness(0, 0, 12, 0)
+                        };
+                        addButton.Click += async (_, _) =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (!proceed)
+                                return;
+
+                            state.ForcedVisibleFieldTags.Add(tag);
+                            MarkDirty();
+                            RefreshProtoActionMetadataPanels(state);
+                        };
+                        modifyRow.Children.Add(addButton);
+                    }
+                }
+
+                AddAutoGatherOptionalCell("modifybase", "Modify Base");
+                AddAutoGatherOptionalCell("modifymultiplier", "Modify Multiplier");
+                AddAutoGatherOptionalCell("modifyratecap", "Modify Rate Cap");
+                if (modifyRow.Children.Count > 0)
+                    state.AdditionalFieldsContainer.Children.Add(modifyRow);
+            }
+            else if (IsConvertActionType(actionType))
+            {
+                state.CoreFieldsGrid.IsVisible = false;
+                state.RofLabel.IsVisible = false;
+                state.RofTb.IsVisible = false;
+                state.MaxRangeLabel.IsVisible = false;
+                state.MaxRangeTb.IsVisible = false;
+
+                bool IsCharmedConvert()
+                    => state.SelectedFlagTags.Contains("charmedconvert");
+
+                bool ShouldShowConvertOptionalField(string tag)
+                    => state.ForcedVisibleFieldTags.Contains(tag) ||
+                       !string.IsNullOrWhiteSpace(
+                           currentValues.TryGetValue(tag, out var currentValue)
+                               ? currentValue
+                               : ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, tag));
+
+                var topRow = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("180, *, 140, 120"),
+                    Margin = new Thickness(0, 2, 0, 2),
+                    HorizontalAlignment = HorizontalAlignment.Stretch
+                };
+                topRow.Children.Add(new TextBlock
+                {
+                    Text = "Animation:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                });
+                var animEditor = CreateSimpleEditor("anim");
+                Grid.SetColumn(animEditor, 1);
+                topRow.Children.Add(animEditor);
+
+                var maxRangeLabel = new TextBlock
+                {
+                    Text = "Max Range:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(12, 4, 10, 4)
+                };
+                Grid.SetColumn(maxRangeLabel, 2);
+                topRow.Children.Add(maxRangeLabel);
+                var maxRangeMirror = new TextBox
+                {
+                    Text = GetProtoActionDefaultSimpleValue(
+                        "maxrange",
+                        currentValues.TryGetValue("maxrange", out var currentMaxRange)
+                            ? currentMaxRange
+                            : state.MaxRangeTb.Text ?? ""),
+                    IsEnabled = !_isReadOnly,
+                    Width = 120
+                };
+                AttachProtoActionDecimalBehavior(maxRangeMirror);
+                maxRangeMirror.TextChanged += async (_, _) =>
+                {
+                    state.MaxRangeTb.Text = maxRangeMirror.Text;
+                    if (_isPopulating)
+                        return;
+
+                    var proceed = await CheckStartLocalMod();
+                    if (proceed)
+                        MarkDirty();
+                };
+                Grid.SetColumn(maxRangeMirror, 3);
+                topRow.Children.Add(maxRangeMirror);
+                state.AdditionalFieldsContainer.Children.Add(topRow);
+
+                var charmedRow = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("180, Auto"),
+                    Margin = new Thickness(0, 2, 0, 2),
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                charmedRow.Children.Add(new TextBlock
+                {
+                    Text = "Charmed Convert:",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 4, 10, 4)
+                });
+                var charmedCheckBox = new CheckBox
+                {
+                    IsChecked = IsCharmedConvert(),
+                    IsEnabled = !_isReadOnly,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                charmedCheckBox.IsCheckedChanged += async (_, _) =>
+                {
+                    if (_isPopulating)
+                        return;
+
+                    var proceed = await CheckStartLocalMod();
+                    if (!proceed)
+                        return;
+
+                    if (charmedCheckBox.IsChecked == true)
+                        state.SelectedFlagTags.Add("charmedconvert");
+                    else
+                    {
+                        state.SelectedFlagTags.Remove("charmedconvert");
+                        state.StructuredFieldRows.Remove("typedduration");
+                        state.StructuredFieldRows.Remove("typedstunduration");
+                        ProtoXmlHandler.SetProtoActionStructuredFieldEntries(state.Model, "typedduration", []);
+                        ProtoXmlHandler.SetProtoActionStructuredFieldEntries(state.Model, "typedstunduration", []);
+                    }
+
+                    RenderProtoActionFlags(state);
+                    MarkDirty();
+                    RefreshProtoActionMetadataPanels(state);
+                };
+                Grid.SetColumn(charmedCheckBox, 1);
+                charmedRow.Children.Add(charmedCheckBox);
+                state.AdditionalFieldsContainer.Children.Add(charmedRow);
+
+                var rateEntries = GetProtoActionStructuredFieldEntriesForEditor(effectiveAction, actionType, "rate");
+                var minRateEntries = GetProtoActionStructuredFieldEntriesForEditor(effectiveAction, actionType, "minrate");
+                var conversionProtoEntries = GetProtoActionStructuredFieldEntriesForEditor(effectiveAction, actionType, "conversionprotoid");
+                state.StructuredFieldRows["rate"] = [];
+                state.StructuredFieldRows["minrate"] = [];
+                state.StructuredFieldRows["conversionprotoid"] = [];
+
+                var minRateEntriesByType = minRateEntries
+                    .GroupBy(entry => entry.Attributes.TryGetValue("type", out var typeValue) ? typeValue?.Trim() ?? "" : "",
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(group => group.Key, group => new Queue<ProtoActionStructuredFieldEntry>(group), StringComparer.OrdinalIgnoreCase);
+                var conversionProtoEntriesBySourceType = conversionProtoEntries
+                    .GroupBy(entry => entry.Attributes.TryGetValue("srctype", out var sourceTypeValue) ? sourceTypeValue?.Trim() ?? "" : "",
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(group => group.Key, group => new Queue<ProtoActionStructuredFieldEntry>(group), StringComparer.OrdinalIgnoreCase);
+
+                ProtoActionStructuredFieldEntry? ConsumeMinRateEntryForType(string type)
+                {
+                    var key = type?.Trim() ?? "";
+                    if (minRateEntriesByType.TryGetValue(key, out var matchingEntries) && matchingEntries.Count > 0)
+                        return matchingEntries.Dequeue();
+
+                    return null;
+                }
+
+                ProtoActionStructuredFieldEntry? ConsumeConversionProtoEntryForSourceType(string type)
+                {
+                    var key = type?.Trim() ?? "";
+                    if (conversionProtoEntriesBySourceType.TryGetValue(key, out var matchingEntries) && matchingEntries.Count > 0)
+                        return matchingEntries.Dequeue();
+
+                    return null;
+                }
+
+                var convertRatesSection = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 6) };
+                var convertRatesContainer = new StackPanel { Spacing = 4 };
+                convertRatesSection.Children.Add(convertRatesContainer);
+
+                void AddConvertRateRow(
+                    ProtoActionStructuredFieldEntry? initialRateEntry = null,
+                    ProtoActionStructuredFieldEntry? initialMinRateEntry = null,
+                    ProtoActionStructuredFieldEntry? initialConversionProtoEntry = null)
+                {
+                    var rateEntry = initialRateEntry ?? new ProtoActionStructuredFieldEntry();
+                    var minRateEntry = initialMinRateEntry ?? new ProtoActionStructuredFieldEntry();
+                    var conversionProtoEntry = initialConversionProtoEntry ?? new ProtoActionStructuredFieldEntry();
+
+                    var rowGrid = new Grid
+                    {
+                        ColumnDefinitions = !_isReadOnly
+                            ? new ColumnDefinitions("70, 150, 60, 90, 80, 90, Auto, 180, 32, 20, 32")
+                            : new ColumnDefinitions("70, 150, 60, 90, 80, 90, Auto, 180"),
+                        Margin = new Thickness(0, 2, 0, 2),
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
+
+                    var rateTypeAcb = new AutoCompleteBox
+                    {
+                        Text = rateEntry.Attributes.TryGetValue("type", out var currentRateType) ? currentRateType : "",
+                        Width = 150,
+                        FilterMode = AutoCompleteFilterMode.Contains,
+                        ItemsSource = GetAvailableBuildLimitTargets(),
+                        IsEnabled = !_isReadOnly
+                    };
+                    EnableDropdownAutoComplete(rateTypeAcb);
+                    var rateValueTb = new TextBox
+                    {
+                        Text = rateEntry.Value ?? "1.0",
+                        Width = 90,
+                        IsEnabled = !_isReadOnly
+                    };
+                    AttachProtoActionDecimalBehavior(rateValueTb);
+                    var rateRowState = new ProtoActionStructuredFieldRowState
+                    {
+                        Tag = "rate",
+                        RowPanel = rowGrid,
+                        ValueTb = rateValueTb
+                    };
+                    rateRowState.AttributeEditors["type"] = rateTypeAcb;
+                    state.StructuredFieldRows["rate"].Add(rateRowState);
+
+                    var minRateValueTb = new TextBox
+                    {
+                        Text = minRateEntry.Value ?? (string.Equals(rateEntry.Value?.Trim(), "0", StringComparison.OrdinalIgnoreCase) ||
+                                                     string.Equals(rateEntry.Value?.Trim(), "0.0", StringComparison.OrdinalIgnoreCase) ||
+                                                     string.Equals(rateEntry.Value?.Trim(), "0.000000", StringComparison.OrdinalIgnoreCase)
+                            ? "0"
+                            : rateEntry.Value ?? "1.0"),
+                        Width = 90,
+                        IsEnabled = !_isReadOnly
+                    };
+                    AttachProtoActionDecimalBehavior(minRateValueTb);
+                    var minRateRowState = new ProtoActionStructuredFieldRowState
+                    {
+                        Tag = "minrate",
+                        RowPanel = rowGrid,
+                        ValueTb = minRateValueTb
+                    };
+                    minRateRowState.AttributeEditors["type"] = rateTypeAcb;
+                    state.StructuredFieldRows["minrate"].Add(minRateRowState);
+
+                    var conversionProtoAcb = new AutoCompleteBox
+                    {
+                        Text = conversionProtoEntry.Value ?? "",
+                        Width = 150,
+                        FilterMode = AutoCompleteFilterMode.Contains,
+                        ItemsSource = GetAvailableTrainUnitNames(),
+                        IsEnabled = !_isReadOnly
+                    };
+                    EnableDropdownAutoComplete(conversionProtoAcb);
+                    var conversionProtoRowState = new ProtoActionStructuredFieldRowState
+                    {
+                        Tag = "conversionprotoid",
+                        RowPanel = rowGrid,
+                        ValueTb = conversionProtoAcb,
+                        IncludeInSerialization = !string.IsNullOrWhiteSpace(conversionProtoEntry.Value)
+                    };
+                    conversionProtoRowState.AttributeEditors["srctype"] = rateTypeAcb;
+                    state.StructuredFieldRows["conversionprotoid"].Add(conversionProtoRowState);
+
+                    var minRateMirrorsRate = string.IsNullOrWhiteSpace(minRateEntry.Value) ||
+                                             string.Equals(minRateEntry.Value?.Trim(), rateEntry.Value?.Trim(), StringComparison.OrdinalIgnoreCase);
+
+                    void SyncMinRateFromRate()
+                    {
+                        if (minRateMirrorsRate)
+                            minRateValueTb.Text = rateValueTb.Text;
+                    }
+
+                    rateTypeAcb.TextChanged += async (_, _) =>
+                    {
+                        SyncMinRateFromRate();
+                        if (_isPopulating)
+                            return;
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                            MarkDirty();
+                    };
+                    rateValueTb.TextChanged += async (_, _) =>
+                    {
+                        SyncMinRateFromRate();
+                        if (_isPopulating)
+                            return;
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                            MarkDirty();
+                    };
+                    minRateValueTb.TextChanged += async (_, _) =>
+                    {
+                        if (!_isPopulating)
+                            minRateMirrorsRate = string.Equals(minRateValueTb.Text?.Trim(), rateValueTb.Text?.Trim(), StringComparison.OrdinalIgnoreCase);
+
+                        if (_isPopulating)
+                            return;
+
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                            MarkDirty();
+                    };
+                    conversionProtoAcb.TextChanged += async (_, _) =>
+                    {
+                        if (_isPopulating)
+                            return;
+                        var proceed = await CheckStartLocalMod();
+                        if (proceed)
+                            MarkDirty();
+                    };
+                    SyncMinRateFromRate();
+
+                    rowGrid.Children.Add(new TextBlock { Text = "Rate:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+                    Grid.SetColumn(rateTypeAcb, 1);
+                    rowGrid.Children.Add(rateTypeAcb);
+                    var rateValueLabel = new TextBlock { Text = "Value:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+                    Grid.SetColumn(rateValueLabel, 2);
+                    rowGrid.Children.Add(rateValueLabel);
+                    Grid.SetColumn(rateValueTb, 3);
+                    rowGrid.Children.Add(rateValueTb);
+                    var minRateLabel = new TextBlock { Text = "Min Rate:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+                    Grid.SetColumn(minRateLabel, 4);
+                    rowGrid.Children.Add(minRateLabel);
+                    Grid.SetColumn(minRateValueTb, 5);
+                    rowGrid.Children.Add(minRateValueTb);
+
+                    var conversionProtoLabel = new TextBlock
+                    {
+                        Text = "Conversion Proto ID:",
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin = new Thickness(20, 4, 10, 4),
+                        IsVisible = !string.IsNullOrWhiteSpace(conversionProtoEntry.Value)
+                    };
+                    Grid.SetColumn(conversionProtoLabel, 6);
+                    rowGrid.Children.Add(conversionProtoLabel);
+                    conversionProtoAcb.IsVisible = conversionProtoLabel.IsVisible;
+                    Grid.SetColumn(conversionProtoAcb, 7);
+                    rowGrid.Children.Add(conversionProtoAcb);
+
+                    Button? addConversionButton = null;
+                    Button? removeConversionButton = null;
+                    if (!_isReadOnly)
+                    {
+                        addConversionButton = new Button
+                        {
+                            Content = "Conversion Proto ID",
+                            Background = Brush.Parse("#2b7a0b"),
+                            HorizontalAlignment = HorizontalAlignment.Left,
+                            Margin = new Thickness(8, 0, 0, 0),
+                            IsVisible = !conversionProtoLabel.IsVisible
+                        };
+                        addConversionButton.Click += async (_, _) =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (!proceed)
+                                return;
+
+                            conversionProtoLabel.IsVisible = true;
+                            conversionProtoAcb.IsVisible = true;
+                            conversionProtoRowState.IncludeInSerialization = true;
+                            addConversionButton.IsVisible = false;
+                            if (removeConversionButton != null)
+                                removeConversionButton.IsVisible = true;
+                            MarkDirty();
+                        };
+                        Grid.SetColumn(addConversionButton, 6);
+                        Grid.SetColumnSpan(addConversionButton, 2);
+                        rowGrid.Children.Add(addConversionButton);
+
+                        removeConversionButton = new Button
+                        {
+                            Content = "X",
+                            Background = Brush.Parse("#8b0000"),
+                            Width = 28,
+                            Height = 28,
+                            Padding = new Thickness(0),
+                            Margin = new Thickness(8, 0, 0, 0),
+                            IsVisible = conversionProtoLabel.IsVisible,
+                            HorizontalContentAlignment = HorizontalAlignment.Center,
+                            VerticalContentAlignment = VerticalAlignment.Center
+                        };
+                        removeConversionButton.Click += async (_, _) =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (!proceed)
+                                return;
+
+                            conversionProtoAcb.Text = "";
+                            conversionProtoLabel.IsVisible = false;
+                            conversionProtoAcb.IsVisible = false;
+                            conversionProtoRowState.IncludeInSerialization = false;
+                            removeConversionButton.IsVisible = false;
+                            if (addConversionButton != null)
+                                addConversionButton.IsVisible = true;
+                            MarkDirty();
+                        };
+                        Grid.SetColumn(removeConversionButton, 8);
+                        rowGrid.Children.Add(removeConversionButton);
+                    }
+
+                    if (!_isReadOnly)
+                    {
+                        var removeButton = new Button
+                        {
+                            Content = "X",
+                            Background = Brush.Parse("#8b0000"),
+                            Width = 28,
+                            Height = 28,
+                            Padding = new Thickness(0),
+                            HorizontalContentAlignment = HorizontalAlignment.Center,
+                            VerticalContentAlignment = VerticalAlignment.Center
+                        };
+                        removeButton.Click += async (_, _) =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (!proceed)
+                                return;
+
+                            convertRatesContainer.Children.Remove(rowGrid);
+                            state.StructuredFieldRows["rate"].Remove(rateRowState);
+                            state.StructuredFieldRows["minrate"].Remove(minRateRowState);
+                            state.StructuredFieldRows["conversionprotoid"].Remove(conversionProtoRowState);
+                            MarkDirty();
+                        };
+                        Grid.SetColumn(removeButton, 10);
+                        rowGrid.Children.Add(removeButton);
+                    }
+
+                    convertRatesContainer.Children.Add(rowGrid);
+                }
+
+                if (rateEntries.Count == 0)
+                {
+                    if (!_isReadOnly)
+                        AddConvertRateRow();
+                }
+                else
+                {
+                    foreach (var rateEntry in rateEntries)
+                    {
+                        var rateType = rateEntry.Attributes.TryGetValue("type", out var currentRateType) ? currentRateType : "";
+                        AddConvertRateRow(
+                            rateEntry,
+                            ConsumeMinRateEntryForType(rateType),
+                            ConsumeConversionProtoEntryForSourceType(rateType));
+                    }
+                }
+
+                if (!_isReadOnly)
+                {
+                    var addRateButton = new Button
+                    {
+                        Content = "+ Add Rate",
+                        Background = Brush.Parse("#2b7a0b"),
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
+                    addRateButton.Click += async (_, _) =>
+                    {
+                        var proceed = await CheckStartLocalMod();
+                        if (!proceed)
+                            return;
+                        AddConvertRateRow();
+                        MarkDirty();
+                    };
+                    convertRatesSection.Children.Add(addRateButton);
+                }
+
+                state.AdditionalFieldsContainer.Children.Add(convertRatesSection);
+
+                void AddConvertOptionalSimpleRow(string tag, string label)
+                {
+                    var isVisible = ShouldShowConvertOptionalField(tag);
+                    if (isVisible)
+                    {
+                        var row = new Grid
+                        {
+                            ColumnDefinitions = !_isReadOnly
+                                ? new ColumnDefinitions("180, 140, 32")
+                                : new ColumnDefinitions("180, 140"),
+                            Margin = new Thickness(0, 2, 0, 2),
+                            HorizontalAlignment = HorizontalAlignment.Left
+                        };
+                        row.Children.Add(new TextBlock
+                        {
+                            Text = label + ":",
+                            VerticalAlignment = VerticalAlignment.Center,
+                            Margin = new Thickness(0, 4, 10, 4)
+                        });
+                        var editor = CreateSimpleEditor(tag);
+                        if (editor is TextBox tb)
+                            tb.Width = 140;
+                        else if (editor is AutoCompleteBox acb)
+                            acb.Width = 140;
+                        Grid.SetColumn(editor, 1);
+                        row.Children.Add(editor);
+                        if (!_isReadOnly)
+                        {
+                            var removeButton = new Button
+                            {
+                                Content = "X",
+                                Background = Brush.Parse("#8b0000"),
+                                Width = 28,
+                                Height = 28,
+                                Padding = new Thickness(0),
+                                HorizontalContentAlignment = HorizontalAlignment.Center,
+                                VerticalContentAlignment = VerticalAlignment.Center,
+                                Margin = new Thickness(8, 0, 0, 0)
+                            };
+                            removeButton.Click += async (_, _) =>
+                            {
+                                var proceed = await CheckStartLocalMod();
+                                if (!proceed)
+                                    return;
+                                state.ForcedVisibleFieldTags.Remove(tag);
+                                state.AdditionalFieldControls.Remove(tag);
+                                ProtoXmlHandler.SetProtoActionSimpleFieldValue(state.Model, tag, "");
+                                MarkDirty();
+                                RefreshProtoActionMetadataPanels(state);
+                            };
+                            Grid.SetColumn(removeButton, 2);
+                            row.Children.Add(removeButton);
+                        }
+                        state.AdditionalFieldsContainer.Children.Add(row);
+                    }
+                    else if (!_isReadOnly)
+                    {
+                        var addButton = new Button
+                        {
+                            Content = label,
+                            Background = Brush.Parse("#2b7a0b"),
+                            HorizontalAlignment = HorizontalAlignment.Left
+                        };
+                        addButton.Click += async (_, _) =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (!proceed)
+                                return;
+                            state.ForcedVisibleFieldTags.Add(tag);
+                            MarkDirty();
+                            RefreshProtoActionMetadataPanels(state);
+                        };
+                        state.AdditionalFieldsContainer.Children.Add(addButton);
+                    }
+                }
+
+                var extraRateVisible = ShouldShowConvertOptionalField("extraratepertargethp");
+                var workingRangeVisible = ShouldShowConvertOptionalField("workingrangeslack");
+                if (extraRateVisible || workingRangeVisible)
+                {
+                    var sharedOptionalRow = new Grid
+                    {
+                        ColumnDefinitions = !_isReadOnly
+                            ? new ColumnDefinitions("170, 120, Auto, 170, 120, Auto")
+                            : new ColumnDefinitions("170, 120, 170, 120"),
+                        Margin = new Thickness(0, 2, 0, 2),
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
+
+                    void AddSharedOptionalField(string tag, string label, int labelColumn, int editorColumn, int removeColumn)
+                    {
+                        if (!ShouldShowConvertOptionalField(tag))
+                            return;
+
+                        sharedOptionalRow.Children.Add(new TextBlock
+                        {
+                            Text = label + ":",
+                            VerticalAlignment = VerticalAlignment.Center,
+                            Margin = new Thickness(labelColumn == 0 ? 0 : 12, 4, 10, 4)
+                        });
+                        Grid.SetColumn(sharedOptionalRow.Children[^1], labelColumn);
+
+                        var editor = CreateSimpleEditor(tag);
+                        if (editor is TextBox tb)
+                            tb.Width = 120;
+                        else if (editor is AutoCompleteBox acb)
+                            acb.Width = 120;
+                        Grid.SetColumn(editor, editorColumn);
+                        sharedOptionalRow.Children.Add(editor);
+
+                        if (!_isReadOnly)
+                        {
+                            var removeButton = new Button
+                            {
+                                Content = "X",
+                                Background = Brush.Parse("#8b0000"),
+                                Width = 28,
+                                Height = 28,
+                                Padding = new Thickness(0),
+                                HorizontalContentAlignment = HorizontalAlignment.Center,
+                                VerticalContentAlignment = VerticalAlignment.Center,
+                                Margin = new Thickness(8, 0, 0, 0)
+                            };
+                            removeButton.Click += async (_, _) =>
+                            {
+                                var proceed = await CheckStartLocalMod();
+                                if (!proceed)
+                                    return;
+                                state.ForcedVisibleFieldTags.Remove(tag);
+                                state.AdditionalFieldControls.Remove(tag);
+                                ProtoXmlHandler.SetProtoActionSimpleFieldValue(state.Model, tag, "");
+                                MarkDirty();
+                                RefreshProtoActionMetadataPanels(state);
+                            };
+                            Grid.SetColumn(removeButton, removeColumn);
+                            sharedOptionalRow.Children.Add(removeButton);
+                        }
+                    }
+
+                    AddSharedOptionalField("extraratepertargethp", "Extra Rate Per Target HP", 0, 1, 2);
+                    AddSharedOptionalField("workingrangeslack", "Working Range Slack", _isReadOnly ? 2 : 3, _isReadOnly ? 3 : 4, 5);
+                    state.AdditionalFieldsContainer.Children.Add(sharedOptionalRow);
+                }
+
+                if (!_isReadOnly)
+                {
+                    var optionalButtonsRow = new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 8,
+                        Margin = new Thickness(0, 2, 0, 2)
+                    };
+
+                    void AddOptionalButton(string tag, string label)
+                    {
+                        var addButton = new Button
+                        {
+                            Content = label,
+                            Background = Brush.Parse("#2b7a0b"),
+                            HorizontalAlignment = HorizontalAlignment.Left
+                        };
+                        addButton.Click += async (_, _) =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (!proceed)
+                                return;
+                            state.ForcedVisibleFieldTags.Add(tag);
+                            MarkDirty();
+                            RefreshProtoActionMetadataPanels(state);
+                        };
+                        optionalButtonsRow.Children.Add(addButton);
+                    }
+
+                    if (!extraRateVisible)
+                        AddOptionalButton("extraratepertargethp", "Extra Rate Per Target HP");
+                    if (!workingRangeVisible)
+                        AddOptionalButton("workingrangeslack", "Working Range Slack");
+                    if (optionalButtonsRow.Children.Count > 0)
+                        state.AdditionalFieldsContainer.Children.Add(optionalButtonsRow);
+                }
+
+                if (_isReadOnly || ShouldShowConvertOptionalField("attachprotounit"))
+                    AddConvertOptionalSimpleRow("attachprotounit", "Attach Proto Unit");
+
+                if (IsCharmedConvert())
+                {
+                    var typedDurationEntries = GetProtoActionStructuredFieldEntriesForEditor(effectiveAction, actionType, "typedduration");
+                    var typedStunEntries = GetProtoActionStructuredFieldEntriesForEditor(effectiveAction, actionType, "typedstunduration");
+                    state.StructuredFieldRows["typedduration"] = [];
+                    state.StructuredFieldRows["typedstunduration"] = [];
+
+                    var typedStunEntriesByType = typedStunEntries
+                        .GroupBy(entry => entry.Attributes.TryGetValue("type", out var typeValue) ? typeValue?.Trim() ?? "" : "",
+                            StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(group => group.Key, group => new Queue<ProtoActionStructuredFieldEntry>(group), StringComparer.OrdinalIgnoreCase);
+
+                    ProtoActionStructuredFieldEntry? ConsumeTypedStunEntryForType(string type)
+                    {
+                        var key = type?.Trim() ?? "";
+                        if (typedStunEntriesByType.TryGetValue(key, out var matchingEntries) && matchingEntries.Count > 0)
+                            return matchingEntries.Dequeue();
+
+                        return null;
+                    }
+
+                    var typedSection = new StackPanel { Spacing = 4, Margin = new Thickness(0, 2, 0, 6) };
+                    var typedRowsContainer = new StackPanel { Spacing = 4 };
+                    typedSection.Children.Add(typedRowsContainer);
+
+                    void AddTypedDurationRow(
+                        ProtoActionStructuredFieldEntry? initialDurationEntry = null,
+                        ProtoActionStructuredFieldEntry? initialStunEntry = null)
+                    {
+                        var durationEntry = initialDurationEntry ?? new ProtoActionStructuredFieldEntry();
+                        var stunEntry = initialStunEntry ?? new ProtoActionStructuredFieldEntry();
+                        var hasStun = initialStunEntry != null &&
+                                      (!string.IsNullOrWhiteSpace(stunEntry.Value) || stunEntry.Attributes.Count > 0);
+
+                        var rowGrid = new Grid
+                        {
+                            ColumnDefinitions = !_isReadOnly
+                                ? new ColumnDefinitions("70, 180, 80, 100, Auto, 130, 100, 32, 20, 32")
+                                : new ColumnDefinitions("70, 180, 80, 100, Auto, 130, 100"),
+                            Margin = new Thickness(0, 2, 0, 2),
+                            HorizontalAlignment = HorizontalAlignment.Left
+                        };
+
+                        var durationTypeAcb = new AutoCompleteBox
+                        {
+                            Text = durationEntry.Attributes.TryGetValue("type", out var durationTypeValue) ? durationTypeValue : "",
+                            Width = 180,
+                            FilterMode = AutoCompleteFilterMode.Contains,
+                            ItemsSource = GetAvailableBuildLimitTargets(),
+                            IsEnabled = !_isReadOnly
+                        };
+                        EnableDropdownAutoComplete(durationTypeAcb);
+                        durationTypeAcb.TextChanged += async (_, _) =>
+                        {
+                            if (_isPopulating)
+                                return;
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                                MarkDirty();
+                        };
+                        var durationValueTb = new TextBox
+                        {
+                            Text = durationEntry.Value ?? "",
+                            Width = 100,
+                            IsEnabled = !_isReadOnly
+                        };
+                        AttachProtoActionDecimalBehavior(durationValueTb);
+                        durationValueTb.TextChanged += async (_, _) =>
+                        {
+                            if (_isPopulating)
+                                return;
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                                MarkDirty();
+                        };
+                        var durationRowState = new ProtoActionStructuredFieldRowState
+                        {
+                            Tag = "typedduration",
+                            RowPanel = rowGrid,
+                            ValueTb = durationValueTb
+                        };
+                        durationRowState.AttributeEditors["type"] = durationTypeAcb;
+                        state.StructuredFieldRows["typedduration"].Add(durationRowState);
+
+                        var stunValueTb = new TextBox
+                        {
+                            Text = stunEntry.Value ?? "",
+                            Width = 100,
+                            IsEnabled = !_isReadOnly
+                        };
+                        AttachProtoActionDecimalBehavior(stunValueTb);
+                        stunValueTb.TextChanged += async (_, _) =>
+                        {
+                            if (_isPopulating)
+                                return;
+                            var proceed = await CheckStartLocalMod();
+                            if (proceed)
+                                MarkDirty();
+                        };
+                        var stunRowState = new ProtoActionStructuredFieldRowState
+                        {
+                            Tag = "typedstunduration",
+                            RowPanel = rowGrid,
+                            ValueTb = stunValueTb,
+                            IncludeInSerialization = hasStun
+                        };
+                        stunRowState.AttributeEditors["type"] = durationTypeAcb;
+                        state.StructuredFieldRows["typedstunduration"].Add(stunRowState);
+
+                        rowGrid.Children.Add(new TextBlock { Text = "Type:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 10, 4) });
+                        Grid.SetColumn(durationTypeAcb, 1);
+                        rowGrid.Children.Add(durationTypeAcb);
+                        var durationValueLabel = new TextBlock { Text = "Duration:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 4, 10, 4) };
+                        Grid.SetColumn(durationValueLabel, 2);
+                        rowGrid.Children.Add(durationValueLabel);
+                        Grid.SetColumn(durationValueTb, 3);
+                        rowGrid.Children.Add(durationValueTb);
+
+                        var stunValueLabel = new TextBlock
+                        {
+                            Text = "Stun Duration:",
+                            VerticalAlignment = VerticalAlignment.Center,
+                            Margin = new Thickness(20, 4, 10, 4),
+                            IsVisible = hasStun
+                        };
+                        Grid.SetColumn(stunValueLabel, 5);
+                        rowGrid.Children.Add(stunValueLabel);
+                        stunValueTb.IsVisible = hasStun;
+                        Grid.SetColumn(stunValueTb, 6);
+                        rowGrid.Children.Add(stunValueTb);
+
+                        Button? addTypedStunButton = null;
+                        Button? removeTypedStunButton = null;
+                        if (!_isReadOnly && !hasStun)
+                        {
+                            addTypedStunButton = new Button
+                            {
+                                Content = "Typed Stun Duration",
+                                Background = Brush.Parse("#2b7a0b"),
+                                HorizontalAlignment = HorizontalAlignment.Left,
+                                Margin = new Thickness(8, 0, 0, 0)
+                            };
+                            addTypedStunButton.Click += async (_, _) =>
+                            {
+                                var proceed = await CheckStartLocalMod();
+                                if (!proceed)
+                                    return;
+
+                                stunValueLabel.IsVisible = true;
+                                stunValueTb.IsVisible = true;
+                                stunRowState.IncludeInSerialization = true;
+                                addTypedStunButton.IsVisible = false;
+                                if (removeTypedStunButton != null)
+                                    removeTypedStunButton.IsVisible = true;
+                                MarkDirty();
+                            };
+                            Grid.SetColumn(addTypedStunButton, 5);
+                            Grid.SetColumnSpan(addTypedStunButton, 2);
+                            rowGrid.Children.Add(addTypedStunButton);
+                        }
+                        else if (!_isReadOnly)
+                        {
+                            removeTypedStunButton = new Button
+                            {
+                                Content = "X",
+                                Background = Brush.Parse("#8b0000"),
+                                Width = 28,
+                                Height = 28,
+                                Padding = new Thickness(0),
+                                Margin = new Thickness(8, 0, 0, 0),
+                                HorizontalContentAlignment = HorizontalAlignment.Center,
+                                VerticalContentAlignment = VerticalAlignment.Center
+                            };
+                            removeTypedStunButton.Click += async (_, _) =>
+                            {
+                                var proceed = await CheckStartLocalMod();
+                                if (!proceed)
+                                    return;
+
+                                stunValueTb.Text = "";
+                                stunValueLabel.IsVisible = false;
+                                stunValueTb.IsVisible = false;
+                                stunRowState.IncludeInSerialization = false;
+                                removeTypedStunButton.IsVisible = false;
+                                if (addTypedStunButton != null)
+                                    addTypedStunButton.IsVisible = true;
+                                MarkDirty();
+                            };
+                            Grid.SetColumn(removeTypedStunButton, 7);
+                            rowGrid.Children.Add(removeTypedStunButton);
+                        }
+
+                        if (!_isReadOnly)
+                        {
+                            var removeButton = new Button
+                            {
+                                Content = "X",
+                                Background = Brush.Parse("#8b0000"),
+                                Width = 28,
+                                Height = 28,
+                                Padding = new Thickness(0),
+                                Margin = new Thickness(12, 0, 0, 0),
+                                HorizontalContentAlignment = HorizontalAlignment.Center,
+                                VerticalContentAlignment = VerticalAlignment.Center
+                            };
+                            removeButton.Click += async (_, _) =>
+                            {
+                                var proceed = await CheckStartLocalMod();
+                                if (!proceed)
+                                    return;
+                                typedRowsContainer.Children.Remove(rowGrid);
+                                state.StructuredFieldRows["typedduration"].Remove(durationRowState);
+                                state.StructuredFieldRows["typedstunduration"].Remove(stunRowState);
+                                MarkDirty();
+                            };
+                            Grid.SetColumn(removeButton, 9);
+                            rowGrid.Children.Add(removeButton);
+                        }
+
+                        typedRowsContainer.Children.Add(rowGrid);
+                    }
+
+                    if (typedDurationEntries.Count == 0)
+                    {
+                        if (!_isReadOnly)
+                            AddTypedDurationRow();
+                    }
+                    else
+                    {
+                        foreach (var typedDurationEntry in typedDurationEntries)
+                        {
+                            var typedDurationType = typedDurationEntry.Attributes.TryGetValue("type", out var durationTypeValue) ? durationTypeValue : "";
+                            AddTypedDurationRow(
+                                typedDurationEntry,
+                                ConsumeTypedStunEntryForType(typedDurationType));
+                        }
+                    }
+
+                    if (!_isReadOnly)
+                    {
+                        var addButton = new Button
+                        {
+                            Content = "+ Add Typed Duration",
+                            Background = Brush.Parse("#2b7a0b"),
+                            HorizontalAlignment = HorizontalAlignment.Left
+                        };
+                        addButton.Click += async (_, _) =>
+                        {
+                            var proceed = await CheckStartLocalMod();
+                            if (!proceed)
+                                return;
+                            AddTypedDurationRow();
+                            MarkDirty();
+                        };
+                        typedSection.Children.Add(addButton);
+                    }
+                    state.AdditionalFieldsContainer.Children.Add(typedSection);
+                }
             }
             else if (IsGatherActionType(actionType))
             {
@@ -6253,7 +9184,9 @@ public partial class ProtoEditorWindow : SimpleWindow
                   currentValues.TryGetValue("modelattachmenttimer", out var currentTimer)
                       ? currentTimer
                       : ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, "modelattachmenttimer"));
+              var attachmentProfile = ProtoActionMetadataCatalog.GetEditorProfile(actionType);
               var showTimer = !string.IsNullOrWhiteSpace(modelAttachmentTimerValue) ||
+                              attachmentProfile.DefaultVisibleTags.Contains("modelattachmenttimer", StringComparer.OrdinalIgnoreCase) ||
                               state.ForcedVisibleFieldTags.Contains("modelattachmenttimer");
               if (showTimer)
               {
@@ -6529,6 +9462,34 @@ public partial class ProtoEditorWindow : SimpleWindow
             ?.Value
             ?.Trim()
            ?? "";
+
+    private static List<string> GetProtoActionNestedUnitTypeValues(ProtoAction action, string parentTag)
+        => GetProtoActionAdditionalElement(action, parentTag)?
+            .Elements()
+            .Where(x => x.Name.LocalName.Equals("unittype", StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Value?.Trim() ?? "")
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToList()
+           ?? [];
+
+    private static void SaveProtoActionNestedUnitTypeListElement(ProtoAction action, string parentTag, IEnumerable<string> values)
+    {
+        action.AdditionalElements.RemoveAll(x => x.Name.LocalName.Equals(parentTag, StringComparison.OrdinalIgnoreCase));
+
+        var validValues = values
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (validValues.Count == 0)
+            return;
+
+        var parent = new XElement(parentTag,
+            validValues.Select(x => new XElement("unittype", x)));
+        action.AdditionalElements.Add(parent);
+    }
 
     private static void SaveProtoActionStackControlElement(
         ProtoAction action,
@@ -7595,13 +10556,45 @@ public partial class ProtoEditorWindow : SimpleWindow
     {
         var effectiveAction = CreateEffectiveProtoActionSnapshot(state);
         var actionType = ResolveProtoActionType(state.NameAcb.Text?.Trim() ?? "", state.TypeAcb.Text?.Trim() ?? "");
-        var preservedCustomRateRows = (IsBolsterActionType(actionType) || IsDrainResurrectionActionType(actionType) || IsDevoteMinorActionType(actionType)) &&
+        var preservedCustomRateRows = (IsBolsterActionType(actionType) || IsDrainResurrectionActionType(actionType) || IsDevoteMinorActionType(actionType) || IsHealActionType(actionType) || IsConditionalTransformActionType(actionType) || IsDelayedTransformActionType(actionType) || IsMaintainActionType(actionType) || IsAutoGatherActionType(actionType) || IsConvertActionType(actionType)) &&
                                       state.StructuredFieldRows.TryGetValue("rate", out var customRateRows)
             ? customRateRows
+            : null;
+        var preservedConditionalTransformRuleRows = IsConditionalTransformActionType(actionType) &&
+                                                    state.StructuredFieldRows.TryGetValue("conditionaltransformrule", out var conditionalTransformRuleRows)
+            ? conditionalTransformRuleRows
+            : null;
+        var preservedConditionalTransformModifyProtoRows = IsConditionalTransformActionType(actionType) &&
+                                                           state.StructuredFieldRows.TryGetValue("modifyprotoid", out var conditionalTransformModifyProtoRows)
+            ? conditionalTransformModifyProtoRows
+            : null;
+        var preservedDelayedTransformModifyProtoRows = IsDelayedTransformActionType(actionType) &&
+                                                       state.StructuredFieldRows.TryGetValue("modifyprotoid", out var delayedTransformModifyProtoRows)
+            ? delayedTransformModifyProtoRows
             : null;
         var preservedCustomMinRateRows = IsDistanceModifyActionType(actionType) &&
                                          state.StructuredFieldRows.TryGetValue("minrate", out var customMinRateRows)
             ? customMinRateRows
+            : null;
+        var preservedConvertMinRateRows = IsConvertActionType(actionType) &&
+                                          state.StructuredFieldRows.TryGetValue("minrate", out var convertMinRateRows)
+            ? convertMinRateRows
+            : null;
+        var preservedAutoGatherGatheringTypeRows = IsAutoGatherActionType(actionType) &&
+                                                   state.StructuredFieldRows.TryGetValue("donotautogatherunlessgatheringtypes", out var autoGatherGatheringTypeRows)
+            ? autoGatherGatheringTypeRows
+            : null;
+        var preservedConvertConversionProtoRows = IsConvertActionType(actionType) &&
+                                                  state.StructuredFieldRows.TryGetValue("conversionprotoid", out var convertConversionProtoRows)
+            ? convertConversionProtoRows
+            : null;
+        var preservedConvertTypedDurationRows = IsConvertActionType(actionType) &&
+                                                state.StructuredFieldRows.TryGetValue("typedduration", out var convertTypedDurationRows)
+            ? convertTypedDurationRows
+            : null;
+        var preservedConvertTypedStunDurationRows = IsConvertActionType(actionType) &&
+                                                    state.StructuredFieldRows.TryGetValue("typedstunduration", out var convertTypedStunDurationRows)
+            ? convertTypedStunDurationRows
             : null;
         var fieldTags = GetVisibleProtoActionStructuredFieldTags(state, effectiveAction, actionType);
         var suggestedFieldTags = GetSuggestedProtoActionStructuredFieldTags(actionType);
@@ -7611,10 +10604,26 @@ public partial class ProtoEditorWindow : SimpleWindow
 
         state.StructuredFieldsContainer.Children.Clear();
         state.StructuredFieldRows.Clear();
+        if (preservedConditionalTransformRuleRows != null)
+            state.StructuredFieldRows["conditionaltransformrule"] = preservedConditionalTransformRuleRows;
+        if (preservedConditionalTransformModifyProtoRows != null)
+            state.StructuredFieldRows["modifyprotoid"] = preservedConditionalTransformModifyProtoRows;
+        if (preservedDelayedTransformModifyProtoRows != null)
+            state.StructuredFieldRows["modifyprotoid"] = preservedDelayedTransformModifyProtoRows;
         if (preservedCustomRateRows != null)
             state.StructuredFieldRows["rate"] = preservedCustomRateRows;
         if (preservedCustomMinRateRows != null)
             state.StructuredFieldRows["minrate"] = preservedCustomMinRateRows;
+        if (preservedConvertMinRateRows != null)
+            state.StructuredFieldRows["minrate"] = preservedConvertMinRateRows;
+        if (preservedAutoGatherGatheringTypeRows != null)
+            state.StructuredFieldRows["donotautogatherunlessgatheringtypes"] = preservedAutoGatherGatheringTypeRows;
+        if (preservedConvertConversionProtoRows != null)
+            state.StructuredFieldRows["conversionprotoid"] = preservedConvertConversionProtoRows;
+        if (preservedConvertTypedDurationRows != null)
+            state.StructuredFieldRows["typedduration"] = preservedConvertTypedDurationRows;
+        if (preservedConvertTypedStunDurationRows != null)
+            state.StructuredFieldRows["typedstunduration"] = preservedConvertTypedStunDurationRows;
 
         if (primaryFieldTags.Count == 0)
             return;
@@ -8080,12 +11089,16 @@ public partial class ProtoEditorWindow : SimpleWindow
                 natureCheckBox.IsChecked = state.SelectedFlagTags.Contains("includenature");
             if (state.CustomFlagControls.TryGetValue("notsuspendbyattack", out var notSuspendByAttackCheckBox))
                 notSuspendByAttackCheckBox.IsChecked = state.SelectedFlagTags.Contains("notsuspendbyattack");
+            if (state.CustomFlagControls.TryGetValue("active", out var activeCheckBox))
+                activeCheckBox.IsChecked = state.CustomValues.GetValueOrDefault(ProtoActionActiveValueStateKey, "0").Equals("1", StringComparison.OrdinalIgnoreCase);
         }
 
         void RefreshFlagsDisplay()
         {
             flagsWrap.Children.Clear();
-            foreach (var tag in state.SelectedFlagTags.OrderBy(x => ProtoActionMetadataCatalog.GetKnownFlagLabel(x), StringComparer.OrdinalIgnoreCase))
+            foreach (var tag in state.SelectedFlagTags
+                         .Where(x => !x.Equals("active", StringComparison.OrdinalIgnoreCase))
+                         .OrderBy(x => ProtoActionMetadataCatalog.GetKnownFlagLabel(x), StringComparer.OrdinalIgnoreCase))
             {
                 var chip = CreateChip(ProtoActionMetadataCatalog.GetKnownFlagLabel(tag), async () =>
                 {
@@ -8108,6 +11121,7 @@ public partial class ProtoEditorWindow : SimpleWindow
             return;
 
         var availableFlags = ProtoActionMetadataCatalog.GetKnownFlagTags()
+            .Where(x => !x.Equals("active", StringComparison.OrdinalIgnoreCase))
             .OrderBy(x => ProtoActionMetadataCatalog.GetKnownFlagLabel(x), StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -8783,6 +11797,21 @@ public partial class ProtoEditorWindow : SimpleWindow
         foreach (var pw in _protoActionWidgets)
         {
             if (pw.SelectedFlagTags.Contains("autocastbyself"))
+                return true;
+        }
+
+        return false;
+    }
+
+    private bool HasHealProtoAction()
+    {
+        foreach (var pw in _protoActionWidgets)
+        {
+            var actionType = TryResolveProtoActionType(pw.NameAcb.Text?.Trim() ?? "", out var resolvedType)
+                ? resolvedType
+                : GetExactProtoActionTypeMatch(pw.TypeAcb.Text);
+
+            if (IsHealActionType(actionType ?? ""))
                 return true;
         }
 
@@ -15994,7 +19023,8 @@ public partial class ProtoEditorWindow : SimpleWindow
             Text = pa.Name,
             FilterMode = AutoCompleteFilterMode.Contains,
             ItemsSource = _protoActionNameSuggestions,
-            Width = 180,
+            Width = (resolvedType.Equals("ConditionalTransform", StringComparison.OrdinalIgnoreCase) ||
+                     resolvedType.Equals("DelayedTransform", StringComparison.OrdinalIgnoreCase)) ? 220 : 180,
             IsEnabled = !_isReadOnly,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 10, 0)
@@ -16012,7 +19042,8 @@ public partial class ProtoEditorWindow : SimpleWindow
             Text = resolvedType,
             FilterMode = AutoCompleteFilterMode.Contains,
             ItemsSource = typeOptions,
-            Width = 150,
+            Width = (resolvedType.Equals("ConditionalTransform", StringComparison.OrdinalIgnoreCase) ||
+                     resolvedType.Equals("DelayedTransform", StringComparison.OrdinalIgnoreCase)) ? 210 : 150,
             IsEnabled = !_isReadOnly,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 10, 0)
@@ -16020,6 +19051,29 @@ public partial class ProtoEditorWindow : SimpleWindow
         EnableDropdownAutoComplete(typeAcb);
         DockPanel.SetDock(typeAcb, Dock.Left);
         header.Children.Add(typeAcb);
+
+        var rawActiveValue = ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, "active");
+        var hasExplicitActiveValue = !string.IsNullOrWhiteSpace(rawActiveValue);
+        var initialActiveChecked = !hasExplicitActiveValue || IsProtoActionFlagEnabledValue(rawActiveValue);
+
+        var activeLabel = new TextBlock
+        {
+            Text = "Active:",
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 6, 0)
+        };
+        DockPanel.SetDock(activeLabel, Dock.Left);
+        header.Children.Add(activeLabel);
+
+        var activeCheckBox = new CheckBox
+        {
+            IsChecked = initialActiveChecked,
+            IsEnabled = !_isReadOnly,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 10, 0)
+        };
+        DockPanel.SetDock(activeCheckBox, Dock.Left);
+        header.Children.Add(activeCheckBox);
 
         var state = new ProtoActionWidgetState
         {
@@ -16040,13 +19094,41 @@ public partial class ProtoEditorWindow : SimpleWindow
             DamageExtrasContainer = new StackPanel { Spacing = 4 },
             BonusSectionContainer = new StackPanel { Spacing = 4 }
         };
+        state.CustomFlagControls["active"] = activeCheckBox;
+        state.CustomValues[ProtoActionActiveExplicitStateKey] = hasExplicitActiveValue ? "1" : "0";
+        state.CustomValues[ProtoActionActiveValueStateKey] = initialActiveChecked ? "1" : "0";
         foreach (var flagTag in ProtoActionMetadataCatalog.GetKnownFlagTags())
         {
-            if (!string.IsNullOrWhiteSpace(ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, flagTag)))
+            if (IsProtoActionFlagEnabledValue(ProtoXmlHandler.GetProtoActionSimpleFieldValue(effectiveAction, flagTag)))
                 state.SelectedFlagTags.Add(flagTag);
         }
+        if (initialActiveChecked)
+            state.SelectedFlagTags.Add("active");
+        else
+            state.SelectedFlagTags.Remove("active");
         _protoActionWidgets.Add(state);
         UpdateProtoActionTypeEditor(typeAcb, pa.Name);
+
+        activeCheckBox.IsCheckedChanged += async (_, _) =>
+        {
+            if (_isPopulating)
+                return;
+
+            var proceed = await CheckStartLocalMod();
+            if (!proceed)
+                return;
+
+            var isChecked = activeCheckBox.IsChecked == true;
+            state.CustomValues[ProtoActionActiveExplicitStateKey] = "1";
+            state.CustomValues[ProtoActionActiveValueStateKey] = isChecked ? "1" : "0";
+            if (isChecked)
+                state.SelectedFlagTags.Add("active");
+            else
+                state.SelectedFlagTags.Remove("active");
+
+            RenderProtoActionFlags(state);
+            MarkDirty();
+        };
 
         if (!_isReadOnly)
         {
@@ -17679,6 +20761,11 @@ public partial class ProtoEditorWindow : SimpleWindow
             if (HasAutoCastBySelfProtoAction())
                 _currentFlags.Add("CastAbilitySelf");
 
+            if (HasHealProtoAction())
+                _currentFlags.Add("CanAutoHeal");
+            else
+                _currentFlags.Remove("CanAutoHeal");
+
             ProtoXmlHandler.SetFlagList(unit, _currentFlags.OrderBy(x => x));
         }
 
@@ -17814,17 +20901,56 @@ public partial class ProtoEditorWindow : SimpleWindow
 
             foreach (var flagTag in ProtoActionMetadataCatalog.GetKnownFlagTags())
             {
-                var currentValue = pw.SelectedFlagTags.Contains(flagTag) ? "1" : "";
+                var currentValue = flagTag.Equals("active", StringComparison.OrdinalIgnoreCase)
+                    ? (pw.CustomValues.GetValueOrDefault(ProtoActionActiveExplicitStateKey, "0").Equals("1", StringComparison.OrdinalIgnoreCase)
+                        ? pw.CustomValues.GetValueOrDefault(ProtoActionActiveValueStateKey, "0")
+                        : "")
+                    : (IsMaintainActionType(currentActionType) && flagTag.Equals("pausable", StringComparison.OrdinalIgnoreCase))
+                        ? pw.CustomValues.GetValueOrDefault(MaintainPausableValueStateKey, "1")
+                    : (IsMaintainActionType(currentActionType) && flagTag.Equals("showqueuewhilewaiting", StringComparison.OrdinalIgnoreCase))
+                        ? pw.CustomValues.GetValueOrDefault(MaintainShowQueueWhileWaitingValueStateKey, "1")
+                    : (pw.SelectedFlagTags.Contains(flagTag) ? "1" : "");
                 var tacticsValue = tacticsAction != null
                     ? ProtoXmlHandler.GetProtoActionSimpleFieldValue(tacticsAction, flagTag)
                     : "";
                 var originalProtoValue = ProtoXmlHandler.GetProtoActionSimpleFieldValue(pw.Model, flagTag);
-                var protoValue = ResolveProtoOverrideValue(currentValue, tacticsValue, originalProtoValue);
+                var protoValue = flagTag.Equals("active", StringComparison.OrdinalIgnoreCase)
+                    ? currentValue switch
+                    {
+                        "1" => "1",
+                        "0" => "0",
+                        _ => ResolveProtoOverrideValue(currentValue, tacticsValue, originalProtoValue)
+                    }
+                    : (IsMaintainActionType(currentActionType) && flagTag.Equals("pausable", StringComparison.OrdinalIgnoreCase))
+                        ? (currentValue == "0" ? "0" : "1")
+                    : (IsMaintainActionType(currentActionType) && flagTag.Equals("showqueuewhilewaiting", StringComparison.OrdinalIgnoreCase))
+                        ? (currentValue == "0" ? "0" : "1")
+                    : ResolveProtoOverrideValue(currentValue, tacticsValue, originalProtoValue);
                 ProtoXmlHandler.SetProtoActionSimpleFieldValue(pa, flagTag, protoValue);
             }
 
             foreach (var kvp in pw.StructuredFieldRows)
             {
+                if (IsAutoGatherActionType(currentActionType) &&
+                    kvp.Key.Equals("donotautogatherunlessgatheringtypes", StringComparison.OrdinalIgnoreCase))
+                {
+                    var currentGatheringTypes = CollectProtoActionStructuredFieldEntries(pw, kvp.Key)
+                        .Select(x => x.Value?.Trim() ?? "")
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    var tacticsGatheringTypes = tacticsAction != null
+                        ? GetProtoActionNestedUnitTypeValues(tacticsAction, "donotautogatherunlessgatheringtypes")
+                        : [];
+                    var originalGatheringTypes = GetProtoActionNestedUnitTypeValues(pw.Model, "donotautogatherunlessgatheringtypes");
+                    var protoGatheringTypes = currentGatheringTypes.SequenceEqual(tacticsGatheringTypes, StringComparer.OrdinalIgnoreCase) &&
+                                              !currentGatheringTypes.SequenceEqual(originalGatheringTypes, StringComparer.OrdinalIgnoreCase)
+                        ? []
+                        : currentGatheringTypes;
+                    SaveProtoActionNestedUnitTypeListElement(pa, "donotautogatherunlessgatheringtypes", protoGatheringTypes);
+                    continue;
+                }
+
                 if (IsCombinedProtoActionModifyTypeTag(currentActionType, kvp.Key))
                 {
                     SaveCombinedProtoActionModifyTypeEntries(pw, pa, tacticsAction);

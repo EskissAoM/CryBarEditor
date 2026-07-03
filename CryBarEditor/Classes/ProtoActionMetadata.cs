@@ -149,6 +149,7 @@ public static class ProtoActionMetadataCatalog
         ["chargedmodify"] = new("chargedmodify", "Charged Modify", ProtoActionFieldEditorKind.StructuredList, true, ["modifytype", "applytype"]),
         ["activationtype"] = new("activationtype", "Activation Type", ProtoActionFieldEditorKind.Text),
         ["conversionprotoid"] = new("conversionprotoid", "Conversion Proto ID", ProtoActionFieldEditorKind.StructuredList, true, ["srctype"]),
+        ["conditionaltransformrule"] = new("conditionaltransformrule", "Conditional Transform Rule", ProtoActionFieldEditorKind.StructuredList, true, ["type", "actiontype"]),
         ["trailprotounit"] = new("trailprotounit", "Trail Proto Unit", ProtoActionFieldEditorKind.StructuredList, true, ["frequency"]),
         ["typedduration"] = new("typedduration", "Typed Duration", ProtoActionFieldEditorKind.StructuredList, true, ["type"]),
         ["typedstunduration"] = new("typedstunduration", "Typed Stun Duration", ProtoActionFieldEditorKind.StructuredList, true, ["type"]),
@@ -201,7 +202,7 @@ public static class ProtoActionMetadataCatalog
         ["autocastdistance"] = new("autocastdistance", "Auto Cast Distance", ProtoActionFieldEditorKind.Number),
         ["donotautogatherunlessgatheringtypes"] = new("donotautogatherunlessgatheringtypes", "Do Not Auto Gather Unless Gathering Types", ProtoActionFieldEditorKind.Text),
         ["maintaintrainpoints"] = new("maintaintrainpoints", "Maintain Train Points", ProtoActionFieldEditorKind.Number),
-        ["maintainallowoverpopcap"] = new("maintainallowoverpopcap", "Maintain Allow Over Pop Cap", ProtoActionFieldEditorKind.Number),
+        ["maintainallowoverpopcap"] = new("maintainallowoverpopcap", "Maintain Allow Over Pop Cap", ProtoActionFieldEditorKind.Toggle),
         ["stunduration"] = new("stunduration", "Stun Duration", ProtoActionFieldEditorKind.Number),
         ["directionaldamagerefangle"] = new("directionaldamagerefangle", "Directional Damage Ref Angle", ProtoActionFieldEditorKind.Number),
         ["coneareaangle"] = new("coneareaangle", "Cone Area Angle", ProtoActionFieldEditorKind.Number),
@@ -316,6 +317,7 @@ public static class ProtoActionMetadataCatalog
         "killontrain",
         "linear",
         "linearshockwave",
+        "maintainallowoverpopcap",
         "minworkrateasresourcedrain",
         "modifysingleactionbytype",
         "modelattachmentonself",
@@ -407,6 +409,7 @@ public static class ProtoActionMetadataCatalog
         ["speedboost"] = "SpeedBoost",
         ["targetspeedboost"] = "TargetSpeedBoost",
         ["persistent"] = "Persistent",
+        ["maintainallowoverpopcap"] = "MaintainAllowOverPopCap",
         ["singleuse"] = "SingleUse",
         ["dropsitegathering"] = "DropsiteGathering",
         ["isabductdrop"] = "IsAbductDrop",
@@ -432,6 +435,16 @@ public static class ProtoActionMetadataCatalog
         ["Repair"] = new ProtoActionTypeEditorProfile(
             DefaultVisibleTags: ["anim", "maxrange", "rate", "typedanim", "typedmaxrange"],
             HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase)),
+        ["BurstHeal"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["anim", "maxrange", "rof", "rate", "modelattachment", "modelattachmentbone", "modelattachmenttimer"],
+            HiddenByDefaultTags: new HashSet<string>(["damage", "damagebonus"], StringComparer.OrdinalIgnoreCase)),
+        ["ConditionalTransform"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["persistent", "conditionaltransformrule", "modifyprotoid"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["persistent"]),
+        ["DelayedTransform"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["anim", "modifyprotoid", "modifyduration", "transformduration"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "damage", "damagebonus", "rate"], StringComparer.OrdinalIgnoreCase)),
         ["DevoteMajor"] = new ProtoActionTypeEditorProfile(
             DefaultVisibleTags: ["anim", "devotiontime", "maxrange", "modelattachment", "modelattachmentbone"],
             HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase)),
@@ -460,6 +473,9 @@ public static class ProtoActionMetadataCatalog
         ["Hunting"] = new ProtoActionTypeEditorProfile(
             DefaultVisibleTags: ["maxrange", "rate", "typedmaxrange"],
             HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase)),
+        ["Heal"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["maxrange", "anim", "rate", "slowhealmultiplier", "modelattachment", "modelattachmentbone"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase)),
         ["Gather"] = new ProtoActionTypeEditorProfile(
             DefaultVisibleTags: ["dropsitegathering", "anim", "maxrange", "rate", "typedanim", "typedmaxrange"],
             HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
@@ -479,6 +495,18 @@ public static class ProtoActionMetadataCatalog
             DefaultVisibleTags: ["persistent"],
             HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
             DefaultFlagTags: ["persistent"]),
+        ["Maintain"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["persistent", "maintaintrainpoints", "rate", "modifybase", "modifytargetlimit"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["persistent", "showqueuewhilewaiting"]),
+        ["AutoGather"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["persistent", "rate", "donotautogatherunlessgatheringtypes", "modifybase", "modifymultiplier", "modifyratecap"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["persistent"]),
+        ["Convert"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["maxrange", "anim", "rate", "minrate", "conversionprotoid"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["attackaction"]),
         ["TrapThrow"] = new ProtoActionTypeEditorProfile(
             DefaultVisibleTags: [],
             HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
