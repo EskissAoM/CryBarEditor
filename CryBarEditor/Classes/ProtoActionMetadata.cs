@@ -53,6 +53,7 @@ public static class ProtoActionMetadataCatalog
     private static readonly HashSet<string> DeferredComplexFieldTags = new(StringComparer.OrdinalIgnoreCase)
     {
         "onhiteffect",
+        "revealarearadius",
     };
 
     private static readonly Dictionary<string, int> DisplayPriority = new(StringComparer.OrdinalIgnoreCase)
@@ -99,6 +100,7 @@ public static class ProtoActionMetadataCatalog
         ["rof"] = new("rof", "Rate of Fire", ProtoActionFieldEditorKind.Number),
         ["maxrange"] = new("maxrange", "Max Range", ProtoActionFieldEditorKind.Number),
         ["minrange"] = new("minrange", "Min Range", ProtoActionFieldEditorKind.Number),
+        ["minworkrate"] = new("minworkrate", "Min Work Rate", ProtoActionFieldEditorKind.StructuredList, true, ["type"]),
         ["typedmaxrange"] = new("typedmaxrange", "Typed Max Range", ProtoActionFieldEditorKind.StructuredList, true, ["type"]),
         ["typedminrange"] = new("typedminrange", "Typed Min Range", ProtoActionFieldEditorKind.StructuredList, true, ["type"]),
         ["rate"] = new("rate", "Rate", ProtoActionFieldEditorKind.StructuredList, true, ["type", "resource", "yield", "overrideResource", "inventoryRate"]),
@@ -233,7 +235,6 @@ public static class ProtoActionMetadataCatalog
         ["devotionscaleatminimumhealth"] = new("devotionscaleatminimumhealth", "Devotion Scale At Minimum Health", ProtoActionFieldEditorKind.Number),
         ["devotionpower"] = new("devotionpower", "Devotion Power", ProtoActionFieldEditorKind.Text),
         ["activevfxproto"] = new("activevfxproto", "Active VFX Proto", ProtoActionFieldEditorKind.Text),
-        ["revealarearadius"] = new("revealarearadius", "Reveal Area Radius", ProtoActionFieldEditorKind.Number),
         ["soundsetenter"] = new("soundsetenter", "Soundset Enter", ProtoActionFieldEditorKind.Text),
         ["soundsetupdate"] = new("soundsetupdate", "Soundset Update", ProtoActionFieldEditorKind.Text),
         ["soundsetexit"] = new("soundsetexit", "Soundset Exit", ProtoActionFieldEditorKind.Text),
@@ -251,10 +252,8 @@ public static class ProtoActionMetadataCatalog
         "activeifcontainsunits",
         "addresourcesfasterwhenowned",
         "addresourcestoinventory",
-        "ambushduration",
         "ambushonly",
         "ambushpreferred",
-        "animationrate",
         "areadamageignoretacticattacktype",
         "areadamageignoretype",
         "attachaboveunit",
@@ -357,8 +356,6 @@ public static class ProtoActionMetadataCatalog
         "restricttoidleunits",
         "restricttovalidrepairtargets",
         "restricttowater",
-        "revealareachain",
-        "rollingdamagefactor",
         "rollingsmash",
         "scalebycontainedunits",
         "sendunderattackevent",
@@ -377,7 +374,6 @@ public static class ProtoActionMetadataCatalog
         "stealthanywhere",
         "stealthinshallows",
         "suspendbyattack",
-        "targetedspeedmultiplier",
         "targetenemy",
         "targetenemyincludenature",
         "targetgaia",
@@ -506,6 +502,25 @@ public static class ProtoActionMetadataCatalog
         ["Convert"] = new ProtoActionTypeEditorProfile(
             DefaultVisibleTags: ["maxrange", "anim", "rate", "minrate", "conversionprotoid"],
             HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["attackaction"]),
+        ["Spawn"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["rate", "minrate"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["forcespawn", "persistent"]),
+        ["Trade"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["maxrange", "rate"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase)),
+        ["Stealth"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["autocastdistance", "ambushduration", "ambushrange"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus", "rate"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["autocastbyself", "persistent"]),
+        ["AreaRestrict"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["anim", "maxrange", "rate", "damagearea", "modifyduration", "charged"],
+            HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["attackaction"]),
+        ["Lure"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["anim", "reloadanim", "maxrange", "rof", "rate", "damage", "damagebonus"],
+            HiddenByDefaultTags: new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             DefaultFlagTags: ["attackaction"]),
         ["TrapThrow"] = new ProtoActionTypeEditorProfile(
             DefaultVisibleTags: [],
