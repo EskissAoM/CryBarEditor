@@ -205,6 +205,13 @@ public partial class ProtoEditorWindow : SimpleWindow
         public string DefaultFlagsInitializedForType { get; set; } = "";
     }
 
+    private sealed class CopyableProtoActionSourceUnit
+    {
+        public required string UnitName { get; init; }
+        public required string Group { get; init; }
+        public required XElement UnitElement { get; init; }
+    }
+
     private const string ProtoActionActiveExplicitStateKey = "protoaction.active.explicit";
     private const string ProtoActionActiveValueStateKey = "protoaction.active.value";
     private const string MaintainPausableValueStateKey = "maintain.pausable.value";
@@ -3227,11 +3234,20 @@ public partial class ProtoEditorWindow : SimpleWindow
         return false;
     }
 
-    private ProtoAction CreateEffectiveProtoActionSnapshot(ProtoAction protoAction, string actionName, string actionType)
+    private static ProtoAction CreateEffectiveProtoActionSnapshot(
+        ProtoAction protoAction,
+        string actionName,
+        string actionType,
+        IReadOnlyDictionary<string, ProtoAction>? tacticsActions)
     {
-        ProtoAction? tacticsAction = TryGetCurrentUnitTacticsAction(actionName, out var matchedTacticsAction)
-            ? matchedTacticsAction
-            : null;
+        var normalizedActionName = actionName?.Trim() ?? "";
+        ProtoAction? tacticsAction = null;
+        if (!string.IsNullOrWhiteSpace(normalizedActionName) &&
+            tacticsActions != null &&
+            tacticsActions.TryGetValue(normalizedActionName, out var matchedTacticsAction))
+        {
+            tacticsAction = matchedTacticsAction;
+        }
 
         var effective = tacticsAction?.Clone() ?? new ProtoAction();
         effective.Name = string.IsNullOrWhiteSpace(actionName) ? protoAction.Name : actionName;
@@ -3257,6 +3273,11 @@ public partial class ProtoEditorWindow : SimpleWindow
             effective.AdditionalElements.Add(new XElement(element));
 
         return effective;
+    }
+
+    private ProtoAction CreateEffectiveProtoActionSnapshot(ProtoAction protoAction, string actionName, string actionType)
+    {
+        return CreateEffectiveProtoActionSnapshot(protoAction, actionName, actionType, _currentUnitTacticsActions);
     }
 
     private ProtoAction CreateEffectiveProtoActionSnapshot(ProtoActionWidgetState state)
@@ -17027,6 +17048,185 @@ public partial class ProtoEditorWindow : SimpleWindow
         return emptyResult;
     }
 
+    private string ResolveProtoActionTypeForUnitAction(ProtoAction action, string actionName, IReadOnlyDictionary<string, ProtoAction> tacticsActions)
+    {
+        if (!string.IsNullOrWhiteSpace(action.Type))
+            return action.Type.Trim();
+
+        var normalizedName = actionName?.Trim() ?? "";
+        if (!string.IsNullOrWhiteSpace(normalizedName) &&
+            tacticsActions.TryGetValue(normalizedName, out var tacticsAction) &&
+            !string.IsNullOrWhiteSpace(tacticsAction.Type))
+        {
+            return tacticsAction.Type.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(normalizedName) &&
+            _protoActionTypeMap.TryGetValue(normalizedName, out var mappedType) &&
+            !string.IsNullOrWhiteSpace(mappedType))
+        {
+            return mappedType.Trim();
+        }
+
+        return "";
+    }
+
+    private List<CopyableProtoActionSourceUnit> GetCopyableProtoActionSourceUnits()
+    {
+        var result = new List<CopyableProtoActionSourceUnit>();
+
+        if (_modXmlRoot != null)
+        {
+            foreach (var unitName in ProtoXmlHandler.GetUnitNames(_modXmlRoot).OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(unitName) ||
+                    unitName.Equals(_currentUnitName ?? "", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var unit = ProtoXmlHandler.GetUnitElement(_modXmlRoot, unitName);
+                if (unit != null)
+                {
+                    result.Add(new CopyableProtoActionSourceUnit
+                    {
+                        UnitName = unitName,
+                        Group = "Modified",
+                        UnitElement = unit
+                    });
+                }
+            }
+        }
+
+        if (_barXmlRoot != null)
+        {
+            foreach (var unitName in ProtoXmlHandler.GetUnitNames(_barXmlRoot).OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(unitName) ||
+                    unitName.Equals(_currentUnitName ?? "", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var unit = ProtoXmlHandler.GetUnitElement(_barXmlRoot, unitName);
+                if (unit != null)
+                {
+                    result.Add(new CopyableProtoActionSourceUnit
+                    {
+                        UnitName = unitName,
+                        Group = "Original",
+                        UnitElement = unit
+                    });
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private List<ProtoAction> GetCopyableEffectiveProtoActionsForUnit(XElement unit)
+    {
+        var result = new List<ProtoAction>();
+        var protoActions = ProtoXmlHandler.GetProtoActions(unit);
+        var tacticsActions = LoadProtoActionsForTactics(ProtoXmlHandler.GetSimpleField(unit, "tactics")?.Trim() ?? "");
+        var seenActionNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var protoAction in protoActions)
+        {
+            var actionName = protoAction.Name?.Trim() ?? "";
+            var resolvedType = ResolveProtoActionTypeForUnitAction(protoAction, actionName, tacticsActions);
+            var effectiveAction = CreateEffectiveProtoActionSnapshot(protoAction, actionName, resolvedType, tacticsActions);
+            effectiveAction.SourceElement = null;
+            result.Add(effectiveAction);
+
+            if (!string.IsNullOrWhiteSpace(actionName))
+                seenActionNames.Add(actionName);
+        }
+
+        foreach (var kvp in tacticsActions.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(kvp.Key) || seenActionNames.Contains(kvp.Key))
+                continue;
+
+            var tacticsOnlyAction = kvp.Value.Clone();
+            tacticsOnlyAction.Name = kvp.Key.Trim();
+            tacticsOnlyAction.Type = ResolveProtoActionTypeForUnitAction(tacticsOnlyAction, tacticsOnlyAction.Name, tacticsActions);
+            tacticsOnlyAction.SourceElement = null;
+            result.Add(tacticsOnlyAction);
+        }
+
+        return result;
+    }
+
+    private async Task CopyProtoActionFromAnotherUnitAsync(Action<ProtoAction> addProtoActionWidget)
+    {
+        var proceed = await CheckStartLocalMod();
+        if (!proceed)
+            return;
+
+        var sourceUnits = GetCopyableProtoActionSourceUnits();
+        if (sourceUnits.Count == 0)
+        {
+            var prompt = new Prompt(PromptType.Error, "No Source Units", "No other units are available to copy protoactions from.");
+            await prompt.ShowDialog(this);
+            return;
+        }
+
+        var unitPicker = new PickerWindow(
+            "Copy ProtoAction From Unit",
+            sourceUnits.Select(x => new PickerItem { Display = x.UnitName, Group = x.Group }).ToList(),
+            null);
+        await unitPicker.ShowDialog(this);
+        if (unitPicker.PickedIndex is not int selectedUnitIndex ||
+            selectedUnitIndex < 0 ||
+            selectedUnitIndex >= sourceUnits.Count)
+        {
+            return;
+        }
+
+        var sourceUnit = sourceUnits[selectedUnitIndex];
+        var sourceActions = GetCopyableEffectiveProtoActionsForUnit(sourceUnit.UnitElement);
+        if (sourceActions.Count == 0)
+        {
+            var prompt = new Prompt(PromptType.Error, "No Source Actions", $"Unit '{sourceUnit.UnitName}' has no protoactions to copy.");
+            await prompt.ShowDialog(this);
+            return;
+        }
+
+        var actionPicker = new PickerWindow(
+            $"Select Action From {sourceUnit.UnitName}",
+            sourceActions.Select(x => new PickerItem
+            {
+                Display = string.IsNullOrWhiteSpace(x.Name) ? "<unnamed action>" : x.Name,
+                Group = string.IsNullOrWhiteSpace(x.Type) ? null : x.Type
+            }).ToList(),
+            null);
+        await actionPicker.ShowDialog(this);
+        if (actionPicker.PickedIndex is not int selectedActionIndex ||
+            selectedActionIndex < 0 ||
+            selectedActionIndex >= sourceActions.Count)
+        {
+            return;
+        }
+
+        var sourceAction = sourceActions[selectedActionIndex].Clone();
+        sourceAction.SourceElement = null;
+
+        if (!string.IsNullOrWhiteSpace(sourceAction.Name) &&
+            _protoActionWidgets.Any(x => string.Equals(x.NameAcb.Text?.Trim() ?? x.Model.Name?.Trim() ?? "", sourceAction.Name, StringComparison.OrdinalIgnoreCase)))
+        {
+            var prompt = new Prompt(
+                PromptType.Error,
+                "Action Already Exists",
+                $"The current unit already has a protoaction named '{sourceAction.Name}'.\n\nFor this first copy step, duplicate action names are blocked to avoid risky overwrites.");
+            await prompt.ShowDialog(this);
+            return;
+        }
+
+        addProtoActionWidget(sourceAction);
+        MarkDirty();
+    }
+
     private Dictionary<string, string> LoadProtoActionTypesForTactics(string tacticsName)
     {
         if (string.IsNullOrWhiteSpace(tacticsName))
@@ -23917,11 +24117,18 @@ public partial class ProtoEditorWindow : SimpleWindow
 
         if (!_isReadOnly)
         {
+            var actionButtonsRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Margin = new Thickness(0, 10, 0, 10)
+            };
+
             var btnAddAction = new Button
             {
                 Content = "+ Add Proto Action",
                 Background = Brush.Parse("#2b7a0b"),
-                Margin = new Thickness(0, 10, 0, 10)
+                Margin = new Thickness(0)
             };
             btnAddAction.Click += async (s, e) =>
             {
@@ -23933,7 +24140,18 @@ public partial class ProtoEditorWindow : SimpleWindow
                     MarkDirty();
                 }
             };
-            _editorPanel.Children.Add(btnAddAction);
+            actionButtonsRow.Children.Add(btnAddAction);
+
+            var btnCopyAction = new Button
+            {
+                Content = "Copy From Another Unit",
+                Background = Brush.Parse("#2b7a0b"),
+                Margin = new Thickness(0)
+            };
+            btnCopyAction.Click += async (_, _) => await CopyProtoActionFromAnotherUnitAsync(AddProtoActionWidget);
+            actionButtonsRow.Children.Add(btnCopyAction);
+
+            _editorPanel.Children.Add(actionButtonsRow);
         }
 
         RebuildPageSearchTargets();
