@@ -17215,12 +17215,40 @@ public partial class ProtoEditorWindow : SimpleWindow
         if (!string.IsNullOrWhiteSpace(sourceAction.Name) &&
             _protoActionWidgets.Any(x => string.Equals(x.NameAcb.Text?.Trim() ?? x.Model.Name?.Trim() ?? "", sourceAction.Name, StringComparison.OrdinalIgnoreCase)))
         {
-            var prompt = new Prompt(
-                PromptType.Error,
-                "Action Already Exists",
-                $"The current unit already has a protoaction named '{sourceAction.Name}'.\n\nFor this first copy step, duplicate action names are blocked to avoid risky overwrites.");
-            await prompt.ShowDialog(this);
-            return;
+            var baseSuggestedName = sourceAction.Name + "Copy";
+            var suggestedName = baseSuggestedName;
+            var suffix = 2;
+            while (_protoActionWidgets.Any(x => string.Equals(x.NameAcb.Text?.Trim() ?? x.Model.Name?.Trim() ?? "", suggestedName, StringComparison.OrdinalIgnoreCase)))
+            {
+                suggestedName = baseSuggestedName + suffix.ToString();
+                suffix++;
+            }
+
+            while (true)
+            {
+                var renamePrompt = new InputPromptWindow(
+                    $"A protoaction named '{sourceAction.Name}' already exists on this unit.\nEnter a new name for the copied protoaction:",
+                    suggestedName);
+                await renamePrompt.ShowDialog(this);
+
+                var renamedActionName = renamePrompt.InputText?.Trim() ?? "";
+                if (string.IsNullOrWhiteSpace(renamedActionName))
+                    return;
+
+                if (_protoActionWidgets.Any(x => string.Equals(x.NameAcb.Text?.Trim() ?? x.Model.Name?.Trim() ?? "", renamedActionName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    var duplicatePrompt = new Prompt(
+                        PromptType.Error,
+                        "Action Already Exists",
+                        $"The current unit already has a protoaction named '{renamedActionName}'. Please choose a different name.");
+                    await duplicatePrompt.ShowDialog(this);
+                    suggestedName = renamedActionName;
+                    continue;
+                }
+
+                sourceAction.Name = renamedActionName;
+                break;
+            }
         }
 
         addProtoActionWidget(sourceAction);
