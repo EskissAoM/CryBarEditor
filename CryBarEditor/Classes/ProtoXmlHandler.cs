@@ -422,12 +422,15 @@ public static class ProtoXmlHandler
             if (a.Name.Length     > 0) pa.Add(new XElement("name",     a.Name));
             if (a.Type.Length     > 0) pa.Add(new XElement("type",     a.Type));
             if (a.Rof.Length      > 0) pa.Add(new XElement("rof",      a.Rof));
+            var minRange = a.AdditionalElements.FirstOrDefault(element =>
+                element.Name.LocalName.Equals("minrange", StringComparison.OrdinalIgnoreCase));
+            if (minRange != null) pa.Add(new XElement(minRange));
             if (a.MaxRange.Length > 0) pa.Add(new XElement("maxrange", a.MaxRange));
             foreach (var (dt, amt) in a.Damages)
                 pa.Add(new XElement("damage", new XAttribute("type", dt), amt));
             foreach (var (ut, mult) in a.DamageBonuses)
                 pa.Add(new XElement("damagebonus", new XAttribute("type", ut), mult));
-            foreach (var extra in a.AdditionalElements)
+            foreach (var extra in a.AdditionalElements.Where(element => !ReferenceEquals(element, minRange)))
                 pa.Add(new XElement(extra));
             unit.Add(pa);
         }

@@ -483,6 +483,10 @@ public static class ProtoActionMetadataCatalog
             DefaultVisibleTags: ["maxrange", "persistent", "modifyabstracttype"],
             HiddenByDefaultTags: new HashSet<string>(["rof", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
             DefaultFlagTags: ["persistent"]),
+        ["AutoBoost"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["anim", "maxrange", "rof", "rate", "damage", "damagearea", "damageflags", "modelattachment", "modelattachmentbone"],
+            HiddenByDefaultTags: new HashSet<string>(["damagebonus"], StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["attackaction", "handlogic"]),
         ["Inline"] = new ProtoActionTypeEditorProfile(
             DefaultVisibleTags: [],
             HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
@@ -522,6 +526,30 @@ public static class ProtoActionMetadataCatalog
             DefaultVisibleTags: ["anim", "reloadanim", "maxrange", "rof", "rate", "damage", "damagebonus"],
             HiddenByDefaultTags: new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             DefaultFlagTags: ["attackaction"]),
+        ["JumpAttack"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["anim", "minrange", "maxrange", "rof", "rate", "damage", "damagebonus", "damagearea", "damageflags"],
+            HiddenByDefaultTags: new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["attackaction", "handlogic"]),
+        ["BuckAttack"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["anim", "maxrange", "rof", "rate", "damage", "damagebonus", "maxsizeclass", "stunduration"],
+            HiddenByDefaultTags: new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["attackaction", "handlogic", "shockstun"]),
+        ["Maul"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["anim", "minrange", "maxrange", "rof", "rate", "damage", "damagebonus", "damagearea", "damageflags", "impacteffect", "areaprotoaction"],
+            HiddenByDefaultTags: new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["attackaction", "handlogic"]),
+        ["TeleportAttack"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["anim", "reloadanim", "minrange", "maxrange", "rof", "rate", "accuracy", "modifyduration", "damage", "damagebonus", "damagearea", "damageflags"],
+            HiddenByDefaultTags: new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["attackaction", "rangedlogic", "facetoafterteleport", "targetground"]),
+        ["Gore"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["anim", "maxrange", "rof", "rate", "damage", "damagebonus", "damagearea", "damageflags"],
+            HiddenByDefaultTags: new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["throw", "attackaction", "handlogic"]),
+        ["Throw"] = new ProtoActionTypeEditorProfile(
+            DefaultVisibleTags: ["anim", "maxrange", "rof", "rate", "damage", "damagebonus", "damagearea", "damageflags"],
+            HiddenByDefaultTags: new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            DefaultFlagTags: ["attackaction", "handlogic", "forceareaattacktarget"]),
         ["TrapThrow"] = new ProtoActionTypeEditorProfile(
             DefaultVisibleTags: [],
             HiddenByDefaultTags: new HashSet<string>(["rof", "maxrange", "damage", "damagebonus"], StringComparer.OrdinalIgnoreCase),
